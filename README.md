@@ -32,16 +32,22 @@ mv banktivity-mcp banktivity-cli ~/.local/bin/
 
 ### Build from source
 
-Requires Swift 6.0+ (Xcode 16+ or Command Line Tools):
+Requires Xcode 16+ (needed for Swift Testing and universal binary builds):
 
 ```sh
 git clone https://github.com/sflinter/banktivity-swift-mcp.git
 cd banktivity-swift-mcp
-swift build -c release
-cp .build/release/banktivity-mcp ~/.local/bin/
-cp .build/release/banktivity-cli ~/.local/bin/
-codesign -fs - ~/.local/bin/banktivity-mcp
-codesign -fs - ~/.local/bin/banktivity-cli
+make install        # Build universal binary and install to ~/.local/bin
+```
+
+Other Makefile targets:
+
+```sh
+make build          # Debug build
+make test           # Run all tests
+make release        # Universal release build (arm64 + x86_64)
+make package        # Build release tarball with SHA256
+make clean          # Remove build artifacts
 ```
 
 ## Configuration

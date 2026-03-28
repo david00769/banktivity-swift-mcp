@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.11.0
+
+- Add RDF/Turtle export (`export turtle` CLI, `export_turtle` MCP tool) using schema.org + custom [personal-finance-ontology](https://github.com/sflinter/personal-finance-ontology)
+- Add optional `tags` field to `LineItemDTO` (populated from `pTags` relationship)
+- Fix sync propagation: `performBlobUpdate` now NULLs `pSyncedModificationDate` so blob patches propagate after initial desktop sync
+- Fix deletion sync: `deleteSyncRecord` keeps the sync record with cleared blob instead of deleting it, so deletions propagate to CloudKit
+- Add Makefile for repeatable builds (`make build`, `make test`, `make release`, `make install`, `make package`)
+- Update MCP SDK from 0.11.0 to 0.12.0
+
 ## v0.10.0
 
 - Add `securities update-trade` CLI command to update SecurityLineItem fields (shares, price, amount, security) on existing transactions
