@@ -63,6 +63,9 @@ public final class SyncBlobUpdater: @unchecked Sendable {
         }
     }
 
+    /// Mark a sync record for deletion rather than removing it.
+    /// Banktivity detects the entity is gone from Core Data on next sync
+    /// and pushes the deletion to CloudKit.
     public func deleteSyncRecord(entityUUID: String) {
         do {
             let bgContext = container.newBackgroundContext()
@@ -72,7 +75,8 @@ public final class SyncBlobUpdater: @unchecked Sendable {
                     guard let record = try self.fetchSyncRecord(entityUUID: entityUUID, in: bgContext) else {
                         return
                     }
-                    bgContext.delete(record)
+                    record.setValue(nil, forKey: "pRemoteEntityData")
+                    record.setValue(nil, forKey: "pSyncedModificationDate")
                     try bgContext.save()
                 } catch {
                     writeError = error
@@ -80,7 +84,7 @@ public final class SyncBlobUpdater: @unchecked Sendable {
             }
             if let error = writeError { throw error }
         } catch {
-            log("Failed to delete sync record for \(entityUUID): \(error)")
+            log("Failed to mark sync record as deleted for \(entityUUID): \(error)")
         }
     }
 
@@ -569,6 +573,7 @@ public final class SyncBlobUpdater: @unchecked Sendable {
                 }
 
                 record.setValue(compressed, forKey: "pRemoteEntityData")
+                record.setValue(nil, forKey: "pSyncedModificationDate")
                 try bgContext.save()
             } catch {
                 writeError = error

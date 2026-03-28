@@ -50,6 +50,7 @@ BanktivityLib        ← Pure domain library (no MCP dependency)
   CoreData/          PersistentContainer, DateConversion, WriteGuard, SyncBlobUpdater
   Repositories/      BaseRepository + 10 domain repositories
   Models/            DTOs, Constants, Errors, Formatting
+  Export/            RDF export: TurtleWriter, TurtleSerializer, VaultExporter
 
 BanktivityMCPLib     ← MCP glue (depends on BanktivityLib + MCP SDK)
   MCP/               ToolRegistry, ToolHelpers, Tools/*.swift
@@ -61,6 +62,8 @@ banktivity-cli       ← CLI executable (depends on BanktivityLib + ArgumentPars
 **MCP server flow**: `main.swift` → reads `BANKTIVITY_FILE_PATH` env → `PersistentContainerFactory.create()` → `WriteGuard` → `ToolRegistry.registerAllTools()` → MCP Server (stdio)
 
 **CLI flow**: `banktivity-cli <subcommand>` → reads `--vault` or `BANKTIVITY_FILE_PATH` → creates container + repos → executes command → JSON output
+
+**Export flow**: `VaultExporter.collectData()` fetches all DTOs from repositories → `TurtleSerializer` maps DTOs to Turtle triples via `TurtleWriter` → output as `.ttl` string. The `RDFSerializer` protocol allows adding JSON-LD or other formats later. The ontology ([sflinter/personal-finance-ontology](https://github.com/sflinter/personal-finance-ontology)) uses schema.org types where applicable and a custom `pfo:` namespace for personal finance concepts.
 
 Tests import `@testable import BanktivityLib`.
 
@@ -97,15 +100,17 @@ Property names are prefixed with `p` (e.g., `pName`, `pDate`, `pAccountClass`, `
 
 Banktivity's CloudKit sync uses `ZSYNCEDENTITY` records with gzipped XML blobs (`pRemoteEntityData`) representing each entity's last-synced state. When CLI/MCP tools modify transactions, the `SyncBlobUpdater` patches these blobs so Banktivity recognizes the changes and pushes them to CloudKit.
 
-**How it works**: After a Core Data write succeeds, `SyncBlobUpdater` fetches the `SyncedHostedEntity` by the transaction's `pUniqueID`, decompresses the gzip blob, applies XML string patches to the relevant fields, validates the result, and saves the compressed blob back.
+**How it works**: After a Core Data write succeeds, `SyncBlobUpdater` fetches the `SyncedHostedEntity` by the transaction's `pUniqueID`, decompresses the gzip blob, applies XML string patches to the relevant fields, validates the result, saves the compressed blob back, and nulls `pSyncedModificationDate` so Banktivity re-checks the record on next sync.
 
 **Operations patched**:
 - Reconcile/unreconcile: patches `cleared` and `statement` fields on line items in the blob
 - Recategorize: patches `account` reference on the category line item
 - Tag/untag: patches `tags` collection on line items
 - Transaction update: patches `title`, `note`, `date` at the transaction level
-- Transaction delete: removes the `SyncedHostedEntity` record entirely
+- Transaction delete: keeps the `SyncedHostedEntity` record but clears `pRemoteEntityData` and nulls `pSyncedModificationDate` — Banktivity sees the orphaned record and pushes the deletion to CloudKit
 
 **Non-fatal by design**: All blob updates are wrapped in try/catch. If a sync record is missing, decompression fails, or the XML can't be patched, the Core Data write still succeeds — only the sync push is skipped. Failures log to stderr.
+
+**`pSyncedModificationDate` must be NULL** for Banktivity to check a sync record during sync. Non-NULL means "already synced, skip". All blob patches must null this field after saving, otherwise changes made after the initial sync won't propagate to CloudKit.
 
 **LineItems and Statements have no separate sync records** — they're serialized inside the parent Transaction's blob. The `identifier` field in the XML maps to `pUniqueID` in Core Data.

@@ -1,6 +1,6 @@
 # Banktivity CLI — Complete Tool Reference
 
-All 61 tools with their input schemas. Invoke with:
+All 62 tools with their input schemas. Invoke with:
 ```sh
 BANKTIVITY_FILE_PATH="$HOME/Documents/Banktivity/My Accounts.bank8" banktivity-cli <tool> [--key value ...] 2>/dev/null
 ```
@@ -907,6 +907,21 @@ Delete price history for a security, optionally filtered by date range.
     "id": { "type": "number", "description": "Security ID (alternative to symbol)" },
     "start_date": { "type": "string", "description": "Start date in YYYY-MM-DD format (optional)" },
     "end_date": { "type": "string", "description": "End date in YYYY-MM-DD format (optional)" }
+  }
+}
+```
+
+---
+
+## Export
+
+### export_turtle
+Export the entire vault as RDF/Turtle (.ttl). Returns the Turtle content as text, or writes to a file if output_path is provided.
+
+```json
+{
+  "properties": {
+    "output_path": { "type": "string", "description": "Optional file path to write the .ttl output to. If omitted, returns the Turtle content directly." }
   }
 }
 ```

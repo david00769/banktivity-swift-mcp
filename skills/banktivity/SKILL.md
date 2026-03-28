@@ -93,6 +93,12 @@ Always redirect stderr with `2>/dev/null` — CoreData prints harmless warnings 
 | `create_tag` | `--name "name"` | Create a new tag |
 | `create_category` | `--name "name" --type expense\|income --parent_path "Parent"` | Create category or subcategory |
 
+### Export
+
+| Tool | Key Arguments | Notes |
+|---|---|---|
+| `export turtle` | `[--output /path/to/file.ttl]` | Export entire vault as RDF/Turtle; stdout if no output path |
+
 ### Other Tools
 
 Run `banktivity-cli <tool> --help 2>/dev/null` to see any tool's input schema. See `references/tools.md` for the complete list of all tools with full schemas.

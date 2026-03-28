@@ -1,6 +1,6 @@
 # banktivity-swift-mcp
 
-A [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server for [Banktivity](https://www.iggsoftware.com/banktivity/) personal finance files. It gives AI assistants like Claude full read/write access to your `.bank8` vault — accounts, transactions, categories, tags, templates, import rules, scheduled transactions, and securities.
+A [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server for [Banktivity](https://www.iggsoftware.com/banktivity/) personal finance files. It gives AI assistants like Claude full read/write access to your `.bank8` vault — accounts, transactions, categories, tags, templates, import rules, scheduled transactions, securities, and RDF export.
 
 Inspired by [banktivity-mcp](https://github.com/mhriemers/banktivity-mcp) (TypeScript/Node.js), this is a ground-up rewrite in Swift. The original uses `better-sqlite3` to read and write Core Data's SQLite store directly, bypassing Core Data's internal change tracking. This works for reads, but direct SQL writes are invisible to CloudKit sync — Banktivity doesn't know the data changed, and the vault can become corrupted or fail to sync. This Swift version uses `NSPersistentContainer` so all mutations go through Core Data's API, ensuring proper change tracking and CloudKit compatibility.
 
@@ -167,6 +167,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 - `import_security_prices` — Import prices from a CSV file (Yahoo Finance, OHLCV, or Date/Close)
 - `delete_security_prices` — Delete price history for a security (optional date range)
 
+### Export
+- `export_turtle` — Export the entire vault as RDF/Turtle (.ttl), optionally to a file
+
 ### Diagnostic
 - `dump_schema` — Inspect the Core Data model schema (entity names, attributes, relationships)
 
@@ -181,6 +184,7 @@ banktivity-cli transactions list --account-name "Checking" --start-date 2025-01-
 banktivity-cli transactions create --account-name "Checking" --date 2025-06-15 --title "Coffee" --amount -4.50 --category-name "Food"
 banktivity-cli tags get-by-tag --tag-name "Vacation" --limit 20
 banktivity-cli tags bulk-tag --transaction-ids "100,101,102" --tag-name "Vacation"
+banktivity-cli export turtle --output vault.ttl
 ```
 
 ### CLI Subcommands
@@ -196,6 +200,7 @@ banktivity-cli tags bulk-tag --transaction-ids "100,101,102" --tag-name "Vacatio
 - `scheduled list`, `scheduled get`, `scheduled create`, `scheduled update`, `scheduled delete`
 - `statements list`, `statements get`, `statements create`, `statements delete`, `statements reconcile`, `statements unreconcile`, `statements unreconciled`
 - `securities list`, `securities create`, `securities prices`, `securities holdings`, `securities trades`, `securities income`, `securities adjust`, `securities import-prices`, `securities delete-prices`
+- `export turtle`
 - `schema`
 
 Most commands that accept `--account-id` also accept `--account-name` as an alternative. The `transactions create` command supports `--line-items` with a JSON array for multi-line-item (split) transactions.
@@ -245,7 +250,7 @@ Banktivity's `.bank8` bundle is a directory containing compiled Core Data models
 
 1. Loads and merges all `.momd` model bundles from the vault
 2. Opens the SQLite store via `NSPersistentContainer` (no history tracking)
-3. Exposes 63 MCP tools over stdio transport
+3. Exposes 64 MCP tools over stdio transport
 4. Uses KVC (`value(forKey:)`) to access entities since we load Banktivity's own compiled models at runtime
 
 ## License

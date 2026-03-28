@@ -48,11 +48,12 @@ public struct LineItemDTO: Codable, Sendable {
     public let runningBalance: Double?
     public let cleared: Bool
     public let statementId: Int?
+    public let tags: [TagDTO]?
 
-    public init(id: Int, accountId: Int, accountName: String, amount: Double, memo: String?, runningBalance: Double?, cleared: Bool = false, statementId: Int? = nil) {
+    public init(id: Int, accountId: Int, accountName: String, amount: Double, memo: String?, runningBalance: Double?, cleared: Bool = false, statementId: Int? = nil, tags: [TagDTO]? = nil) {
         self.id = id; self.accountId = accountId; self.accountName = accountName
         self.amount = amount; self.memo = memo; self.runningBalance = runningBalance
-        self.cleared = cleared; self.statementId = statementId
+        self.cleared = cleared; self.statementId = statementId; self.tags = tags
     }
 }
 

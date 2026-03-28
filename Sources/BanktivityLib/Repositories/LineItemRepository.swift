@@ -162,6 +162,15 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
             statementId = nil
         }
 
+        let tagSet = Self.relatedSet(object, "pTags")
+        let tagDTOs = tagSet.map { tag in
+            TagDTO(
+                id: Self.extractPK(from: tag.objectID),
+                name: Self.stringValue(tag, "pName")
+            )
+        }.sorted { $0.name < $1.name }
+        let tags: [TagDTO]? = tagDTOs.isEmpty ? nil : tagDTOs
+
         return LineItemDTO(
             id: pk,
             accountId: accountId,
@@ -170,7 +179,8 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
             memo: Self.string(object, "pMemo"),
             runningBalance: Self.doubleValue(object, "pRunningBalance"),
             cleared: Self.boolValue(object, "pCleared"),
-            statementId: statementId
+            statementId: statementId,
+            tags: tags
         )
     }
 }
