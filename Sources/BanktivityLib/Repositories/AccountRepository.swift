@@ -114,6 +114,52 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
         return results
     }
 
+    /// List accounts with balances, optionally filtering out categories
+    public func listWithBalances(includeHidden: Bool = false, includeCategories: Bool = false) throws -> [AccountDTO] {
+        var accountList = try list(includeHidden: includeHidden)
+        if !includeCategories {
+            accountList = accountList.filter { $0.accountClass < AccountClass.income }
+        }
+        return try accountList.map { account in
+            let balance = try getBalance(accountId: account.id)
+            return AccountDTO(
+                id: account.id,
+                name: account.name,
+                fullName: account.fullName,
+                accountClass: account.accountClass,
+                accountType: account.accountType,
+                hidden: account.hidden,
+                currency: account.currency,
+                balance: balance,
+                formattedBalance: formatCurrency(balance, currency: account.currency ?? "EUR")
+            )
+        }
+    }
+
+    /// Get a summary of the vault (account counts by type, category counts, tag count, net worth)
+    public func getSummary(tagCount: Int) throws -> SummaryDTO {
+        let allAccounts = try list(includeHidden: true)
+        let netWorth = try getNetWorth()
+        let bankAccounts = allAccounts.filter { $0.accountClass < AccountClass.income }
+        let transactionCount = try count(entityName: "Transaction")
+
+        return SummaryDTO(
+            accounts: SummaryDTO.AccountSummary(
+                total: bankAccounts.count,
+                checking: bankAccounts.filter { $0.accountClass == AccountClass.checking }.count,
+                savings: bankAccounts.filter { $0.accountClass == AccountClass.savings }.count,
+                creditCards: bankAccounts.filter { $0.accountClass == AccountClass.creditCard }.count
+            ),
+            categories: SummaryDTO.CategorySummary(
+                income: allAccounts.filter { $0.accountClass == AccountClass.income }.count,
+                expense: allAccounts.filter { $0.accountClass == AccountClass.expense }.count
+            ),
+            transactions: transactionCount,
+            tags: tagCount,
+            netWorth: netWorth
+        )
+    }
+
     /// Resolve an account from either an ID or a name, preferring ID
     public func resolveAccountId(id: Int?, name: String?) throws -> Int {
         if let id = id {

@@ -16,25 +16,11 @@ func registerExportTools(registry: ToolRegistry, container: NSPersistentContaine
             ),
         ])
     ) { arguments in
-        let vaultName = URL(fileURLWithPath: bankFilePath)
-            .deletingPathExtension().lastPathComponent
-
-        let data = try VaultExporter.collectData(
-            container: container, vaultName: vaultName
-        )
-        let serializer = TurtleSerializer()
-        let turtle = serializer.serialize(data)
+        let turtle = try VaultExporter.exportTurtle(container: container, bankFilePath: bankFilePath)
 
         if let outputPath = ToolHelpers.getString(arguments, key: "output_path") {
             try turtle.write(toFile: outputPath, atomically: true, encoding: .utf8)
-            return ToolHelpers.successResponse("Exported to \(outputPath)", data: [
-                "path": outputPath,
-                "accounts": data.accounts.count,
-                "transactions": data.transactions.count,
-                "categories": data.categories.count,
-                "securities": data.securities.count,
-                "statements": data.statements.count,
-            ] as [String: Any])
+            return ToolHelpers.successResponse("Exported to \(outputPath)")
         }
 
         return CallTool.Result(content: [.text(turtle)])

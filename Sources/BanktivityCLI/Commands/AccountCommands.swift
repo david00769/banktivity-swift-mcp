@@ -26,31 +26,11 @@ struct Accounts: AsyncParsableCommand {
             let container = try BanktivityCLI.createContainer(vaultPath: path)
             let accounts = AccountRepository(container: container)
 
-            var accountList = try accounts.list(includeHidden: includeHidden)
-
-            if !includeCategories {
-                accountList = accountList.filter { $0.accountClass < 6000 }
-            }
-
-            let accountsWithBalances: [[String: Any]] = try accountList.map { account in
-                let balance = try accounts.getBalance(accountId: account.id)
-                var dict: [String: Any] = [
-                    "id": account.id,
-                    "name": account.name,
-                    "fullName": account.fullName,
-                    "accountClass": account.accountClass,
-                    "accountType": account.accountType,
-                    "hidden": account.hidden,
-                    "balance": balance,
-                    "formattedBalance": formatCurrency(balance, currency: account.currency ?? "EUR"),
-                ]
-                if let currency = account.currency {
-                    dict["currency"] = currency
-                }
-                return dict
-            }
-
-            try outputJSON(accountsWithBalances, format: parent.format)
+            let result = try accounts.listWithBalances(
+                includeHidden: includeHidden,
+                includeCategories: includeCategories
+            )
+            try outputJSON(result, format: parent.format)
         }
     }
 
@@ -155,37 +135,7 @@ struct Accounts: AsyncParsableCommand {
             let accounts = AccountRepository(container: container)
             let tags = TagRepository(container: container)
 
-            let allAccounts = try accounts.list(includeHidden: true)
-            let netWorth = try accounts.getNetWorth()
-            let bankAccounts = allAccounts.filter { $0.accountClass < 6000 }
-            let incomeCategories = allAccounts.filter { $0.accountClass == AccountClass.income }
-            let expenseCategories = allAccounts.filter { $0.accountClass == AccountClass.expense }
-            let tagCount = try tags.list().count
-
-            let accountsSummary: [String: Any] = [
-                "total": bankAccounts.count,
-                "checking": bankAccounts.filter { $0.accountClass == AccountClass.checking }.count,
-                "savings": bankAccounts.filter { $0.accountClass == AccountClass.savings }.count,
-                "creditCards": bankAccounts.filter { $0.accountClass == AccountClass.creditCard }.count,
-            ]
-            let categoriesSummary: [String: Any] = [
-                "income": incomeCategories.count,
-                "expense": expenseCategories.count,
-            ]
-            let netWorthSummary: [String: Any] = [
-                "assets": netWorth.assets,
-                "liabilities": netWorth.liabilities,
-                "netWorth": netWorth.netWorth,
-                "formattedAssets": netWorth.formattedAssets ?? "",
-                "formattedLiabilities": netWorth.formattedLiabilities ?? "",
-                "formattedNetWorth": netWorth.formattedNetWorth ?? "",
-            ]
-            let summary: [String: Any] = [
-                "accounts": accountsSummary,
-                "categories": categoriesSummary,
-                "tags": tagCount,
-                "netWorth": netWorthSummary,
-            ]
+            let summary = try accounts.getSummary(tagCount: try tags.list().count)
             try outputJSON(summary, format: parent.format)
         }
     }

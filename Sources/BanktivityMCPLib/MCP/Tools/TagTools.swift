@@ -64,31 +64,18 @@ func registerTagTools(
             return ToolHelpers.errorResponse("transaction_id is required")
         }
 
-        // Resolve tag
-        var tagId: Int
-        if let id = ToolHelpers.getInt(arguments, key: "tag_id") {
-            tagId = id
-        } else if let name = ToolHelpers.getString(arguments, key: "tag_name") {
-            let tag = try tags.create(name: name)
-            tagId = tag.id
-        } else {
-            return ToolHelpers.errorResponse("Either tag_name or tag_id is required")
-        }
-
+        let tagId = try tags.resolveTagId(
+            id: ToolHelpers.getInt(arguments, key: "tag_id"),
+            name: ToolHelpers.getString(arguments, key: "tag_name"),
+            autoCreate: true
+        )
         let action = ToolHelpers.getString(arguments, key: "action") ?? "add"
+        _ = try tags.applyTag(transactionId: transactionId, tagId: tagId, action: action)
 
-        let count: Int
-        if action == "remove" {
-            count = try tags.untagTransaction(transactionId: transactionId, tagId: tagId)
-        } else {
-            count = try tags.tagTransaction(transactionId: transactionId, tagId: tagId)
-        }
-
-        // Fetch updated transaction
         if let tx = try transactions.get(transactionId: transactionId) {
             return try ToolHelpers.jsonResponse(tx)
         }
-        return ToolHelpers.successResponse("Tagged \(count) line items")
+        return ToolHelpers.successResponse("Tag applied")
     }
 
     // get_transactions_by_tag
@@ -103,35 +90,15 @@ func registerTagTools(
             "limit": ToolHelpers.property(type: "number", description: "Maximum number of transactions to return (default: 50)"),
         ])
     ) { arguments in
-        var tagId: Int
-        if let id = ToolHelpers.getInt(arguments, key: "tag_id") {
-            tagId = id
-        } else if let name = ToolHelpers.getString(arguments, key: "tag_name") {
-            guard let tag = try tags.findByName(name) else {
-                return ToolHelpers.errorResponse("Tag not found: \(name)")
-            }
-            tagId = tag.id
-        } else {
-            return ToolHelpers.errorResponse("Either tag_name or tag_id is required")
-        }
-
-        let startDate = ToolHelpers.getString(arguments, key: "start_date")
-        let endDate = ToolHelpers.getString(arguments, key: "end_date")
-        let limit = ToolHelpers.getInt(arguments, key: "limit") ?? 50
-
-        let txObjects = try tags.getTransactionsByTag(
-            tagId: tagId,
-            startDate: startDate,
-            endDate: endDate,
-            limit: limit
+        let results = try tags.getTransactionDTOsByTag(
+            tagId: ToolHelpers.getInt(arguments, key: "tag_id"),
+            tagName: ToolHelpers.getString(arguments, key: "tag_name"),
+            startDate: ToolHelpers.getString(arguments, key: "start_date"),
+            endDate: ToolHelpers.getString(arguments, key: "end_date"),
+            limit: ToolHelpers.getInt(arguments, key: "limit") ?? 50,
+            transactionRepo: transactions
         )
-
-        // Map to DTOs using transaction repo
-        let txDTOs: [TransactionDTO] = txObjects.compactMap { obj in
-            try? transactions.get(transactionId: BaseRepository.extractPK(from: obj.objectID))
-        }
-
-        return try ToolHelpers.jsonResponse(txDTOs)
+        return try ToolHelpers.jsonResponse(results)
     }
 
     // bulk_tag_transactions
@@ -160,27 +127,13 @@ func registerTagTools(
             return nil
         }
 
-        // Resolve tag
-        var tagId: Int
-        if let id = ToolHelpers.getInt(arguments, key: "tag_id") {
-            tagId = id
-        } else if let name = ToolHelpers.getString(arguments, key: "tag_name") {
-            let tag = try tags.create(name: name)
-            tagId = tag.id
-        } else {
-            return ToolHelpers.errorResponse("Either tag_name or tag_id is required")
-        }
-
+        let tagId = try tags.resolveTagId(
+            id: ToolHelpers.getInt(arguments, key: "tag_id"),
+            name: ToolHelpers.getString(arguments, key: "tag_name"),
+            autoCreate: true
+        )
         let action = ToolHelpers.getString(arguments, key: "action") ?? "add"
-        var totalCount = 0
-
-        for txId in transactionIds {
-            if action == "remove" {
-                totalCount += try tags.untagTransaction(transactionId: txId, tagId: tagId)
-            } else {
-                totalCount += try tags.tagTransaction(transactionId: txId, tagId: tagId)
-            }
-        }
+        let totalCount = try tags.bulkApplyTag(transactionIds: transactionIds, tagId: tagId, action: action)
 
         return ToolHelpers.successResponse("\(action == "remove" ? "Removed" : "Added") tag on \(totalCount) line items across \(transactionIds.count) transactions")
     }

@@ -5,6 +5,16 @@ import Foundation
 
 public struct VaultExporter: Sendable {
 
+    public static func exportTurtle(
+        container: NSPersistentContainer,
+        bankFilePath: String
+    ) throws -> String {
+        let vaultName = URL(fileURLWithPath: bankFilePath)
+            .deletingPathExtension().lastPathComponent
+        let data = try collectData(container: container, vaultName: vaultName)
+        return TurtleSerializer().serialize(data)
+    }
+
     public static func collectData(
         container: NSPersistentContainer,
         vaultName: String

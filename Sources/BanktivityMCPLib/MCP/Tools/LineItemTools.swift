@@ -61,17 +61,12 @@ func registerLineItemTools(
         let accountId = try resolveAccountId(accounts: accounts, arguments: arguments)
         let memo = ToolHelpers.getString(arguments, key: "memo")
 
-        _ = try lineItems.create(
+        let updatedItems = try lineItems.addToTransaction(
             transactionId: transactionId,
             accountId: accountId,
             amount: amount,
             memo: memo
         )
-
-        try lineItems.recalculateRunningBalances(accountId: accountId)
-
-        // Return the updated line items
-        let updatedItems = try lineItems.getForTransactionPK(transactionId)
         return try ToolHelpers.jsonResponse(updatedItems)
     }
 
@@ -104,19 +99,12 @@ func registerLineItemTools(
         let amount = ToolHelpers.getDouble(arguments, key: "amount")
         let memo = ToolHelpers.getString(arguments, key: "memo")
 
-        let affectedAccounts = try lineItems.update(
+        guard let updated = try lineItems.updateWithRecalculation(
             lineItemId: lineItemId,
             accountId: newAccountId,
             amount: amount,
             memo: memo
-        )
-
-        // Recalculate running balances for affected accounts
-        for accountId in affectedAccounts {
-            try lineItems.recalculateRunningBalances(accountId: accountId)
-        }
-
-        guard let updated = try lineItems.get(lineItemId: lineItemId) else {
+        ) else {
             return ToolHelpers.errorResponse("Line item not found after update")
         }
         return try ToolHelpers.jsonResponse(updated)
@@ -140,11 +128,9 @@ func registerLineItemTools(
             return ToolHelpers.errorResponse("line_item_id is required")
         }
 
-        guard let info = try lineItems.delete(lineItemId: lineItemId) else {
+        guard try lineItems.deleteWithRecalculation(lineItemId: lineItemId) else {
             return ToolHelpers.errorResponse("Line item not found: \(lineItemId)")
         }
-
-        try lineItems.recalculateRunningBalances(accountId: info.accountId)
         return ToolHelpers.successResponse("Line item \(lineItemId) deleted")
     }
 }

@@ -61,15 +61,12 @@ struct LineItems: AsyncParsableCommand {
             let resolvedId = try accounts.resolveAccountId(id: accountId, name: accountName)
 
             let lineItems = LineItemRepository(container: container)
-            _ = try lineItems.create(
+            let updatedItems = try lineItems.addToTransaction(
                 transactionId: transactionId,
                 accountId: resolvedId,
                 amount: amount,
                 memo: memo
             )
-            try lineItems.recalculateRunningBalances(accountId: resolvedId)
-
-            let updatedItems = try lineItems.getForTransactionPK(transactionId)
             try outputJSON(updatedItems, format: parent.format)
         }
     }
@@ -109,18 +106,12 @@ struct LineItems: AsyncParsableCommand {
             }
 
             let lineItems = LineItemRepository(container: container)
-            let affectedAccounts = try lineItems.update(
+            guard let updated = try lineItems.updateWithRecalculation(
                 lineItemId: id,
                 accountId: resolvedAccountId,
                 amount: amount,
                 memo: memo
-            )
-
-            for acctId in affectedAccounts {
-                try lineItems.recalculateRunningBalances(accountId: acctId)
-            }
-
-            guard let updated = try lineItems.get(lineItemId: id) else {
+            ) else {
                 throw ToolError.notFound("Line item not found after update")
             }
             try outputJSON(updated, format: parent.format)
@@ -142,10 +133,9 @@ struct LineItems: AsyncParsableCommand {
             try await guardWrite(writeGuard)
 
             let lineItems = LineItemRepository(container: container)
-            guard let info = try lineItems.delete(lineItemId: id) else {
+            guard try lineItems.deleteWithRecalculation(lineItemId: id) else {
                 throw ToolError.notFound("Line item not found: \(id)")
             }
-            try lineItems.recalculateRunningBalances(accountId: info.accountId)
             try outputJSON(["message": "Line item \(id) deleted"] as [String: Any], format: parent.format)
         }
     }

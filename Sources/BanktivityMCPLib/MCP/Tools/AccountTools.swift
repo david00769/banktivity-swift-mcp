@@ -18,32 +18,11 @@ func registerAccountTools(registry: ToolRegistry, accounts: AccountRepository, t
         let includeHidden = ToolHelpers.getBool(arguments, key: "include_hidden")
         let includeCategories = ToolHelpers.getBool(arguments, key: "include_categories")
 
-        var accountList = try accounts.list(includeHidden: includeHidden)
-
-        if !includeCategories {
-            accountList = accountList.filter { $0.accountClass < 6000 }
-        }
-
-        // Add balances
-        let accountsWithBalances: [[String: Any]] = try accountList.map { account in
-            let balance = try accounts.getBalance(accountId: account.id)
-            var dict: [String: Any] = [
-                "id": account.id,
-                "name": account.name,
-                "fullName": account.fullName,
-                "accountClass": account.accountClass,
-                "accountType": account.accountType,
-                "hidden": account.hidden,
-                "balance": balance,
-                "formattedBalance": ToolHelpers.formatCurrency(balance, currency: account.currency ?? "EUR"),
-            ]
-            if let currency = account.currency {
-                dict["currency"] = currency
-            }
-            return dict
-        }
-
-        return ToolHelpers.jsonResponse(accountsWithBalances)
+        let result = try accounts.listWithBalances(
+            includeHidden: includeHidden,
+            includeCategories: includeCategories
+        )
+        return try ToolHelpers.jsonResponse(result)
     }
 
     // get_account_balance
@@ -120,38 +99,9 @@ func registerAccountTools(registry: ToolRegistry, accounts: AccountRepository, t
         description: "Get a summary of the Banktivity database including account counts and transaction totals",
         inputSchema: ToolHelpers.schema(properties: [:])
     ) { [weak tags] _ in
-        let allAccounts = try accounts.list(includeHidden: true)
-        let netWorth = try accounts.getNetWorth()
-
-        let bankAccounts = allAccounts.filter { $0.accountClass < 6000 }
-        let incomeCategories = allAccounts.filter { $0.accountClass == AccountClass.income }
-        let expenseCategories = allAccounts.filter { $0.accountClass == AccountClass.expense }
-
         let tagCount = try tags?.list().count ?? 0
-
-        let summary: [String: Any] = [
-            "accounts": [
-                "total": bankAccounts.count,
-                "checking": bankAccounts.filter { $0.accountClass == AccountClass.checking }.count,
-                "savings": bankAccounts.filter { $0.accountClass == AccountClass.savings }.count,
-                "creditCards": bankAccounts.filter { $0.accountClass == AccountClass.creditCard }.count,
-            ],
-            "categories": [
-                "income": incomeCategories.count,
-                "expense": expenseCategories.count,
-            ],
-            "tags": tagCount,
-            "netWorth": [
-                "assets": netWorth.assets,
-                "liabilities": netWorth.liabilities,
-                "netWorth": netWorth.netWorth,
-                "formattedAssets": netWorth.formattedAssets ?? "",
-                "formattedLiabilities": netWorth.formattedLiabilities ?? "",
-                "formattedNetWorth": netWorth.formattedNetWorth ?? "",
-            ],
-        ]
-
-        return ToolHelpers.jsonResponse(summary)
+        let summary = try accounts.getSummary(tagCount: tagCount)
+        return try ToolHelpers.jsonResponse(summary)
     }
 }
 

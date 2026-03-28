@@ -175,7 +175,60 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
         return count
     }
 
-    /// Get transactions that have a specific tag
+    /// Resolve a tag ID from either an ID or a name (auto-creates if name given)
+    public func resolveTagId(id: Int? = nil, name: String? = nil, autoCreate: Bool = false) throws -> Int {
+        if let id = id { return id }
+        if let name = name {
+            if autoCreate {
+                return try create(name: name).id
+            }
+            guard let tag = try findByName(name) else {
+                throw ToolError.notFound("Tag not found: \(name)")
+            }
+            return tag.id
+        }
+        throw ToolError.missingParameter("Either tag_id or tag_name is required")
+    }
+
+    /// Add or remove a tag from a transaction by action string
+    public func applyTag(transactionId: Int, tagId: Int, action: String = "add") throws -> Int {
+        if action == "remove" {
+            return try untagTransaction(transactionId: transactionId, tagId: tagId)
+        }
+        return try tagTransaction(transactionId: transactionId, tagId: tagId)
+    }
+
+    /// Bulk add or remove a tag across multiple transactions
+    public func bulkApplyTag(transactionIds: [Int], tagId: Int, action: String = "add") throws -> Int {
+        var totalCount = 0
+        for txId in transactionIds {
+            totalCount += try applyTag(transactionId: txId, tagId: tagId, action: action)
+        }
+        return totalCount
+    }
+
+    /// Get transactions that have a specific tag as DTOs
+    public func getTransactionDTOsByTag(
+        tagId: Int? = nil,
+        tagName: String? = nil,
+        startDate: String? = nil,
+        endDate: String? = nil,
+        limit: Int = 50,
+        transactionRepo: TransactionRepository
+    ) throws -> [TransactionDTO] {
+        let resolvedId = try resolveTagId(id: tagId, name: tagName)
+        let txObjects = try getTransactionsByTag(
+            tagId: resolvedId,
+            startDate: startDate,
+            endDate: endDate,
+            limit: limit
+        )
+        return txObjects.compactMap { obj in
+            try? transactionRepo.get(transactionId: Self.extractPK(from: obj.objectID))
+        }
+    }
+
+    /// Get transactions that have a specific tag (raw Core Data objects)
     public func getTransactionsByTag(
         tagId: Int,
         accountId: Int? = nil,

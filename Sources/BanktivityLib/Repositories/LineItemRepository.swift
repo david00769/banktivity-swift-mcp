@@ -140,6 +140,30 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
+    // MARK: - High-level Operations (create/update/delete with recalculation)
+
+    public func addToTransaction(transactionId: Int, accountId: Int, amount: Double, memo: String? = nil) throws -> [LineItemDTO] {
+        _ = try create(transactionId: transactionId, accountId: accountId, amount: amount, memo: memo)
+        try recalculateRunningBalances(accountId: accountId)
+        return try getForTransactionPK(transactionId)
+    }
+
+    public func updateWithRecalculation(lineItemId: Int, accountId: Int? = nil, amount: Double? = nil, memo: String? = nil) throws -> LineItemDTO? {
+        let affectedAccounts = try update(lineItemId: lineItemId, accountId: accountId, amount: amount, memo: memo)
+        for acctId in affectedAccounts {
+            try recalculateRunningBalances(accountId: acctId)
+        }
+        return try get(lineItemId: lineItemId)
+    }
+
+    public func deleteWithRecalculation(lineItemId: Int) throws -> Bool {
+        guard let info = try delete(lineItemId: lineItemId) else {
+            return false
+        }
+        try recalculateRunningBalances(accountId: info.accountId)
+        return true
+    }
+
     // MARK: - DTO Mapping
 
     public func mapToDTO(_ object: NSManagedObject) -> LineItemDTO {

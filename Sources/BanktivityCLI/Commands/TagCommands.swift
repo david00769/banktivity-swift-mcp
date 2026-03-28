@@ -74,23 +74,8 @@ struct Tags: AsyncParsableCommand {
             let syncBlobUpdater = SyncBlobUpdater(container: container)
             let tags = TagRepository(container: container, syncBlobUpdater: syncBlobUpdater)
 
-            let resolvedTagId: Int
-            if let id = tagId {
-                resolvedTagId = id
-            } else if let name = tagName {
-                let tag = try tags.create(name: name)
-                resolvedTagId = tag.id
-            } else {
-                throw ToolError.missingParameter("Either --tag-name or --tag-id is required")
-            }
-
-            let count: Int
-            if action == "remove" {
-                count = try tags.untagTransaction(transactionId: transactionId, tagId: resolvedTagId)
-            } else {
-                count = try tags.tagTransaction(transactionId: transactionId, tagId: resolvedTagId)
-            }
-
+            let resolvedTagId = try tags.resolveTagId(id: tagId, name: tagName, autoCreate: true)
+            let count = try tags.applyTag(transactionId: transactionId, tagId: resolvedTagId, action: action)
             try outputJSON(["message": "Tagged \(count) line items", "action": action] as [String: Any], format: parent.format)
         }
     }
@@ -125,30 +110,15 @@ struct Tags: AsyncParsableCommand {
             let lineItemRepo = LineItemRepository(container: container)
             let transactions = TransactionRepository(container: container, lineItemRepo: lineItemRepo)
 
-            let resolvedTagId: Int
-            if let id = tagId {
-                resolvedTagId = id
-            } else if let name = tagName {
-                guard let tag = try tags.findByName(name) else {
-                    throw ToolError.notFound("Tag not found: \(name)")
-                }
-                resolvedTagId = tag.id
-            } else {
-                throw ToolError.missingParameter("Either --tag-name or --tag-id is required")
-            }
-
-            let txObjects = try tags.getTransactionsByTag(
-                tagId: resolvedTagId,
+            let results = try tags.getTransactionDTOsByTag(
+                tagId: tagId,
+                tagName: tagName,
                 startDate: startDate,
                 endDate: endDate,
-                limit: limit
+                limit: limit,
+                transactionRepo: transactions
             )
-
-            let txDTOs: [TransactionDTO] = txObjects.compactMap { obj in
-                try? transactions.get(transactionId: BaseRepository.extractPK(from: obj.objectID))
-            }
-
-            try outputJSON(txDTOs, format: parent.format)
+            try outputJSON(results, format: parent.format)
         }
     }
 
@@ -186,24 +156,8 @@ struct Tags: AsyncParsableCommand {
                 throw ToolError.invalidInput("No valid transaction IDs provided")
             }
 
-            let resolvedTagId: Int
-            if let id = tagId {
-                resolvedTagId = id
-            } else if let name = tagName {
-                let tag = try tags.create(name: name)
-                resolvedTagId = tag.id
-            } else {
-                throw ToolError.missingParameter("Either --tag-name or --tag-id is required")
-            }
-
-            var totalCount = 0
-            for txId in ids {
-                if action == "remove" {
-                    totalCount += try tags.untagTransaction(transactionId: txId, tagId: resolvedTagId)
-                } else {
-                    totalCount += try tags.tagTransaction(transactionId: txId, tagId: resolvedTagId)
-                }
-            }
+            let resolvedTagId = try tags.resolveTagId(id: tagId, name: tagName, autoCreate: true)
+            let totalCount = try tags.bulkApplyTag(transactionIds: ids, tagId: resolvedTagId, action: action)
 
             try outputJSON([
                 "message": "\(action == "remove" ? "Removed" : "Added") tag on \(totalCount) line items across \(ids.count) transactions",

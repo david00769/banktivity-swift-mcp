@@ -24,14 +24,7 @@ struct Export: AsyncParsableCommand {
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
-            let vaultName = URL(fileURLWithPath: path)
-                .deletingPathExtension().lastPathComponent
-
-            let data = try VaultExporter.collectData(
-                container: container, vaultName: vaultName
-            )
-            let serializer = TurtleSerializer()
-            let turtle = serializer.serialize(data)
+            let turtle = try VaultExporter.exportTurtle(container: container, bankFilePath: path)
 
             if let output = output {
                 try turtle.write(toFile: output, atomically: true, encoding: .utf8)
