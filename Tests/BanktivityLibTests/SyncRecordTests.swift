@@ -141,7 +141,7 @@ struct SyncRecordTests {
         #expect(!xml.contains("distributionType"))
     }
 
-    @Test("deleteSyncRecord removes the record")
+    @Test("deleteSyncRecord clears blob and nulls modification date")
     func deleteSyncRecord() throws {
         let vault = try TestVaultHelper.createFreshVault()
         defer { TestVaultHelper.cleanup(vault) }
@@ -164,16 +164,22 @@ struct SyncRecordTests {
             transactionTypeBaseType: "deposit", transactionTypeUUID: UUID().uuidString
         )
 
-        // Verify exists
+        // Verify exists with blob data
         let request = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
         request.predicate = NSPredicate(format: "pLocalID == %@", txUUID)
-        #expect(try vault.container.viewContext.fetch(request).count == 1)
+        let before = try vault.container.viewContext.fetch(request)
+        #expect(before.count == 1)
+        #expect(before.first?.value(forKey: "pRemoteEntityData") != nil)
 
-        // Delete
+        // Mark as deleted
         updater.deleteSyncRecord(entityUUID: txUUID)
 
-        // Verify gone
+        // Record kept but blob cleared and modification date nulled for sync pickup
         vault.container.viewContext.refreshAllObjects()
-        #expect(try vault.container.viewContext.fetch(request).count == 0)
+        let after = try vault.container.viewContext.fetch(request)
+        #expect(after.count == 1, "Record should be kept for sync propagation")
+        let record = try #require(after.first)
+        #expect(record.value(forKey: "pRemoteEntityData") == nil, "Blob should be cleared")
+        #expect(record.value(forKey: "pSyncedModificationDate") == nil, "Must be NULL for sync pickup")
     }
 }
