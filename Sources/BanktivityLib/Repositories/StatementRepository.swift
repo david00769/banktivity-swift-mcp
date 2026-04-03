@@ -374,7 +374,11 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
 
         let lineItems = Self.relatedSet(object, "pLineItems")
         let reconciledBalance = lineItems.reduce(0.0) { sum, li in
-            sum + Self.doubleValue(li, "pTransactionAmount")
+            var amount = Self.doubleValue(li, "pTransactionAmount")
+            if let sli = Self.relatedObject(li, "pSecurityLineItem") {
+                amount += Self.doubleValue(sli, "pAmount")
+            }
+            return sum + amount
         }
         let expectedChange = endingBalance - beginningBalance
         let difference = expectedChange - reconciledBalance
@@ -433,7 +437,11 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
 
         let lineItems = Self.relatedSet(object, "pLineItems")
         let reconciledBalance = lineItems.reduce(0.0) { sum, li in
-            sum + Self.doubleValue(li, "pTransactionAmount")
+            var amount = Self.doubleValue(li, "pTransactionAmount")
+            if let sli = Self.relatedObject(li, "pSecurityLineItem") {
+                amount += Self.doubleValue(sli, "pAmount")
+            }
+            return sum + amount
         }
         let expectedChange = endingBalance - beginningBalance
         let difference = expectedChange - reconciledBalance
