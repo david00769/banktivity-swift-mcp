@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.13.0
+
+- Fix deletion sync: set `pSyncedState = 3` with current timestamp to signal deletion to CloudKit, instead of clearing blob and nulling modification date (which Banktivity ignored)
+- Fix statement deletion sync: `StatementRepository.delete()` now marks the statement's own sync record for deletion
+- Add `transactions sync-info` CLI command for inspecting sync record state
+- Add `SyncBlobUpdater.inspectSyncRecord()` diagnostic method
+
 ## v0.12.0
 
 - Fix statement reconciliation balance to include SecurityLineItem amounts (`pAmount`) alongside regular line item amounts (`pTransactionAmount`), matching Banktivity's own calculation for investment accounts

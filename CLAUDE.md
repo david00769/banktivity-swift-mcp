@@ -107,7 +107,7 @@ Banktivity's CloudKit sync uses `ZSYNCEDENTITY` records with gzipped XML blobs (
 - Recategorize: patches `account` reference on the category line item
 - Tag/untag: patches `tags` collection on line items
 - Transaction update: patches `title`, `note`, `date` at the transaction level
-- Transaction delete: keeps the `SyncedHostedEntity` record but clears `pRemoteEntityData` and nulls `pSyncedModificationDate` — Banktivity sees the orphaned record and pushes the deletion to CloudKit
+- Transaction delete: keeps the `SyncedHostedEntity` record, sets `pSyncedState = 3` and `pSyncedModificationDate` to the current timestamp — Banktivity recognises state 3 as "deleted" and pushes the deletion to CloudKit. The blob (`pRemoteEntityData`) is preserved so Banktivity knows what to delete.
 
 **Non-fatal by design**: All blob updates are wrapped in try/catch. If a sync record is missing, decompression fails, or the XML can't be patched, the Core Data write still succeeds — only the sync push is skipped. Failures log to stderr.
 

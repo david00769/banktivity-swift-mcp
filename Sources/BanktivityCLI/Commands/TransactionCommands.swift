@@ -2,12 +2,13 @@
 
 import ArgumentParser
 import BanktivityLib
+import CoreData
 import Foundation
 
 struct Transactions: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Transaction operations",
-        subcommands: [List.self, Search.self, Get.self, Create.self, Update.self, Delete.self]
+        subcommands: [List.self, Search.self, Get.self, Create.self, Update.self, Delete.self, SyncInfo.self]
     )
 
     struct List: AsyncParsableCommand {
@@ -267,6 +268,68 @@ struct Transactions: AsyncParsableCommand {
                 throw ToolError.notFound("Transaction not found: \(id)")
             }
             try outputJSON(["message": "Transaction \(id) deleted"] as [String: Any], format: parent.format)
+        }
+    }
+
+    struct SyncInfo: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "sync-info",
+            abstract: "Show sync record details for a transaction"
+        )
+
+        @OptionGroup var parent: GlobalOptions
+
+        @Argument(help: "Transaction ID")
+        var id: Int
+
+        func run() async throws {
+            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
+            let container = try BanktivityCLI.createContainer(vaultPath: path)
+
+            let lineItemRepo = LineItemRepository(container: container)
+            let transactions = TransactionRepository(container: container, lineItemRepo: lineItemRepo)
+            let syncBlobUpdater = SyncBlobUpdater(container: container)
+
+            // Get the transaction's UUID
+            guard let tx = try transactions.get(transactionId: id) else {
+                throw ToolError.notFound("Transaction \(id) not found")
+            }
+
+            // Look up UUID via Core Data — use pUniqueID predicate search
+            let ctx = container.newBackgroundContext()
+            nonisolated(unsafe) var uuid: String?
+            ctx.performAndWait {
+                // Fetch all transactions and find by PK (extracted from objectID URI)
+                let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+                if let results = try? ctx.fetch(request) {
+                    for obj in results {
+                        let uri = obj.objectID.uriRepresentation().absoluteString
+                        if uri.hasSuffix("/p\(id)") {
+                            uuid = obj.value(forKey: "pUniqueID") as? String
+                            break
+                        }
+                    }
+                }
+            }
+            guard let uuid else {
+                throw ToolError.notFound("Could not get UUID for transaction \(id)")
+            }
+
+            var output: [String: Any] = [
+                "transactionId": id,
+                "transactionUUID": uuid,
+                "title": tx.title,
+                "date": tx.date
+            ]
+
+            if let syncInfo = syncBlobUpdater.inspectSyncRecord(entityUUID: uuid) {
+                output["syncRecord"] = syncInfo
+            } else {
+                output["syncRecord"] = "NOT FOUND — no SyncedHostedEntity for this UUID"
+            }
+
+            let data = try JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys])
+            print(String(data: data, encoding: .utf8)!)
         }
     }
 }

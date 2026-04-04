@@ -91,6 +91,9 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             return false
         }
 
+        // Get UUID for sync record deletion
+        let statementUUID = Self.stringValue(statement, "pUniqueID")
+
         // Gather info for blob patching before cascade
         var txLineItems: [String: [String]] = [:]
         let lineItems = Self.relatedSet(statement, "pLineItems")
@@ -120,7 +123,12 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             ctx.delete(obj)
         }
 
-        // Patch sync blobs (non-fatal)
+        // Mark statement sync record as deleted (non-fatal)
+        if let updater = syncBlobUpdater, !statementUUID.isEmpty {
+            updater.deleteSyncRecord(entityUUID: statementUUID)
+        }
+
+        // Patch transaction sync blobs to reflect unreconciled line items (non-fatal)
         if let updater = syncBlobUpdater {
             for (txUUID, liUUIDs) in txLineItems {
                 updater.updateTransactionBlob(transactionUUID: txUUID) { xml in

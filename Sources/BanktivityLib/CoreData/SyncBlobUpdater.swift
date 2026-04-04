@@ -63,9 +63,10 @@ public final class SyncBlobUpdater: @unchecked Sendable {
         }
     }
 
-    /// Mark a sync record for deletion rather than removing it.
-    /// Banktivity detects the entity is gone from Core Data on next sync
-    /// and pushes the deletion to CloudKit.
+    /// Mark a sync record for deletion.
+    /// Sets pSyncedState = 3 and updates pSyncedModificationDate to trigger
+    /// Banktivity's sync to push the deletion to CloudKit.
+    /// The blob is preserved so Banktivity knows what to delete.
     public func deleteSyncRecord(entityUUID: String) {
         do {
             let bgContext = container.newBackgroundContext()
@@ -73,11 +74,13 @@ public final class SyncBlobUpdater: @unchecked Sendable {
             bgContext.performAndWait {
                 do {
                     guard let record = try self.fetchSyncRecord(entityUUID: entityUUID, in: bgContext) else {
+                        self.log("No SyncedHostedEntity found for UUID \(entityUUID) — deletion will not propagate to CloudKit")
                         return
                     }
-                    record.setValue(nil, forKey: "pRemoteEntityData")
-                    record.setValue(nil, forKey: "pSyncedModificationDate")
+                    record.setValue(Int16(3), forKey: "pSyncedState")
+                    record.setValue(Date(), forKey: "pSyncedModificationDate")
                     try bgContext.save()
+                    self.log("Marked sync record as deleted (state=3) for UUID \(entityUUID)")
                 } catch {
                     writeError = error
                 }
@@ -580,6 +583,47 @@ public final class SyncBlobUpdater: @unchecked Sendable {
             }
         }
         if let error = writeError { throw error }
+    }
+
+    /// Inspect a sync record for diagnostic purposes.
+    /// Returns a dictionary of key fields, or nil if no record found.
+    public func inspectSyncRecord(entityUUID: String) -> [String: Any]? {
+        let ctx = container.newBackgroundContext()
+        nonisolated(unsafe) var result: [String: Any]?
+        ctx.performAndWait {
+            result = self._inspectSyncRecord(entityUUID: entityUUID, in: ctx)
+        }
+        return result
+    }
+
+    private func _inspectSyncRecord(entityUUID: String, in ctx: NSManagedObjectContext) -> [String: Any]? {
+        let request = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
+        request.predicate = NSPredicate(format: "pLocalID == %@", entityUUID)
+        request.fetchLimit = 1
+        guard let record = try? ctx.fetch(request).first else { return nil }
+
+        let blobData = record.value(forKey: "pRemoteEntityData") as? Data
+        let modDate = record.value(forKey: "pSyncedModificationDate") as? Date
+        let syncedState = record.value(forKey: "pSyncedState") as? Int16
+
+        var result: [String: Any] = [
+            "pLocalID": record.value(forKey: "pLocalID") as? String ?? "(nil)",
+            "pRemoteID": record.value(forKey: "pRemoteID") as? String ?? "(nil)",
+            "pHostedEntityType": record.value(forKey: "pHostedEntityType") as? String ?? "(nil)",
+            "pSyncedState": syncedState as Any,
+            "pSyncedModificationDate": modDate?.description ?? "(nil)",
+            "pRemoteEntityDataSize": blobData?.count ?? 0,
+            "hasBlobData": blobData != nil
+        ]
+
+        // Try to decompress and show first 200 chars of XML
+        if let data = blobData, let decompressed = Self.decompressGzip(data),
+           let xml = String(data: decompressed, encoding: .utf8) {
+            let preview = String(xml.prefix(300))
+            result["blobPreview"] = preview
+        }
+
+        return result
     }
 
     private func fetchSyncRecord(entityUUID: String, in ctx: NSManagedObjectContext) throws -> NSManagedObject? {
