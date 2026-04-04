@@ -603,6 +603,111 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         return count
     }
 
+    /// Fix price records where closePrice=0 but adjustedClosePrice has the actual value.
+    /// Optionally filter by symbol. Returns per-security fix counts and updates sync blobs.
+    public func fixBrokenPrices(symbol: String? = nil) throws -> [(symbol: String, fixed: Int)] {
+        // Find broken prices: closePrice=0 AND adjustedClosePrice != 0
+        let priceRequest = NSFetchRequest<NSManagedObject>(entityName: "SecurityPrice")
+        priceRequest.predicate = NSPredicate(format: "pClosePrice == 0 AND pAdjustedClosePrice != 0")
+        let brokenPrices = try context.fetch(priceRequest)
+
+        if brokenPrices.isEmpty { return [] }
+
+        // Group by security for reporting
+        var securityPriceItems = Set<NSManagedObjectID>()
+        for price in brokenPrices {
+            if let pi = Self.relatedObject(price, "pSecurityPriceItem") {
+                securityPriceItems.insert(pi.objectID)
+            }
+        }
+
+        // Build mapping of SecurityPriceItem objectID → symbol
+        var piToSymbol: [NSManagedObjectID: String] = [:]
+        var piToSecurityUUID: [NSManagedObjectID: String] = [:]
+        for piObjID in securityPriceItems {
+            if let pi = try? context.existingObject(with: piObjID) {
+                let securityID = Self.stringValue(pi, "pSecurityID")
+                let secRequest = NSFetchRequest<NSManagedObject>(entityName: "Security")
+                secRequest.predicate = NSPredicate(format: "pUniqueID == %@", securityID)
+                secRequest.fetchLimit = 1
+                if let sec = try context.fetch(secRequest).first {
+                    let sym = Self.stringValue(sec, "pSymbol")
+                    piToSymbol[piObjID] = sym
+                    piToSecurityUUID[piObjID] = securityID
+                }
+            }
+        }
+
+        // Filter by symbol if specified
+        let brokenPriceObjectIDs: [NSManagedObjectID]
+        if let filterSymbol = symbol {
+            brokenPriceObjectIDs = brokenPrices.filter { price in
+                guard let pi = Self.relatedObject(price, "pSecurityPriceItem") else { return false }
+                return piToSymbol[pi.objectID] == filterSymbol
+            }.map(\.objectID)
+        } else {
+            brokenPriceObjectIDs = brokenPrices.map(\.objectID)
+        }
+
+        if brokenPriceObjectIDs.isEmpty { return [] }
+
+        // Capture as let for Sendable closure
+        let symbolLookup = piToSymbol
+        let uuidLookup = piToSecurityUUID
+
+        // Fix in a write context
+        struct FixResult: Sendable {
+            let counts: [String: Int]
+            let latestPrices: [String: (price: Double, date: String)] // securityUUID → latest price
+        }
+
+        let fixResult: FixResult = try performWriteReturning { ctx in
+            var counts: [String: Int] = [:]
+            var latestByUUID: [String: (price: Double, daysSinceEpoch: Int32)] = [:]
+
+            for objID in brokenPriceObjectIDs {
+                guard let price = try? ctx.existingObject(with: objID) else { continue }
+                let adjClose = Self.doubleValue(price, "pAdjustedClosePrice")
+                price.setValue(adjClose as NSNumber, forKey: "pClosePrice")
+
+                if let pi = Self.relatedObject(price, "pSecurityPriceItem") {
+                    let sym = symbolLookup[pi.objectID] ?? "unknown"
+                    counts[sym, default: 0] += 1
+
+                    let secUUID = uuidLookup[pi.objectID] ?? ""
+                    let days = Self.intValue(price, "pDate")
+                    if let existing = latestByUUID[secUUID] {
+                        if Int32(days) > existing.daysSinceEpoch {
+                            latestByUUID[secUUID] = (price: adjClose, daysSinceEpoch: Int32(days))
+                        }
+                    } else {
+                        latestByUUID[secUUID] = (price: adjClose, daysSinceEpoch: Int32(days))
+                    }
+                }
+            }
+
+            // Convert daysSinceEpoch to ISO date strings
+            var latestPrices: [String: (price: Double, date: String)] = [:]
+            for (uuid, info) in latestByUUID {
+                let dateStr = Self.daysSinceEpochToISO(info.daysSinceEpoch)
+                latestPrices[uuid] = (price: info.price, date: dateStr)
+            }
+
+            return FixResult(counts: counts, latestPrices: latestPrices)
+        }
+
+        // Update sync blobs for affected securities
+        if let updater = syncBlobUpdater {
+            for (uuid, info) in fixResult.latestPrices {
+                updater.updateSecurityLatestPrice(
+                    securityUUID: uuid, closePrice: info.price, date: info.date
+                )
+            }
+        }
+
+        return fixResult.counts.map { (symbol: $0.key, fixed: $0.value) }.sorted { $0.symbol < $1.symbol }
+    }
+
     // MARK: - Holdings, Trades, Income
 
     public func getHoldings(

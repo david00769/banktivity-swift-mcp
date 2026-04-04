@@ -7,7 +7,7 @@ import Foundation
 struct Securities: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Security and price history operations",
-        subcommands: [List.self, Create.self, Prices.self, ImportPrices.self, DeletePrices.self, Holdings.self, Trades.self, Income.self, Adjust.self, UpdateTrade.self]
+        subcommands: [List.self, Create.self, Prices.self, ImportPrices.self, DeletePrices.self, FixPrices.self, Holdings.self, Trades.self, Income.self, Adjust.self, UpdateTrade.self]
     )
 
     struct List: AsyncParsableCommand {
@@ -158,6 +158,41 @@ struct Securities: AsyncParsableCommand {
                 startDate: startDate, endDate: endDate
             )
             try outputJSON(["message": "Deleted \(count) price(s)"] as [String: Any], format: parent.format)
+        }
+    }
+
+    struct FixPrices: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "fix-prices",
+            abstract: "Fix price records where closePrice=0 but adjustedClosePrice has the value"
+        )
+
+        @OptionGroup var parent: GlobalOptions
+
+        @Option(name: .long, help: "Only fix prices for this symbol")
+        var symbol: String?
+
+        func run() async throws {
+            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
+            let container = try BanktivityCLI.createContainer(vaultPath: path)
+            let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
+            try await guardWrite(writeGuard)
+
+            let syncBlobUpdater = SyncBlobUpdater(container: container)
+            let securities = SecurityRepository(container: container, syncBlobUpdater: syncBlobUpdater)
+            let results = try securities.fixBrokenPrices(symbol: symbol)
+
+            let total = results.reduce(0) { $0 + $1.fixed }
+            var output: [String: Any] = [
+                "total": total,
+                "securities": results.map { ["symbol": $0.symbol, "fixed": $0.fixed] }
+            ]
+            if results.isEmpty {
+                output["message"] = "No broken prices found"
+            } else {
+                output["message"] = "Fixed \(total) price(s) across \(results.count) security/securities"
+            }
+            try outputJSON(output, format: parent.format)
         }
     }
 
