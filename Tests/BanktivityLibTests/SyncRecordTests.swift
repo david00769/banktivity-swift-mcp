@@ -141,7 +141,7 @@ struct SyncRecordTests {
         #expect(!xml.contains("distributionType"))
     }
 
-    @Test("deleteSyncRecord clears blob and nulls modification date")
+    @Test("deleteSyncRecord sets state=3 and timestamps for sync deletion")
     func deleteSyncRecord() throws {
         let vault = try TestVaultHelper.createFreshVault()
         defer { TestVaultHelper.cleanup(vault) }
@@ -164,22 +164,24 @@ struct SyncRecordTests {
             transactionTypeBaseType: "deposit", transactionTypeUUID: UUID().uuidString
         )
 
-        // Verify exists with blob data
+        // Verify exists with blob data and state=0
         let request = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
         request.predicate = NSPredicate(format: "pLocalID == %@", txUUID)
         let before = try vault.container.viewContext.fetch(request)
         #expect(before.count == 1)
         #expect(before.first?.value(forKey: "pRemoteEntityData") != nil)
+        #expect(before.first?.value(forKey: "pSyncedState") as? Int16 == 0)
 
         // Mark as deleted
         updater.deleteSyncRecord(entityUUID: txUUID)
 
-        // Record kept but blob cleared and modification date nulled for sync pickup
+        // Record kept with state=3, blob preserved, modification date set
         vault.container.viewContext.refreshAllObjects()
         let after = try vault.container.viewContext.fetch(request)
         #expect(after.count == 1, "Record should be kept for sync propagation")
         let record = try #require(after.first)
-        #expect(record.value(forKey: "pRemoteEntityData") == nil, "Blob should be cleared")
-        #expect(record.value(forKey: "pSyncedModificationDate") == nil, "Must be NULL for sync pickup")
+        #expect(record.value(forKey: "pSyncedState") as? Int16 == 3, "State must be 3 to signal deletion")
+        #expect(record.value(forKey: "pRemoteEntityData") != nil, "Blob should be preserved")
+        #expect(record.value(forKey: "pSyncedModificationDate") != nil, "Modification date must be set to trigger sync")
     }
 }
