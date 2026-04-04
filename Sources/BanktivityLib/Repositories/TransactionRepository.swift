@@ -151,6 +151,8 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
             var currencyUUID = ""
             var syncLineItems: [SyncBlobUpdater.SyncLineItem] = []
 
+            var totalAmount = 0.0
+
             for liInput in lineItems {
                 guard let account = try fetchByPK(entityName: "Account", pk: liInput.accountId, in: ctx) else {
                     throw ToolError.notFound("Account not found: \(liInput.accountId)")
@@ -177,10 +179,34 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                 li.setValue(account, forKey: "pAccount")
                 li.setValue(tx, forKey: "pTransaction")
 
+                totalAmount += liInput.amount
+
                 syncLineItems.append(SyncBlobUpdater.SyncLineItem(
                     accountUUID: accountUUID, accountAmount: liInput.amount,
                     cleared: false, identifier: liUUID, memo: liInput.memo,
                     securityLineItem: nil, transactionAmount: liInput.amount
+                ))
+            }
+
+            // Create balancing offset line item if the explicit line items don't sum to zero.
+            // Banktivity requires every transaction to have a balancing offset — without it,
+            // the transaction won't affect the account's running cash balance.
+            if abs(totalAmount) > 0.001 {
+                let offsetLi = Self.createObject(entityName: "LineItem", in: ctx)
+                let offsetUUID = Self.generateUUID()
+                offsetLi.setValue(-totalAmount as NSNumber, forKey: "pTransactionAmount")
+                offsetLi.setValue(offsetUUID, forKey: "pUniqueID")
+                offsetLi.setValue(1.0 as NSNumber, forKey: "pExchangeRate")
+                offsetLi.setValue(0.0 as NSNumber, forKey: "pRunningBalance")
+                offsetLi.setValue(false, forKey: "pCleared")
+                Self.setNow(offsetLi, "pCreationTime")
+                // No pAccount — this is an uncategorized offset
+                offsetLi.setValue(tx, forKey: "pTransaction")
+
+                syncLineItems.append(SyncBlobUpdater.SyncLineItem(
+                    accountUUID: "", accountAmount: -totalAmount,
+                    cleared: false, identifier: offsetUUID, memo: nil,
+                    securityLineItem: nil, transactionAmount: -totalAmount
                 ))
             }
 
