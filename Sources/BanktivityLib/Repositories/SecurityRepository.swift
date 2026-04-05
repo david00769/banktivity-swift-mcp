@@ -530,6 +530,11 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             )
         }
 
+        // Fix closePrice=0 records created by the import.
+        // Banktivity's custom IGGCAccountingSecurityPrice class resets pClosePrice
+        // to 0 on insert, leaving the value only in pAdjustedClosePrice.
+        _ = try? fixBrokenPrices(symbol: securitySymbol)
+
         // Update Security sync blob with latest price
         if let price = result.latestClosePrice, let date = result.latestDateISO {
             syncBlobUpdater?.updateSecurityLatestPrice(

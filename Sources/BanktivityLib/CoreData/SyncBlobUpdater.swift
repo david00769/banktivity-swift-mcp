@@ -428,6 +428,29 @@ public final class SyncBlobUpdater: @unchecked Sendable {
             result.replaceSubrange(recordStart.lowerBound..<recordEnd.upperBound, with: newRecord)
             return result
         }
+
+        // Also touch the Security entity's pModificationDate so Banktivity
+        // recognises the change and re-pushes to CloudKit
+        do {
+            let bgContext = container.newBackgroundContext()
+            nonisolated(unsafe) var writeError: Error?
+            bgContext.performAndWait {
+                do {
+                    let request = NSFetchRequest<NSManagedObject>(entityName: "Security")
+                    request.predicate = NSPredicate(format: "pUniqueID == %@", securityUUID)
+                    request.fetchLimit = 1
+                    if let security = try bgContext.fetch(request).first {
+                        security.setValue(Date(), forKey: "pModificationDate")
+                        try bgContext.save()
+                    }
+                } catch {
+                    writeError = error
+                }
+            }
+            if let error = writeError { throw error }
+        } catch {
+            log("Failed to update Security modification date for \(securityUUID): \(error)")
+        }
     }
 
     // MARK: - Gzip

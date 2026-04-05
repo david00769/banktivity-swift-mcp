@@ -174,6 +174,45 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
         throw ToolError.missingParameter("Either account_id or account_name is required")
     }
 
+    // MARK: - Write Operations
+
+    /// Create a new bank account (checking, savings, etc.)
+    public func create(
+        name: String,
+        accountClass: Int = AccountClass.savings,
+        currencyCode: String = "EUR",
+        hidden: Bool = false
+    ) throws -> AccountDTO {
+        guard accountClass < AccountClass.income else {
+            throw ToolError.invalidInput("Use CategoryRepository to create income/expense categories")
+        }
+
+        try performWrite { ctx in
+            let account = Self.createObject(entityName: "PrimaryAccount", in: ctx)
+            account.setValue(name, forKey: "pName")
+            account.setValue(name, forKey: "pFullName")
+            account.setValue(accountClass, forKey: "pAccountClass")
+            account.setValue(hidden, forKey: "pHidden")
+            account.setValue(true, forKey: "pDebit")
+            account.setValue(false, forKey: "pTaxable")
+            account.setValue(Self.generateUUID(), forKey: "pUniqueID")
+            Self.setNow(account, "pCreationTime")
+            Self.setNow(account, "pModificationDate")
+
+            let currRequest = NSFetchRequest<NSManagedObject>(entityName: "Currency")
+            currRequest.predicate = NSPredicate(format: "pCode ==[cd] %@", currencyCode)
+            currRequest.fetchLimit = 1
+            if let currency = try ctx.fetch(currRequest).first {
+                account.setValue(currency, forKey: "currency")
+            }
+        }
+
+        if let result = try findByName(name) {
+            return result
+        }
+        throw ToolError.notFound("Failed to retrieve created account")
+    }
+
     // MARK: - Aggregate Helpers
 
     /// Sum pTransactionAmount for LineItems matching a predicate

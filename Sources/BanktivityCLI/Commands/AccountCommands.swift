@@ -7,7 +7,7 @@ import Foundation
 struct Accounts: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Account operations",
-        subcommands: [List.self, Balance.self, NetWorth.self, Spending.self, Income.self, Summary.self]
+        subcommands: [List.self, Balance.self, NetWorth.self, Spending.self, Income.self, Summary.self, Create.self]
     )
 
     struct List: AsyncParsableCommand {
@@ -121,6 +121,58 @@ struct Accounts: AsyncParsableCommand {
                 type: "income", startDate: startDate, endDate: endDate
             )
             try outputJSON(income, format: parent.format)
+        }
+    }
+
+    struct Create: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Create a bank account")
+
+        @OptionGroup var parent: GlobalOptions
+
+        @Option(name: .long, help: "Account name")
+        var name: String
+
+        @Option(name: .long, help: "Account type (checking, savings, cash, credit-card, loan, investment, retirement)")
+        var type: String = "savings"
+
+        @Option(name: .long, help: "Currency code (e.g. EUR, USD)")
+        var currencyCode: String = "EUR"
+
+        @Flag(name: .long, help: "Create as hidden")
+        var hidden = false
+
+        func run() async throws {
+            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
+            let container = try BanktivityCLI.createContainer(vaultPath: path)
+            let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
+            try await guardWrite(writeGuard)
+
+            let accounts = AccountRepository(container: container)
+
+            let typeMap: [String: Int] = [
+                "cash": AccountClass.cash,
+                "checking": AccountClass.checking,
+                "savings": AccountClass.savings,
+                "money-market": AccountClass.moneyMarket,
+                "investment": AccountClass.investment,
+                "retirement": AccountClass.retirement,
+                "education": AccountClass.education,
+                "loan": AccountClass.loan,
+                "credit-card": AccountClass.creditCard,
+                "real-estate": AccountClass.realEstate,
+            ]
+
+            guard let accountClass = typeMap[type] else {
+                throw ValidationError("Unknown account type '\(type)'. Valid types: \(typeMap.keys.sorted().joined(separator: ", "))")
+            }
+
+            let result = try accounts.create(
+                name: name,
+                accountClass: accountClass,
+                currencyCode: currencyCode,
+                hidden: hidden
+            )
+            try outputJSON(result, format: parent.format)
         }
     }
 
