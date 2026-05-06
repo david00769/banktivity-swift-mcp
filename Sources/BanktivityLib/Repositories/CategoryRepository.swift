@@ -8,67 +8,57 @@ public final class CategoryRepository: BaseRepository, @unchecked Sendable {
 
     /// List categories with optional filtering
     public func list(type: String? = nil, includeHidden: Bool = false, topLevelOnly: Bool = false) throws -> [CategoryDTO] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Account")
-
-        var predicates: [NSPredicate] = []
-
-        if let type = type {
-            let accountClass = type == "income" ? AccountClass.income : AccountClass.expense
-            predicates.append(NSPredicate(format: "pAccountClass == %d", accountClass))
-        } else {
-            // Only categories (income or expense)
-            predicates.append(NSPredicate(
-                format: "pAccountClass == %d OR pAccountClass == %d",
-                AccountClass.income, AccountClass.expense
-            ))
+        try performRead { [self] ctx in
+            var predicates: [NSPredicate] = []
+            if let type = type {
+                let accountClass = type == "income" ? AccountClass.income : AccountClass.expense
+                predicates.append(NSPredicate(format: "pAccountClass == %d", accountClass))
+            } else {
+                predicates.append(NSPredicate(format: "pAccountClass == %d OR pAccountClass == %d", AccountClass.income, AccountClass.expense))
+            }
+            if !includeHidden { predicates.append(NSPredicate(format: "pHidden == NO OR pHidden == nil")) }
+            if topLevelOnly { predicates.append(NSPredicate(format: "pParentAccount == nil")) }
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Account")
+            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+            request.sortDescriptors = [NSSortDescriptor(key: "pName", ascending: true)]
+            return try ctx.fetch(request).map { self.mapToDTO($0) }
         }
-
-        if !includeHidden {
-            predicates.append(NSPredicate(format: "pHidden == NO OR pHidden == nil"))
-        }
-
-        if topLevelOnly {
-            predicates.append(NSPredicate(format: "pParentAccount == nil"))
-        }
-
-        request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-        request.sortDescriptors = [NSSortDescriptor(key: "pName", ascending: true)]
-
-        let results = try fetch(request)
-        return results.map { mapToDTO($0) }
     }
 
     /// Get a single category by ID
     public func get(categoryId: Int) throws -> CategoryDTO? {
-        guard let object = try fetchByPK(entityName: "Account", pk: categoryId) else { return nil }
-        let accountClass = Self.intValue(object, "pAccountClass")
-        guard accountClass == AccountClass.income || accountClass == AccountClass.expense else {
-            return nil
+        try performRead { [self] ctx in
+            guard let object = try fetchByPK(entityName: "Account", pk: categoryId, in: ctx) else { return nil }
+            let accountClass = Self.intValue(object, "pAccountClass")
+            guard accountClass == AccountClass.income || accountClass == AccountClass.expense else { return nil }
+            return self.mapToDTO(object)
         }
-        return mapToDTO(object)
     }
 
     /// Find a category by path (colon-separated, e.g., "Insurance:Life")
     public func findByPath(_ path: String) throws -> CategoryDTO? {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Account")
-        request.predicate = NSPredicate(
-            format: "(pAccountClass == %d OR pAccountClass == %d) AND pFullName ==[cd] %@",
-            AccountClass.income, AccountClass.expense, path
-        )
-        request.fetchLimit = 1
-        guard let object = try fetch(request).first else { return nil }
-        return mapToDTO(object)
+        try performRead { [self] ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Account")
+            request.predicate = NSPredicate(
+                format: "(pAccountClass == %d OR pAccountClass == %d) AND pFullName ==[cd] %@",
+                AccountClass.income, AccountClass.expense, path
+            )
+            request.fetchLimit = 1
+            guard let object = try ctx.fetch(request).first else { return nil }
+            return self.mapToDTO(object)
+        }
     }
 
     /// Find categories by name (case-insensitive)
     public func findByName(_ name: String) throws -> [CategoryDTO] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Account")
-        request.predicate = NSPredicate(
-            format: "(pAccountClass == %d OR pAccountClass == %d) AND pName ==[cd] %@",
-            AccountClass.income, AccountClass.expense, name
-        )
-        let results = try fetch(request)
-        return results.map { mapToDTO($0) }
+        try performRead { [self] ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Account")
+            request.predicate = NSPredicate(
+                format: "(pAccountClass == %d OR pAccountClass == %d) AND pName ==[cd] %@",
+                AccountClass.income, AccountClass.expense, name
+            )
+            return try ctx.fetch(request).map { self.mapToDTO($0) }
+        }
     }
 
     /// Build category tree

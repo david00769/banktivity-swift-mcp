@@ -22,73 +22,48 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
         limit: Int? = nil,
         offset: Int? = nil
     ) throws -> [TransactionDTO] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
-
-        var predicates: [NSPredicate] = []
-
-        if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
-            predicates.append(NSPredicate(
-                format: "pDate >= %@", DateConversion.toDate(ts) as NSDate
-            ))
-        }
-
-        if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
-            predicates.append(NSPredicate(
-                format: "pDate <= %@", DateConversion.toDate(ts) as NSDate
-            ))
-        }
-
-        if let accountId = accountId {
-            // Filter transactions that have at least one line item in this account
-            if let account = try fetchByPK(entityName: "Account", pk: accountId) {
-                predicates.append(NSPredicate(
-                    format: "ANY lineItems.pAccount == %@", account
-                ))
+        try performRead { [self] ctx in
+            var predicates: [NSPredicate] = []
+            if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
+                predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
             }
+            if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
+                predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
+            }
+            if let accountId = accountId {
+                if let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) {
+                    predicates.append(NSPredicate(format: "ANY lineItems.pAccount == %@", account))
+                }
+            }
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+            if !predicates.isEmpty {
+                request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+            }
+            request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
+            if let limit = limit { request.fetchLimit = limit }
+            if let offset = offset { request.fetchOffset = offset }
+            return try ctx.fetch(request).map { self.mapToDTO($0) }
         }
-
-        if !predicates.isEmpty {
-            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-        }
-
-        request.sortDescriptors = [
-            NSSortDescriptor(key: "pDate", ascending: false)
-        ]
-
-        if let limit = limit {
-            request.fetchLimit = limit
-        }
-
-        if let offset = offset {
-            request.fetchOffset = offset
-        }
-
-        let results = try fetch(request)
-        return results.map { mapToDTO($0) }
     }
 
     /// Search transactions by title or note (case-insensitive LIKE)
     public func search(query: String, limit: Int = 50) throws -> [TransactionDTO] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
-        let pattern = "*\(query)*"
-        request.predicate = NSPredicate(
-            format: "pTitle LIKE[cd] %@ OR pNote LIKE[cd] %@", pattern, pattern
-        )
-        request.sortDescriptors = [
-            NSSortDescriptor(key: "pDate", ascending: false)
-        ]
-        request.fetchLimit = limit
-
-        let results = try fetch(request)
-        return results.map { mapToDTO($0) }
+        try performRead { [self] ctx in
+            let pattern = "*\(query)*"
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+            request.predicate = NSPredicate(format: "pTitle LIKE[cd] %@ OR pNote LIKE[cd] %@", pattern, pattern)
+            request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
+            request.fetchLimit = limit
+            return try ctx.fetch(request).map { self.mapToDTO($0) }
+        }
     }
 
     /// Get a single transaction by primary key
     public func get(transactionId: Int) throws -> TransactionDTO? {
-        guard let object = try fetchByPK(entityName: "Transaction", pk: transactionId) else {
-            return nil
+        try performRead { [self] ctx in
+            guard let object = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else { return nil }
+            return self.mapToDTO(object)
         }
-        return mapToDTO(object)
     }
 
     /// Get total transaction count
@@ -311,10 +286,10 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
 
     /// Delete a transaction and its line items
     public func delete(transactionId: Int) throws -> Bool {
-        // Get affected account IDs and transaction UUID before deletion
-        var txUUID: String?
-        if let tx = try fetchByPK(entityName: "Transaction", pk: transactionId) {
-            txUUID = Self.stringValue(tx, "pUniqueID")
+        // Get UUID and affected account IDs on the context's thread before deletion
+        let txUUID: String? = try performRead { [self] ctx in
+            guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else { return nil }
+            return Self.stringValue(tx, "pUniqueID")
         }
 
         let lineItems = try lineItemRepo.getForTransactionPK(transactionId)

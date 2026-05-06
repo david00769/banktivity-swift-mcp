@@ -14,26 +14,30 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
 
     /// List all tags
     public func list() throws -> [TagDTO] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Tag")
-        request.sortDescriptors = [NSSortDescriptor(key: "pName", ascending: true)]
-
-        let results = try fetch(request)
-        return results.map { mapToDTO($0) }
+        try performRead { [self] ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Tag")
+            request.sortDescriptors = [NSSortDescriptor(key: "pName", ascending: true)]
+            return try ctx.fetch(request).map { self.mapToDTO($0) }
+        }
     }
 
     /// Get a tag by primary key
     public func get(tagId: Int) throws -> TagDTO? {
-        guard let object = try fetchByPK(entityName: "Tag", pk: tagId) else { return nil }
-        return mapToDTO(object)
+        try performRead { [self] ctx in
+            guard let object = try fetchByPK(entityName: "Tag", pk: tagId, in: ctx) else { return nil }
+            return self.mapToDTO(object)
+        }
     }
 
     /// Find a tag by name (case-insensitive)
     public func findByName(_ name: String) throws -> TagDTO? {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Tag")
-        request.predicate = NSPredicate(format: "pName ==[cd] %@", name)
-        request.fetchLimit = 1
-        guard let object = try fetch(request).first else { return nil }
-        return mapToDTO(object)
+        try performRead { [self] ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Tag")
+            request.predicate = NSPredicate(format: "pName ==[cd] %@", name)
+            request.fetchLimit = 1
+            guard let object = try ctx.fetch(request).first else { return nil }
+            return self.mapToDTO(object)
+        }
     }
 
     // MARK: - Write Operations
@@ -45,7 +49,7 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
             return existing
         }
 
-        let pk = try performWriteReturning { ctx -> Int in
+        _ = try performWriteReturning { ctx -> Int in
             let tag = Self.createObject(entityName: "Tag", in: ctx)
             tag.setValue(name, forKey: "pName")
             tag.setValue(name.uppercased().trimmingCharacters(in: .whitespaces), forKey: "pCanonicalName")
@@ -236,24 +240,30 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
         endDate: String? = nil,
         limit: Int = 50
     ) throws -> [NSManagedObject] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
-        var predicates: [NSPredicate] = []
-
-        // Filter by tag through line items
-        predicates.append(NSPredicate(format: "ANY lineItems.pTags.@pk == %d", tagId))
-
-        if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
-            predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
+        nonisolated(unsafe) var result: [NSManagedObject] = []
+        nonisolated(unsafe) var fetchError: Error?
+        context.performAndWait {
+            do {
+                let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+                var predicates: [NSPredicate] = [
+                    NSPredicate(format: "ANY lineItems.pTags.@pk == %d", tagId)
+                ]
+                if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
+                    predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
+                }
+                if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
+                    predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
+                }
+                request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+                request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
+                request.fetchLimit = limit
+                result = try context.fetch(request)
+            } catch {
+                fetchError = error
+            }
         }
-        if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
-            predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
-        }
-
-        request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-        request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
-        request.fetchLimit = limit
-
-        return try fetch(request)
+        if let error = fetchError { throw error }
+        return result
     }
 
     // MARK: - DTO Mapping

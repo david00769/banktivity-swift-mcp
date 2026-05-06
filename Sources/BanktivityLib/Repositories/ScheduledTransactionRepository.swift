@@ -8,17 +8,20 @@ public final class ScheduledTransactionRepository: BaseRepository, @unchecked Se
 
     /// List all scheduled transactions
     public func list() throws -> [ScheduledTransactionDTO] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "ScheduledTemplateSelector")
-        let results = try fetch(request)
-        return results.compactMap { mapToDTO($0) }
+        try performRead { [self] ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "ScheduledTemplateSelector")
+            return try ctx.fetch(request).compactMap { self.mapToDTO($0) }
+        }
     }
 
     /// Get a scheduled transaction by PK
     public func get(scheduleId: Int) throws -> ScheduledTransactionDTO? {
-        guard let object = try fetchByPK(entityName: "ScheduledTemplateSelector", pk: scheduleId) else {
-            return nil
+        try performRead { [self] ctx in
+            guard let object = try fetchByPK(entityName: "ScheduledTemplateSelector", pk: scheduleId, in: ctx) else {
+                return nil
+            }
+            return self.mapToDTO(object)
         }
-        return mapToDTO(object)
     }
 
     // MARK: - Write Operations

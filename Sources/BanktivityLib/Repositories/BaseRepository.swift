@@ -66,9 +66,35 @@ open class BaseRepository: @unchecked Sendable {
 
     /// Count entities matching a predicate
     public func count(entityName: String, predicate: NSPredicate? = nil) throws -> Int {
-        let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
-        request.predicate = predicate
-        return try context.count(for: request)
+        nonisolated(unsafe) var result = 0
+        nonisolated(unsafe) var countError: Error?
+        nonisolated(unsafe) let pred = predicate
+        context.performAndWait {
+            do {
+                let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
+                request.predicate = pred
+                result = try context.count(for: request)
+            } catch {
+                countError = error
+            }
+        }
+        if let error = countError { throw error }
+        return result
+    }
+
+    /// Perform a read on the view context's thread, returning a Sendable value.
+    /// Use this for all reads to avoid Core Data threading violations when called
+    /// from Swift concurrency cooperative threads.
+    public func performRead<T: Sendable>(_ block: @escaping @Sendable (NSManagedObjectContext) throws -> T) throws -> T {
+        nonisolated(unsafe) var result: T?
+        nonisolated(unsafe) var readError: Error?
+        context.performAndWait {
+            do { result = try block(context) }
+            catch { readError = error }
+        }
+        if let error = readError { throw error }
+        guard let value = result else { throw RepositoryError.unexpectedNilResult }
+        return value
     }
 
     /// Save the context

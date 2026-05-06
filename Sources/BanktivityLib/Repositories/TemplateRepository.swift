@@ -8,18 +8,21 @@ public final class TemplateRepository: BaseRepository, @unchecked Sendable {
 
     /// List all transaction templates
     public func list() throws -> [TransactionTemplateDTO] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "TransactionTemplate")
-        request.sortDescriptors = [NSSortDescriptor(key: "pTitle", ascending: true)]
-        let results = try fetch(request)
-        return results.map { mapToDTO($0) }
+        try performRead { [self] ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "TransactionTemplate")
+            request.sortDescriptors = [NSSortDescriptor(key: "pTitle", ascending: true)]
+            return try ctx.fetch(request).map { self.mapToDTO($0) }
+        }
     }
 
     /// Get a template by PK
     public func get(templateId: Int) throws -> TransactionTemplateDTO? {
-        guard let object = try fetchByPK(entityName: "TransactionTemplate", pk: templateId) else {
-            return nil
+        try performRead { [self] ctx in
+            guard let object = try fetchByPK(entityName: "TransactionTemplate", pk: templateId, in: ctx) else {
+                return nil
+            }
+            return self.mapToDTO(object)
         }
-        return mapToDTO(object)
     }
 
     // MARK: - Write Operations
