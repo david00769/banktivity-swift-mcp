@@ -183,13 +183,18 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         let startTs = info.startTs
         let endTs = info.endTs
 
-        // Collect line item UUID → transaction UUID mapping for blob patching
-        nonisolated(unsafe) var txLineItems: [String: [(liUUID: String, liId: Int)]] = [:]
+        struct ReconcileLineInfo: Sendable {
+            let liUUID: String
+            let liId: Int
+        }
 
-        try performWrite { [self] ctx in
+        // Collect line item UUID → transaction UUID mapping for blob patching
+        let txLineItems: [String: [ReconcileLineInfo]] = try performWriteReturning { [self] ctx in
             guard let stmtInCtx = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
                 throw ToolError.notFound("Statement not found: \(statementId)")
             }
+
+            var result: [String: [ReconcileLineInfo]] = [:]
 
             for liId in lineItemIds {
                 guard let li = try fetchByPK(entityName: "LineItem", pk: liId, in: ctx) else {
@@ -233,12 +238,14 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 let liUUID = Self.stringValue(li, "pUniqueID")
                 if let tx = Self.relatedObject(li, "pTransaction") {
                     let txUUID = Self.stringValue(tx, "pUniqueID")
-                    if txLineItems[txUUID] == nil {
+                    if result[txUUID] == nil {
                         Self.setNow(tx, "pModificationDate")
                     }
-                    txLineItems[txUUID, default: []].append((liUUID: liUUID, liId: liId))
+                    result[txUUID, default: []].append(ReconcileLineInfo(liUUID: liUUID, liId: liId))
                 }
             }
+
+            return result
         }
 
         // Patch sync blobs (non-fatal)
@@ -269,9 +276,9 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             throw ToolError.notFound("Statement not found: \(statementId)")
         }
 
-        nonisolated(unsafe) var txLineItems: [String: [String]] = [:]
+        let txLineItems: [String: [String]] = try performWriteReturning { [self] ctx in
+            var result: [String: [String]] = [:]
 
-        try performWrite { [self] ctx in
             for liId in lineItemIds {
                 guard let li = try fetchByPK(entityName: "LineItem", pk: liId, in: ctx) else {
                     throw ToolError.notFound("Line item not found: \(liId)")
@@ -290,15 +297,17 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 let liUUID = Self.stringValue(li, "pUniqueID")
                 if let tx = Self.relatedObject(li, "pTransaction") {
                     let txUUID = Self.stringValue(tx, "pUniqueID")
-                    if txLineItems[txUUID] == nil {
+                    if result[txUUID] == nil {
                         Self.setNow(tx, "pModificationDate")
                     }
-                    txLineItems[txUUID, default: []].append(liUUID)
+                    result[txUUID, default: []].append(liUUID)
                 }
 
                 li.setValue(nil, forKey: "pStatement")
                 li.setValue(false, forKey: "pCleared")
             }
+
+            return result
         }
 
         // Patch sync blobs (non-fatal)

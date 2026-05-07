@@ -350,11 +350,13 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
 
     /// Recategorize a single transaction
     public func recategorize(transactionId: Int, categoryId: Int) throws -> RecategorizationResultDTO? {
-        nonisolated(unsafe) var oldCategoryName: String?
-        nonisolated(unsafe) var newCategoryName: String = ""
-        nonisolated(unsafe) var syncInfo: (txUUID: String, liUUID: String, catUUID: String)?
+        struct RecategorizeOutcome: Sendable {
+            let oldCategoryName: String?
+            let newCategoryName: String
+            let syncInfo: (txUUID: String, liUUID: String, catUUID: String)?
+        }
 
-        try performWrite { [self] ctx in
+        let outcome: RecategorizeOutcome = try performWriteReturning { [self] ctx in
             guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
                 throw ToolError.notFound("Transaction not found: \(transactionId)")
             }
@@ -362,7 +364,7 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
                 throw ToolError.notFound("Category not found: \(categoryId)")
             }
 
-            newCategoryName = Self.stringValue(categoryAccount, "pName")
+            let newCategoryName = Self.stringValue(categoryAccount, "pName")
             let catUUID = Self.stringValue(categoryAccount, "pUniqueID")
             let txUUID = Self.stringValue(tx, "pUniqueID")
             let lineItems = Self.relatedSet(tx, "lineItems")
@@ -371,6 +373,7 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
             var categoryLineItem: NSManagedObject?
             var primaryLineItem: NSManagedObject?
             var orphanedLineItems: [NSManagedObject] = []
+            var oldCategoryName: String?
 
             for li in lineItems {
                 guard let account = Self.relatedObject(li, "pAccount") else {
@@ -386,6 +389,8 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
                     primaryLineItem = li
                 }
             }
+
+            var syncInfo: (txUUID: String, liUUID: String, catUUID: String)?
 
             if let existingCatLI = categoryLineItem {
                 // Update existing category line item to new category
@@ -420,10 +425,16 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
 
             // Mark transaction as modified
             Self.setNow(tx, "pModificationDate")
+
+            return RecategorizeOutcome(
+                oldCategoryName: oldCategoryName,
+                newCategoryName: newCategoryName,
+                syncInfo: syncInfo
+            )
         }
 
         // Patch sync blob (non-fatal)
-        if let updater = syncBlobUpdater, let info = syncInfo {
+        if let updater = syncBlobUpdater, let info = outcome.syncInfo {
             updater.updateTransactionBlob(transactionUUID: info.txUUID) { xml in
                 updater.patchAccount(xml: xml, lineItemUUID: info.liUUID, accountUUID: info.catUUID)
             }
@@ -432,8 +443,8 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
         return RecategorizationResultDTO(
             transactionId: transactionId,
             title: (try? get(transactionId: transactionId))?.title ?? "",
-            oldCategoryName: oldCategoryName,
-            newCategoryName: newCategoryName
+            oldCategoryName: outcome.oldCategoryName,
+            newCategoryName: outcome.newCategoryName
         )
     }
 

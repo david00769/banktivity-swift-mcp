@@ -83,9 +83,32 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
 
     /// Add a tag to all line items of a transaction
     public func tagTransaction(transactionId: Int, tagId: Int) throws -> Int {
-        nonisolated(unsafe) var syncInfo: (txUUID: String, lineItemTagUUIDs: [(liUUID: String, tagUUIDs: [String])])?
+        let outcome = try applyTagOutcome(transactionId: transactionId, tagId: tagId, add: true)
+        applyTagSyncBlob(outcome: outcome)
+        return outcome.count
+    }
 
-        let count = try performWriteReturning { [self] ctx -> Int in
+    /// Remove a tag from all line items of a transaction
+    public func untagTransaction(transactionId: Int, tagId: Int) throws -> Int {
+        let outcome = try applyTagOutcome(transactionId: transactionId, tagId: tagId, add: false)
+        applyTagSyncBlob(outcome: outcome)
+        return outcome.count
+    }
+
+    private struct LineItemTagInfo: Sendable {
+        let liUUID: String
+        let tagUUIDs: [String]
+    }
+
+    private struct TagOutcome: Sendable {
+        let count: Int
+        let txUUID: String
+        let lineItemTagInfo: [LineItemTagInfo]
+        var didChange: Bool { count > 0 }
+    }
+
+    private func applyTagOutcome(transactionId: Int, tagId: Int, add: Bool) throws -> TagOutcome {
+        try performWriteReturning { [self] ctx in
             guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
                 throw ToolError.notFound("Transaction not found: \(transactionId)")
             }
@@ -93,92 +116,46 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
                 throw ToolError.notFound("Tag not found: \(tagId)")
             }
 
-            let txUUID = Self.stringValue(tx, "pUniqueID")
             let lineItems = Self.relatedSet(tx, "lineItems")
             var count = 0
-            var liTagInfo: [(liUUID: String, tagUUIDs: [String])] = []
+            var info: [LineItemTagInfo] = []
 
             for li in lineItems {
                 let tags = li.mutableSetValue(forKey: "pTags")
-                if !tags.contains(tag) {
+                if add, !tags.contains(tag) {
                     tags.add(tag)
+                    count += 1
+                } else if !add, tags.contains(tag) {
+                    tags.remove(tag)
                     count += 1
                 }
                 // Collect current tag UUIDs for blob patching
                 let liUUID = Self.stringValue(li, "pUniqueID")
                 let currentTagUUIDs = (tags as? Set<NSManagedObject>)?.map { Self.stringValue($0, "pUniqueID") } ?? []
-                liTagInfo.append((liUUID: liUUID, tagUUIDs: currentTagUUIDs))
+                info.append(LineItemTagInfo(liUUID: liUUID, tagUUIDs: currentTagUUIDs))
             }
 
             if count > 0 {
                 Self.setNow(tx, "pModificationDate")
-                syncInfo = (txUUID: txUUID, lineItemTagUUIDs: liTagInfo)
             }
-            return count
-        }
 
-        // Patch sync blob (non-fatal)
-        if let updater = syncBlobUpdater, let info = syncInfo {
-            updater.updateTransactionBlob(transactionUUID: info.txUUID) { xml in
-                var result = xml
-                for item in info.lineItemTagUUIDs {
-                    result = updater.patchTags(xml: result, lineItemUUID: item.liUUID, tagUUIDs: item.tagUUIDs)
-                }
-                return result
-            }
+            return TagOutcome(
+                count: count,
+                txUUID: Self.stringValue(tx, "pUniqueID"),
+                lineItemTagInfo: info
+            )
         }
-
-        return count
     }
 
-    /// Remove a tag from all line items of a transaction
-    public func untagTransaction(transactionId: Int, tagId: Int) throws -> Int {
-        nonisolated(unsafe) var syncInfo: (txUUID: String, lineItemTagUUIDs: [(liUUID: String, tagUUIDs: [String])])?
-
-        let count = try performWriteReturning { [self] ctx -> Int in
-            guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
-                throw ToolError.notFound("Transaction not found: \(transactionId)")
+    private func applyTagSyncBlob(outcome: TagOutcome) {
+        guard outcome.didChange, let updater = syncBlobUpdater else { return }
+        updater.updateTransactionBlob(transactionUUID: outcome.txUUID) { xml in
+            var result = xml
+            for item in outcome.lineItemTagInfo {
+                result = updater.patchTags(xml: result, lineItemUUID: item.liUUID, tagUUIDs: item.tagUUIDs)
             }
-            guard let tag = try fetchByPK(entityName: "Tag", pk: tagId, in: ctx) else {
-                throw ToolError.notFound("Tag not found: \(tagId)")
-            }
-
-            let txUUID = Self.stringValue(tx, "pUniqueID")
-            let lineItems = Self.relatedSet(tx, "lineItems")
-            var count = 0
-            var liTagInfo: [(liUUID: String, tagUUIDs: [String])] = []
-
-            for li in lineItems {
-                let tags = li.mutableSetValue(forKey: "pTags")
-                if tags.contains(tag) {
-                    tags.remove(tag)
-                    count += 1
-                }
-                // Collect current tag UUIDs after removal for blob patching
-                let liUUID = Self.stringValue(li, "pUniqueID")
-                let currentTagUUIDs = (tags as? Set<NSManagedObject>)?.map { Self.stringValue($0, "pUniqueID") } ?? []
-                liTagInfo.append((liUUID: liUUID, tagUUIDs: currentTagUUIDs))
-            }
-
-            if count > 0 {
-                Self.setNow(tx, "pModificationDate")
-                syncInfo = (txUUID: txUUID, lineItemTagUUIDs: liTagInfo)
-            }
-            return count
+            return result
         }
-
-        // Patch sync blob (non-fatal)
-        if let updater = syncBlobUpdater, let info = syncInfo {
-            updater.updateTransactionBlob(transactionUUID: info.txUUID) { xml in
-                var result = xml
-                for item in info.lineItemTagUUIDs {
-                    result = updater.patchTags(xml: result, lineItemUUID: item.liUUID, tagUUIDs: item.tagUUIDs)
-                }
-                return result
-            }
-        }
-
-        return count
     }
 
     /// Resolve a tag ID from either an ID or a name (auto-creates if name given)
