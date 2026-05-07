@@ -28,35 +28,19 @@ open class BaseRepository: @unchecked Sendable {
 
     /// Count entities matching a predicate
     public func count(entityName: String, predicate: NSPredicate? = nil) throws -> Int {
-        nonisolated(unsafe) var result = 0
-        nonisolated(unsafe) var countError: Error?
         nonisolated(unsafe) let pred = predicate
-        context.performAndWait {
-            do {
-                let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
-                request.predicate = pred
-                result = try context.count(for: request)
-            } catch {
-                countError = error
-            }
+        return try performRead { ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
+            request.predicate = pred
+            return try ctx.count(for: request)
         }
-        if let error = countError { throw error }
-        return result
     }
 
     /// Perform a read on the view context's thread, returning a Sendable value.
     /// Use this for all reads to avoid Core Data threading violations when called
     /// from Swift concurrency cooperative threads.
     public func performRead<T: Sendable>(_ block: @escaping @Sendable (NSManagedObjectContext) throws -> T) throws -> T {
-        nonisolated(unsafe) var result: T?
-        nonisolated(unsafe) var readError: Error?
-        context.performAndWait {
-            do { result = try block(context) }
-            catch { readError = error }
-        }
-        if let error = readError { throw error }
-        guard let value = result else { throw RepositoryError.unexpectedNilResult }
-        return value
+        try perform(on: context, save: false, block)
     }
 
     /// Save the context
@@ -68,45 +52,34 @@ open class BaseRepository: @unchecked Sendable {
 
     /// Perform work on a background context and save
     public func performWrite(_ block: @escaping @Sendable (NSManagedObjectContext) throws -> Void) throws {
-        let bgContext = container.newBackgroundContext()
-        nonisolated(unsafe) var writeError: Error?
-        bgContext.performAndWait {
-            do {
-                try block(bgContext)
-                if bgContext.hasChanges {
-                    try bgContext.save()
-                }
-            } catch {
-                writeError = error
-            }
-        }
-        if let error = writeError {
-            throw error
+        _ = try perform(on: container.newBackgroundContext(), save: true) { ctx in
+            try block(ctx)
         }
     }
 
     /// Perform a write that returns a value
     public func performWriteReturning<T: Sendable>(_ block: @escaping @Sendable (NSManagedObjectContext) throws -> T) throws -> T {
-        let bgContext = container.newBackgroundContext()
-        nonisolated(unsafe) var result: T?
-        nonisolated(unsafe) var writeError: Error?
-        bgContext.performAndWait {
-            do {
-                result = try block(bgContext)
-                if bgContext.hasChanges {
-                    try bgContext.save()
+        try perform(on: container.newBackgroundContext(), save: true, block)
+    }
+
+    /// Run `block` on `ctx`'s queue via performAndWait, optionally saving on success,
+    /// and propagate the result or error back to the caller's thread.
+    private func perform<T: Sendable>(
+        on ctx: NSManagedObjectContext,
+        save: Bool,
+        _ block: @escaping @Sendable (NSManagedObjectContext) throws -> T
+    ) throws -> T {
+        nonisolated(unsafe) var outcome: Result<T, Error>!
+        ctx.performAndWait {
+            outcome = Result {
+                let value = try block(ctx)
+                if save && ctx.hasChanges {
+                    try ctx.save()
                 }
-            } catch {
-                writeError = error
+                return value
             }
         }
-        if let error = writeError {
-            throw error
-        }
-        guard let value = result else {
-            throw RepositoryError.unexpectedNilResult
-        }
-        return value
+        return try outcome.get()
     }
 
     /// Create a new managed object in the given context
