@@ -223,49 +223,45 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
         transactionRepo: TransactionRepository
     ) throws -> [TransactionDTO] {
         let resolvedId = try resolveTagId(id: tagId, name: tagName)
-        let txObjects = try getTransactionsByTag(
+        let txIds = try getTransactionsByTag(
             tagId: resolvedId,
             startDate: startDate,
             endDate: endDate,
             limit: limit
         )
-        return txObjects.compactMap { obj in
-            try? transactionRepo.get(transactionId: Self.extractPK(from: obj.objectID))
-        }
+        return txIds.compactMap { try? transactionRepo.get(transactionId: $0) }
     }
 
-    /// Get transactions that have a specific tag (raw Core Data objects)
+    /// Get primary keys of transactions that have a specific tag.
+    /// Returns PKs rather than NSManagedObjects so callers don't need to handle
+    /// Core Data thread confinement.
     public func getTransactionsByTag(
         tagId: Int,
         accountId: Int? = nil,
         startDate: String? = nil,
         endDate: String? = nil,
         limit: Int = 50
-    ) throws -> [NSManagedObject] {
-        nonisolated(unsafe) var result: [NSManagedObject] = []
-        nonisolated(unsafe) var fetchError: Error?
-        context.performAndWait {
-            do {
-                let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
-                var predicates: [NSPredicate] = [
-                    NSPredicate(format: "ANY lineItems.pTags.@pk == %d", tagId)
-                ]
-                if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
-                    predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
-                }
-                if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
-                    predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
-                }
-                request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-                request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
-                request.fetchLimit = limit
-                result = try context.fetch(request)
-            } catch {
-                fetchError = error
+    ) throws -> [Int] {
+        try performRead { ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+            var predicates: [NSPredicate] = [
+                NSPredicate(format: "ANY lineItems.pTags.@pk == %d", tagId)
+            ]
+
+            if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
+                predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
             }
+            if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
+                predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
+            }
+
+            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+            request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
+            request.fetchLimit = limit
+
+            let results = try ctx.fetch(request)
+            return results.map { Self.extractPK(from: $0.objectID) }
         }
-        if let error = fetchError { throw error }
-        return result
     }
 
     // MARK: - DTO Mapping
