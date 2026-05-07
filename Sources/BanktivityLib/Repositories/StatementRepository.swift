@@ -20,16 +20,21 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
                 throw ToolError.notFound("Account not found: \(accountId)")
             }
+
             let request = NSFetchRequest<NSManagedObject>(entityName: "Statement")
             request.predicate = NSPredicate(format: "pAccount == %@", account)
             request.sortDescriptors = [NSSortDescriptor(key: "pStartDate", ascending: true)]
-            return try ctx.fetch(request).map { self.mapToSummaryDTO($0) }
+
+            let statements = try ctx.fetch(request)
+            return statements.map { self.mapToSummaryDTO($0) }
         }
     }
 
     public func get(statementId: Int) throws -> StatementDTO? {
         try performRead { [self] ctx in
-            guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else { return nil }
+            guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
+                return nil
+            }
             return self.mapToDTO(statement)
         }
     }
@@ -318,20 +323,27 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
                 throw ToolError.notFound("Account not found: \(accountId)")
             }
+
+            let request = NSFetchRequest<NSManagedObject>(entityName: "LineItem")
             var predicates: [NSPredicate] = [
                 NSPredicate(format: "pAccount == %@", account),
                 NSPredicate(format: "pStatement == nil"),
             ]
+
             if let start = startDate, let startTs = DateConversion.fromISO(start) {
                 predicates.append(NSPredicate(format: "pTransaction.pDate >= %@", DateConversion.toDate(startTs) as NSDate))
             }
             if let end = endDate, let endTs = DateConversion.fromISO(end) {
                 predicates.append(NSPredicate(format: "pTransaction.pDate <= %@", DateConversion.toDate(endTs) as NSDate))
             }
-            let request = NSFetchRequest<NSManagedObject>(entityName: "LineItem")
+
             request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-            request.sortDescriptors = [NSSortDescriptor(key: "pTransaction.pDate", ascending: true)]
-            return try ctx.fetch(request).map { self.lineItemRepo.mapToDTO($0) }
+            request.sortDescriptors = [
+                NSSortDescriptor(key: "pTransaction.pDate", ascending: true),
+            ]
+
+            let lineItems = try ctx.fetch(request)
+            return lineItems.map { self.lineItemRepo.mapToDTO($0) }
         }
     }
 

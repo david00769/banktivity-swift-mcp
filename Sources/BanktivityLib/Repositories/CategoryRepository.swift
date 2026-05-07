@@ -9,19 +9,34 @@ public final class CategoryRepository: BaseRepository, @unchecked Sendable {
     /// List categories with optional filtering
     public func list(type: String? = nil, includeHidden: Bool = false, topLevelOnly: Bool = false) throws -> [CategoryDTO] {
         try performRead { [self] ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Account")
+
             var predicates: [NSPredicate] = []
+
             if let type = type {
                 let accountClass = type == "income" ? AccountClass.income : AccountClass.expense
                 predicates.append(NSPredicate(format: "pAccountClass == %d", accountClass))
             } else {
-                predicates.append(NSPredicate(format: "pAccountClass == %d OR pAccountClass == %d", AccountClass.income, AccountClass.expense))
+                // Only categories (income or expense)
+                predicates.append(NSPredicate(
+                    format: "pAccountClass == %d OR pAccountClass == %d",
+                    AccountClass.income, AccountClass.expense
+                ))
             }
-            if !includeHidden { predicates.append(NSPredicate(format: "pHidden == NO OR pHidden == nil")) }
-            if topLevelOnly { predicates.append(NSPredicate(format: "pParentAccount == nil")) }
-            let request = NSFetchRequest<NSManagedObject>(entityName: "Account")
+
+            if !includeHidden {
+                predicates.append(NSPredicate(format: "pHidden == NO OR pHidden == nil"))
+            }
+
+            if topLevelOnly {
+                predicates.append(NSPredicate(format: "pParentAccount == nil"))
+            }
+
             request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             request.sortDescriptors = [NSSortDescriptor(key: "pName", ascending: true)]
-            return try ctx.fetch(request).map { self.mapToDTO($0) }
+
+            let results = try ctx.fetch(request)
+            return results.map { self.mapToDTO($0) }
         }
     }
 
@@ -30,7 +45,9 @@ public final class CategoryRepository: BaseRepository, @unchecked Sendable {
         try performRead { [self] ctx in
             guard let object = try fetchByPK(entityName: "Account", pk: categoryId, in: ctx) else { return nil }
             let accountClass = Self.intValue(object, "pAccountClass")
-            guard accountClass == AccountClass.income || accountClass == AccountClass.expense else { return nil }
+            guard accountClass == AccountClass.income || accountClass == AccountClass.expense else {
+                return nil
+            }
             return self.mapToDTO(object)
         }
     }
@@ -57,7 +74,8 @@ public final class CategoryRepository: BaseRepository, @unchecked Sendable {
                 format: "(pAccountClass == %d OR pAccountClass == %d) AND pName ==[cd] %@",
                 AccountClass.income, AccountClass.expense, name
             )
-            return try ctx.fetch(request).map { self.mapToDTO($0) }
+            let results = try ctx.fetch(request)
+            return results.map { self.mapToDTO($0) }
         }
     }
 

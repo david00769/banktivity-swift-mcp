@@ -37,7 +37,8 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         try performRead { [self] ctx in
             let request = NSFetchRequest<NSManagedObject>(entityName: "Security")
             request.sortDescriptors = [NSSortDescriptor(key: "pSymbol", ascending: true)]
-            return try ctx.fetch(request).map { self.mapToSecurityDTO($0) }
+            let results = try ctx.fetch(request)
+            return results.map { self.mapToSecurityDTO($0) }
         }
     }
 
@@ -92,7 +93,9 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 }
                 security = s
             } else {
-                guard let sym = symbol else { throw ToolError.missingParameter("Either symbol or id is required") }
+                guard let sym = symbol else {
+                    throw ToolError.missingParameter("Either symbol or id is required")
+                }
                 let req = NSFetchRequest<NSManagedObject>(entityName: "Security")
                 req.predicate = NSPredicate(format: "pSymbol ==[c] %@", sym)
                 req.fetchLimit = 1
@@ -106,20 +109,29 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let priceItemRequest = NSFetchRequest<NSManagedObject>(entityName: "SecurityPriceItem")
             priceItemRequest.predicate = NSPredicate(format: "pSecurityID == %@", uniqueId)
             priceItemRequest.fetchLimit = 1
-            guard let priceItem = try ctx.fetch(priceItemRequest).first else { return [] }
+            let priceItems = try ctx.fetch(priceItemRequest)
+            guard let priceItem = priceItems.first else {
+                return []
+            }
 
-            var predicates: [NSPredicate] = [NSPredicate(format: "pSecurityPriceItem == %@", priceItem)]
+            let priceRequest = NSFetchRequest<NSManagedObject>(entityName: "SecurityPrice")
+            var predicates: [NSPredicate] = [
+                NSPredicate(format: "pSecurityPriceItem == %@", priceItem)
+            ]
+
             if let start = startDate, let days = Self.dateToDaysSinceEpoch(start) {
                 predicates.append(NSPredicate(format: "pDate >= %d", days))
             }
             if let end = endDate, let days = Self.dateToDaysSinceEpoch(end) {
                 predicates.append(NSPredicate(format: "pDate <= %d", days))
             }
-            let priceRequest = NSFetchRequest<NSManagedObject>(entityName: "SecurityPrice")
+
             priceRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             priceRequest.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
             if let limit = limit { priceRequest.fetchLimit = limit }
-            return try ctx.fetch(priceRequest).map { self.mapToPriceDTO($0) }
+
+            let prices = try ctx.fetch(priceRequest)
+            return prices.map { self.mapToPriceDTO($0) }
         }
     }
 
@@ -176,8 +188,12 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         amount: Double? = nil
     ) throws -> SecurityTradeDTO {
         struct SecurityInfo: Sendable {
-            let objectID: NSManagedObjectID; let symbol: String; let name: String; let uuid: String
+            let objectID: NSManagedObjectID
+            let symbol: String
+            let name: String
+            let uuid: String
         }
+
         let secInfo: SecurityInfo = try performRead { [self] ctx in
             let sec: NSManagedObject
             if let id = id {
@@ -186,14 +202,23 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 }
                 sec = s
             } else {
-                guard let sym = symbol else { throw ToolError.missingParameter("Either symbol or id is required") }
+                guard let sym = symbol else {
+                    throw ToolError.missingParameter("Either symbol or id is required")
+                }
                 let req = NSFetchRequest<NSManagedObject>(entityName: "Security")
                 req.predicate = NSPredicate(format: "pSymbol ==[c] %@", sym)
                 req.fetchLimit = 1
-                guard let s = try ctx.fetch(req).first else { throw ToolError.notFound("Security not found: \(sym)") }
+                guard let s = try ctx.fetch(req).first else {
+                    throw ToolError.notFound("Security not found: \(sym)")
+                }
                 sec = s
             }
-            return SecurityInfo(objectID: sec.objectID, symbol: Self.stringValue(sec, "pSymbol"), name: Self.stringValue(sec, "pName"), uuid: Self.stringValue(sec, "pUniqueID"))
+            return SecurityInfo(
+                objectID: sec.objectID,
+                symbol: Self.stringValue(sec, "pSymbol"),
+                name: Self.stringValue(sec, "pName"),
+                uuid: Self.stringValue(sec, "pUniqueID")
+            )
         }
         let securityObjectID = secInfo.objectID
         let secSymbol = secInfo.symbol
@@ -326,25 +351,38 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         securitySymbol: String? = nil,
         securityId: Int? = nil
     ) throws -> SecurityTradeDTO {
-        // Resolve new security info on the context's thread
-        struct NewSecInfo: Sendable { let objectID: NSManagedObjectID; let uuid: String }
-        let newSecInfo: NewSecInfo? = (securitySymbol != nil || securityId != nil) ? try performRead { [self] ctx in
-            let sec: NSManagedObject
-            if let id = securityId {
-                guard let s = try fetchByPK(entityName: "Security", pk: id, in: ctx) else {
-                    throw ToolError.notFound("Security not found: \(id)")
+        // Resolve new security if specified
+        struct NewSecInfo: Sendable {
+            let objectID: NSManagedObjectID
+            let uuid: String
+        }
+
+        let newSecInfo: NewSecInfo?
+        if securitySymbol != nil || securityId != nil {
+            newSecInfo = try performRead { [self] ctx in
+                let sec: NSManagedObject
+                if let id = securityId {
+                    guard let s = try fetchByPK(entityName: "Security", pk: id, in: ctx) else {
+                        throw ToolError.notFound("Security not found: \(id)")
+                    }
+                    sec = s
+                } else {
+                    guard let sym = securitySymbol else {
+                        throw ToolError.missingParameter("Either symbol or id is required")
+                    }
+                    let req = NSFetchRequest<NSManagedObject>(entityName: "Security")
+                    req.predicate = NSPredicate(format: "pSymbol ==[c] %@", sym)
+                    req.fetchLimit = 1
+                    guard let s = try ctx.fetch(req).first else {
+                        throw ToolError.notFound("Security not found: \(sym)")
+                    }
+                    sec = s
                 }
-                sec = s
-            } else {
-                guard let sym = securitySymbol else { throw ToolError.missingParameter("Either symbol or id is required") }
-                let req = NSFetchRequest<NSManagedObject>(entityName: "Security")
-                req.predicate = NSPredicate(format: "pSymbol ==[c] %@", sym)
-                req.fetchLimit = 1
-                guard let s = try ctx.fetch(req).first else { throw ToolError.notFound("Security not found: \(sym)") }
-                sec = s
+                return NewSecInfo(objectID: sec.objectID, uuid: Self.stringValue(sec, "pUniqueID"))
             }
-            return NewSecInfo(objectID: sec.objectID, uuid: Self.stringValue(sec, "pUniqueID"))
-        } : nil
+        } else {
+            newSecInfo = nil
+        }
         let newSecurityObjectID = newSecInfo?.objectID
         let newSecurityUUID = newSecInfo?.uuid
 
@@ -491,7 +529,11 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         hasHeader: Bool = true,
         dateFormat: String = "yyyy-MM-dd"
     ) throws -> PriceImportResultDTO {
-        struct ImportSecInfo: Sendable { let symbol: String; let uniqueId: String }
+        struct ImportSecInfo: Sendable {
+            let symbol: String
+            let uniqueId: String
+        }
+
         let importSecInfo: ImportSecInfo = try performRead { [self] ctx in
             let sec: NSManagedObject
             if let id = id {
@@ -500,14 +542,21 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 }
                 sec = s
             } else {
-                guard let sym = symbol else { throw ToolError.missingParameter("Either symbol or id is required") }
+                guard let sym = symbol else {
+                    throw ToolError.missingParameter("Either symbol or id is required")
+                }
                 let req = NSFetchRequest<NSManagedObject>(entityName: "Security")
                 req.predicate = NSPredicate(format: "pSymbol ==[c] %@", sym)
                 req.fetchLimit = 1
-                guard let s = try ctx.fetch(req).first else { throw ToolError.notFound("Security not found: \(sym)") }
+                guard let s = try ctx.fetch(req).first else {
+                    throw ToolError.notFound("Security not found: \(sym)")
+                }
                 sec = s
             }
-            return ImportSecInfo(symbol: Self.stringValue(sec, "pSymbol"), uniqueId: Self.stringValue(sec, "pUniqueID"))
+            return ImportSecInfo(
+                symbol: Self.stringValue(sec, "pSymbol"),
+                uniqueId: Self.stringValue(sec, "pUniqueID")
+            )
         }
         let securitySymbol = importSecInfo.symbol
         let securityUniqueId = importSecInfo.uniqueId
@@ -697,12 +746,18 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let piToSymbol: [NSManagedObjectID: String]
             let piToSecurityUUID: [NSManagedObjectID: String]
         }
+
         let info: BrokenPriceInfo = try performRead { ctx in
+            // Find broken prices: closePrice=0 AND adjustedClosePrice != 0
             let priceRequest = NSFetchRequest<NSManagedObject>(entityName: "SecurityPrice")
             priceRequest.predicate = NSPredicate(format: "pClosePrice == 0 AND pAdjustedClosePrice != 0")
             let brokenPrices = try ctx.fetch(priceRequest)
-            if brokenPrices.isEmpty { return BrokenPriceInfo(objectIDs: [], piToSymbol: [:], piToSecurityUUID: [:]) }
 
+            if brokenPrices.isEmpty {
+                return BrokenPriceInfo(objectIDs: [], piToSymbol: [:], piToSecurityUUID: [:])
+            }
+
+            // Group by security for reporting
             var securityPriceItems = Set<NSManagedObjectID>()
             for price in brokenPrices {
                 if let pi = Self.relatedObject(price, "pSecurityPriceItem") {
@@ -710,6 +765,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 }
             }
 
+            // Build mapping of SecurityPriceItem objectID → symbol
             var piToSymbol: [NSManagedObjectID: String] = [:]
             var piToSecurityUUID: [NSManagedObjectID: String] = [:]
             for piObjID in securityPriceItems {
@@ -719,12 +775,14 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                     secRequest.predicate = NSPredicate(format: "pUniqueID == %@", securityID)
                     secRequest.fetchLimit = 1
                     if let sec = try ctx.fetch(secRequest).first {
-                        piToSymbol[piObjID] = Self.stringValue(sec, "pSymbol")
+                        let sym = Self.stringValue(sec, "pSymbol")
+                        piToSymbol[piObjID] = sym
                         piToSecurityUUID[piObjID] = securityID
                     }
                 }
             }
 
+            // Filter by symbol if specified
             let objectIDs: [NSManagedObjectID]
             if let filterSymbol = symbol {
                 objectIDs = brokenPrices.filter { price in
@@ -741,6 +799,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         let brokenPriceObjectIDs = info.objectIDs
         if brokenPriceObjectIDs.isEmpty { return [] }
 
+        // Capture as let for Sendable closure
         let symbolLookup = info.piToSymbol
         let uuidLookup = info.piToSecurityUUID
 
@@ -805,6 +864,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         id: Int? = nil
     ) throws -> [SecurityHoldingDTO] {
         try performRead { [self] ctx in
+            // Optionally resolve a specific security
             var targetSecurity: NSManagedObject?
             if let id = id {
                 targetSecurity = try fetchByPK(entityName: "Security", pk: id, in: ctx)
@@ -815,48 +875,68 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 targetSecurity = try ctx.fetch(req).first
             }
 
-            var predicates: [NSPredicate] = [NSPredicate(format: "pShares != nil")]
+            // Fetch all SecurityLineItems with non-null pShares
+            let request = NSFetchRequest<NSManagedObject>(entityName: "SecurityLineItem")
+            var predicates: [NSPredicate] = [
+                NSPredicate(format: "pShares != nil")
+            ]
             if let targetSecurity = targetSecurity {
                 predicates.append(NSPredicate(format: "pSecurity == %@", targetSecurity))
             }
-            let request = NSFetchRequest<NSManagedObject>(entityName: "SecurityLineItem")
             request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             let items = try ctx.fetch(request)
 
-            struct PositionKey: Hashable { let accountPK: Int; let securityPK: Int }
-            struct PositionAccum {
-                var shares: Double = 0; var costBasis: Double = 0
-                var account: NSManagedObject?; var security: NSManagedObject?
+            // Group by (account PK, security PK)
+            struct PositionKey: Hashable {
+                let accountPK: Int
+                let securityPK: Int
             }
+            struct PositionAccum {
+                var shares: Double = 0
+                var costBasis: Double = 0
+                var account: NSManagedObject?
+                var security: NSManagedObject?
+            }
+
             var positions: [PositionKey: PositionAccum] = [:]
 
             for sli in items {
                 guard let security = Self.relatedObject(sli, "pSecurity") else { continue }
                 guard let lineItem = Self.relatedObject(sli, "pLineItem") else { continue }
                 guard let account = Self.relatedObject(lineItem, "pAccount") else { continue }
+
                 let acctPK = Self.extractPK(from: account.objectID)
                 if let filterAcct = accountId, acctPK != filterAcct { continue }
+
                 let secPK = Self.extractPK(from: security.objectID)
                 let key = PositionKey(accountPK: acctPK, securityPK: secPK)
+
                 let shares = Self.doubleValue(sli, "pShares")
                 let amount = Self.doubleValue(sli, "pAmount")
+
                 var accum = positions[key] ?? PositionAccum()
                 accum.shares += shares
-                if shares > 0 { accum.costBasis += -amount }
+                // Buy amounts are negative (outflow), so negate for cost basis
+                if shares > 0 {
+                    accum.costBasis += -amount
+                }
                 accum.account = account
                 accum.security = security
                 positions[key] = accum
             }
 
+            // Filter out zero-share positions and build DTOs
             var results: [SecurityHoldingDTO] = []
             for (_, accum) in positions {
                 guard abs(accum.shares) > 0.0001 else { continue }
                 guard let account = accum.account, let security = accum.security else { continue }
+
                 let securityId = Self.extractPK(from: security.objectID)
                 let secSymbol = Self.stringValue(security, "pSymbol")
                 let secName = Self.stringValue(security, "pName")
                 let uniqueId = Self.stringValue(security, "pUniqueID")
 
+                // Look up latest price
                 var lastPrice: Double?
                 var lastPriceDate: String?
                 let piRequest = NSFetchRequest<NSManagedObject>(entityName: "SecurityPriceItem")
@@ -874,14 +954,26 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                     }
                 }
 
-                let currency: String? = Self.relatedObject(security, "pCurrency").flatMap { Self.string($0, "pCode") }
+                let marketValue = lastPrice.map { $0 * accum.shares }
+                let currency: String? = {
+                    if let curr = Self.relatedObject(security, "pCurrency") {
+                        return Self.string(curr, "pCode")
+                    }
+                    return nil
+                }()
 
                 results.append(SecurityHoldingDTO(
                     accountId: Self.extractPK(from: account.objectID),
                     accountName: Self.stringValue(account, "pName"),
-                    securityId: securityId, symbol: secSymbol, securityName: secName,
-                    shares: accum.shares, costBasis: accum.costBasis, marketValue: lastPrice.map { $0 * accum.shares },
-                    lastPrice: lastPrice, lastPriceDate: lastPriceDate, currency: currency
+                    securityId: securityId,
+                    symbol: secSymbol,
+                    securityName: secName,
+                    shares: accum.shares,
+                    costBasis: accum.costBasis,
+                    marketValue: marketValue,
+                    lastPrice: lastPrice,
+                    lastPriceDate: lastPriceDate,
+                    currency: currency
                 ))
             }
 
@@ -908,11 +1000,13 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 targetSecurity = try ctx.fetch(req).first
             }
 
-            var predicates: [NSPredicate] = [NSPredicate(format: "pShares != nil")]
+            let request = NSFetchRequest<NSManagedObject>(entityName: "SecurityLineItem")
+            var predicates: [NSPredicate] = [
+                NSPredicate(format: "pShares != nil")
+            ]
             if let targetSecurity = targetSecurity {
                 predicates.append(NSPredicate(format: "pSecurity == %@", targetSecurity))
             }
-            let request = NSFetchRequest<NSManagedObject>(entityName: "SecurityLineItem")
             request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             let items = try ctx.fetch(request)
 
@@ -922,20 +1016,35 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 guard let lineItem = Self.relatedObject(sli, "pLineItem") else { continue }
                 guard let account = Self.relatedObject(lineItem, "pAccount") else { continue }
                 guard let transaction = Self.relatedObject(lineItem, "pTransaction") else { continue }
+
                 let acctPK = Self.extractPK(from: account.objectID)
                 if let filterAcct = accountId, acctPK != filterAcct { continue }
+
                 guard let txDate = Self.dateValue(transaction, "pDate") else { continue }
                 let dateStr = DateConversion.toISO(txDate)
+
                 if let start = startDate, dateStr < start { continue }
                 if let end = endDate, dateStr > end { continue }
-                let baseType = Self.relatedObject(transaction, "pTransactionType").map { Self.intValue($0, "pBaseType") } ?? 0
+
+                let baseType: Int = {
+                    if let txType = Self.relatedObject(transaction, "pTransactionType") {
+                        return Self.intValue(txType, "pBaseType")
+                    }
+                    return 0
+                }()
+
                 trades.append(SecurityTradeDTO(
-                    id: Self.extractPK(from: transaction.objectID), date: dateStr,
+                    id: Self.extractPK(from: transaction.objectID),
+                    date: dateStr,
                     type: Self.transactionTypeName(baseType),
-                    symbol: Self.stringValue(security, "pSymbol"), securityName: Self.stringValue(security, "pName"),
-                    shares: Self.doubleValue(sli, "pShares"), pricePerShare: Self.doubleValue(sli, "pPricePerShare"),
-                    amount: Self.doubleValue(sli, "pAmount"), commission: Self.doubleValue(sli, "pCommission"),
-                    accountName: Self.stringValue(account, "pName"), accountId: acctPK
+                    symbol: Self.stringValue(security, "pSymbol"),
+                    securityName: Self.stringValue(security, "pName"),
+                    shares: Self.doubleValue(sli, "pShares"),
+                    pricePerShare: Self.doubleValue(sli, "pPricePerShare"),
+                    amount: Self.doubleValue(sli, "pAmount"),
+                    commission: Self.doubleValue(sli, "pCommission"),
+                    accountName: Self.stringValue(account, "pName"),
+                    accountId: acctPK
                 ))
             }
 
@@ -963,11 +1072,13 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 targetSecurity = try ctx.fetch(req).first
             }
 
-            var predicates: [NSPredicate] = [NSPredicate(format: "pIncome > 0")]
+            let request = NSFetchRequest<NSManagedObject>(entityName: "SecurityLineItem")
+            var predicates: [NSPredicate] = [
+                NSPredicate(format: "pIncome > 0")
+            ]
             if let targetSecurity = targetSecurity {
                 predicates.append(NSPredicate(format: "pSecurity == %@", targetSecurity))
             }
-            let request = NSFetchRequest<NSManagedObject>(entityName: "SecurityLineItem")
             request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             let items = try ctx.fetch(request)
 
@@ -977,19 +1088,32 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 guard let lineItem = Self.relatedObject(sli, "pLineItem") else { continue }
                 guard let account = Self.relatedObject(lineItem, "pAccount") else { continue }
                 guard let transaction = Self.relatedObject(lineItem, "pTransaction") else { continue }
+
                 let acctPK = Self.extractPK(from: account.objectID)
                 if let filterAcct = accountId, acctPK != filterAcct { continue }
+
                 guard let txDate = Self.dateValue(transaction, "pDate") else { continue }
                 let dateStr = DateConversion.toISO(txDate)
+
                 if let start = startDate, dateStr < start { continue }
                 if let end = endDate, dateStr > end { continue }
-                let baseType = Self.relatedObject(transaction, "pTransactionType").map { Self.intValue($0, "pBaseType") } ?? 0
+
+                let baseType: Int = {
+                    if let txType = Self.relatedObject(transaction, "pTransactionType") {
+                        return Self.intValue(txType, "pBaseType")
+                    }
+                    return 0
+                }()
+
                 incomes.append(SecurityIncomeDTO(
-                    id: Self.extractPK(from: transaction.objectID), date: dateStr,
+                    id: Self.extractPK(from: transaction.objectID),
+                    date: dateStr,
                     type: Self.transactionTypeName(baseType),
-                    symbol: Self.stringValue(security, "pSymbol"), securityName: Self.stringValue(security, "pName"),
+                    symbol: Self.stringValue(security, "pSymbol"),
+                    securityName: Self.stringValue(security, "pName"),
                     amount: Self.doubleValue(sli, "pIncome"),
-                    accountName: Self.stringValue(account, "pName"), accountId: acctPK
+                    accountName: Self.stringValue(account, "pName"),
+                    accountId: acctPK
                 ))
             }
 

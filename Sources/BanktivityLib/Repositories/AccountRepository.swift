@@ -10,14 +10,18 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
     public func list(includeHidden: Bool = false) throws -> [AccountDTO] {
         try performRead { [self] ctx in
             let request = NSFetchRequest<NSManagedObject>(entityName: "Account")
+
             if !includeHidden {
                 request.predicate = NSPredicate(format: "pHidden == NO OR pHidden == nil")
             }
+
             request.sortDescriptors = [
                 NSSortDescriptor(key: "pAccountClass", ascending: true),
                 NSSortDescriptor(key: "pName", ascending: true),
             ]
-            return try ctx.fetch(request).map { self.mapToDTO($0) }
+
+            let results = try ctx.fetch(request)
+            return results.map { self.mapToDTO($0) }
         }
     }
 
@@ -33,8 +37,11 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
     public func findByName(_ name: String) throws -> AccountDTO? {
         try performRead { [self] ctx in
             let request = NSFetchRequest<NSManagedObject>(entityName: "Account")
-            request.predicate = NSPredicate(format: "pName ==[cd] %@ OR pFullName ==[cd] %@", name, name)
+            request.predicate = NSPredicate(
+                format: "pName ==[cd] %@ OR pFullName ==[cd] %@", name, name
+            )
             request.fetchLimit = 1
+
             guard let object = try ctx.fetch(request).first else { return nil }
             return self.mapToDTO(object)
         }
@@ -53,6 +60,7 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
         try performRead { [self] ctx in
             let assets = try self.sumByAccountClasses(Array(assetClasses), in: ctx)
             let liabilities = try self.sumByAccountClasses(Array(liabilityClasses), in: ctx)
+
             return NetWorthDTO(
                 assets: assets,
                 liabilities: liabilities,
@@ -72,27 +80,47 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
     ) throws -> [CategorySpendingDTO] {
         try performRead { [self] ctx in
             let accountClass = type == "income" ? AccountClass.income : AccountClass.expense
+
             let accountRequest = NSFetchRequest<NSManagedObject>(entityName: "Account")
             accountRequest.predicate = NSPredicate(format: "pAccountClass == %d", accountClass)
             let categoryAccounts = try ctx.fetch(accountRequest)
 
             var results: [CategorySpendingDTO] = []
+
             for account in categoryAccounts {
                 let categoryName = Self.stringValue(account, "pName")
-                var predicates: [NSPredicate] = [NSPredicate(format: "pAccount == %@", account)]
+
+                // Build predicate for line items in this account with date filtering
+                var predicates: [NSPredicate] = [
+                    NSPredicate(format: "pAccount == %@", account)
+                ]
+
                 if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
-                    predicates.append(NSPredicate(format: "pTransaction.pDate >= %@", DateConversion.toDate(ts) as NSDate))
+                    predicates.append(NSPredicate(
+                        format: "pTransaction.pDate >= %@", DateConversion.toDate(ts) as NSDate
+                    ))
                 }
                 if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
-                    predicates.append(NSPredicate(format: "pTransaction.pDate <= %@", DateConversion.toDate(ts) as NSDate))
+                    predicates.append(NSPredicate(
+                        format: "pTransaction.pDate <= %@", DateConversion.toDate(ts) as NSDate
+                    ))
                 }
+
                 let compound = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+
                 let total = try self.sumLineItemAmounts(predicate: compound, in: ctx)
                 let txCount = try self.countDistinctTransactions(predicate: compound, in: ctx)
+
                 if txCount > 0 {
-                    results.append(CategorySpendingDTO(category: categoryName, total: total, transactionCount: txCount, formattedTotal: formatCurrency(total)))
+                    results.append(CategorySpendingDTO(
+                        category: categoryName,
+                        total: total,
+                        transactionCount: txCount,
+                        formattedTotal: formatCurrency(total)
+                    ))
                 }
             }
+
             results.sort { $0.total > $1.total }
             return results
         }

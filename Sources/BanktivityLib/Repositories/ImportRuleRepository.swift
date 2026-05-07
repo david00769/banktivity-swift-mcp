@@ -9,9 +9,11 @@ public final class ImportRuleRepository: BaseRepository, @unchecked Sendable {
     /// List all import rules
     public func list() throws -> [ImportRuleDTO] {
         try performRead { [self] ctx in
+            // Import rules are TemplateSelector entities with a specific Z_ENT
             let request = NSFetchRequest<NSManagedObject>(entityName: "ImportSourceTemplateSelector")
             request.sortDescriptors = [NSSortDescriptor(key: "pDetailsExpression", ascending: true)]
-            return try ctx.fetch(request).compactMap { try self.mapToDTO($0) }
+            let results = try ctx.fetch(request)
+            return try results.compactMap { try self.mapToDTO($0) }
         }
     }
 

@@ -11,7 +11,8 @@ public final class TemplateRepository: BaseRepository, @unchecked Sendable {
         try performRead { [self] ctx in
             let request = NSFetchRequest<NSManagedObject>(entityName: "TransactionTemplate")
             request.sortDescriptors = [NSSortDescriptor(key: "pTitle", ascending: true)]
-            return try ctx.fetch(request).map { self.mapToDTO($0) }
+            let results = try ctx.fetch(request)
+            return results.map { self.mapToDTO($0) }
         }
     }
 

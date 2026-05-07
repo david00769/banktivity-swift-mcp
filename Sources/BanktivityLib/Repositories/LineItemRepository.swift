@@ -10,6 +10,7 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
     /// Must be called from within a performRead or performWrite block.
     public func getForTransaction(_ transaction: NSManagedObject) -> [LineItemDTO] {
         let lineItems = Self.relatedSet(transaction, "lineItems")
+
         return lineItems
             .sorted { Self.extractPK(from: $0.objectID) < Self.extractPK(from: $1.objectID) }
             .map { mapToDTO($0) }

@@ -23,45 +23,76 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
         offset: Int? = nil
     ) throws -> [TransactionDTO] {
         try performRead { [self] ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+
             var predicates: [NSPredicate] = []
+
             if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
-                predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
+                predicates.append(NSPredicate(
+                    format: "pDate >= %@", DateConversion.toDate(ts) as NSDate
+                ))
             }
+
             if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
-                predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
+                predicates.append(NSPredicate(
+                    format: "pDate <= %@", DateConversion.toDate(ts) as NSDate
+                ))
             }
+
             if let accountId = accountId {
+                // Filter transactions that have at least one line item in this account
                 if let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) {
-                    predicates.append(NSPredicate(format: "ANY lineItems.pAccount == %@", account))
+                    predicates.append(NSPredicate(
+                        format: "ANY lineItems.pAccount == %@", account
+                    ))
                 }
             }
-            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+
             if !predicates.isEmpty {
                 request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             }
-            request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
-            if let limit = limit { request.fetchLimit = limit }
-            if let offset = offset { request.fetchOffset = offset }
-            return try ctx.fetch(request).map { self.mapToDTO($0) }
+
+            request.sortDescriptors = [
+                NSSortDescriptor(key: "pDate", ascending: false)
+            ]
+
+            if let limit = limit {
+                request.fetchLimit = limit
+            }
+
+            if let offset = offset {
+                request.fetchOffset = offset
+            }
+
+            let results = try ctx.fetch(request)
+            return results.map { self.mapToDTO($0) }
         }
     }
 
     /// Search transactions by title or note (case-insensitive LIKE)
     public func search(query: String, limit: Int = 50) throws -> [TransactionDTO] {
         try performRead { [self] ctx in
-            let pattern = "*\(query)*"
             let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
-            request.predicate = NSPredicate(format: "pTitle LIKE[cd] %@ OR pNote LIKE[cd] %@", pattern, pattern)
-            request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
+            let pattern = "*\(query)*"
+            request.predicate = NSPredicate(
+                format: "pTitle LIKE[cd] %@ OR pNote LIKE[cd] %@", pattern, pattern
+            )
+            request.sortDescriptors = [
+                NSSortDescriptor(key: "pDate", ascending: false)
+            ]
             request.fetchLimit = limit
-            return try ctx.fetch(request).map { self.mapToDTO($0) }
+
+            let results = try ctx.fetch(request)
+            return results.map { self.mapToDTO($0) }
         }
     }
 
     /// Get a single transaction by primary key
     public func get(transactionId: Int) throws -> TransactionDTO? {
         try performRead { [self] ctx in
-            guard let object = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else { return nil }
+            guard let object = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
+                return nil
+            }
             return self.mapToDTO(object)
         }
     }

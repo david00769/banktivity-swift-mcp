@@ -30,19 +30,25 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
         excludeTransfers: Bool = true
     ) throws -> [UncategorizedTransactionDTO] {
         try performRead { ctx in
+            // Fetch transactions where at least one line item goes to an income/expense category
+            // but another line item has no category assignment
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+
             var predicates: [NSPredicate] = []
+
             if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
                 predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
             }
             if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
                 predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
             }
-            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+
             if !predicates.isEmpty {
                 request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             }
+
             request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
-            if let limit = limit { request.fetchLimit = limit * 3 }
+            if let limit = limit { request.fetchLimit = limit * 3 } // fetch extra, filter later
 
             let transactions = try ctx.fetch(request)
             var results: [UncategorizedTransactionDTO] = []
@@ -80,8 +86,10 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
                     ))
                 }
 
+                // Uncategorized: has non-category line items but no category line items
                 if hasNonCategory && !hasCategory {
                     if excludeTransfers && lineItems.count == 2 {
+                        // Check if it's a transfer (both line items are non-category)
                         let allNonCategory = lineItems.allSatisfy { li in
                             guard let account = Self.relatedObject(li, "pAccount") else { return false }
                             let acClass = Self.intValue(account, "pAccountClass")
@@ -112,17 +120,19 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
 
     /// Suggest category for a merchant based on import rules and historical data
     public func suggestCategory(merchantName: String) throws -> [CategorySuggestionDTO] {
-        // importRuleRepo.match() → importRuleRepo.list() is already wrapped in performRead; re-entrant OK
+        // Check import rules first
         let matchingRules = try importRuleRepo.match(description: merchantName)
 
         return try performRead { [self] ctx in
             var suggestions: [CategorySuggestionDTO] = []
 
             for rule in matchingRules {
+                // The rule's template tells us the category
                 if let template = try? fetchByPK(entityName: "TransactionTemplate", pk: rule.templateId, in: ctx) {
                     let templateLineItems = Self.relatedSet(template, "pLineItemTemplates")
                     for li in templateLineItems {
                         let accountId = Self.stringValue(li, "pAccountID")
+                        // Look up the account/category by uniqueID
                         let catRequest = NSFetchRequest<NSManagedObject>(entityName: "Account")
                         catRequest.predicate = NSPredicate(format: "pUniqueID == %@", accountId)
                         catRequest.fetchLimit = 1
@@ -143,6 +153,7 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
                 }
             }
 
+            // Check historical transactions with similar titles
             let searchRequest = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
             searchRequest.predicate = NSPredicate(format: "pTitle LIKE[cd] %@", "*\(merchantName)*")
             searchRequest.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
@@ -170,6 +181,7 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
 
             let totalMatches = categoryCounts.values.reduce(0) { $0 + $1.count }
             for (catId, info) in categoryCounts {
+                // Skip if already suggested by import rule
                 if suggestions.contains(where: { $0.categoryId == catId }) { continue }
                 let confidence = min(0.8, Double(info.count) / max(1.0, Double(totalMatches)) * 0.8 + 0.3)
                 suggestions.append(CategorySuggestionDTO(
@@ -197,7 +209,9 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
         limit: Int? = nil
     ) throws -> [ReviewedTransactionDTO] {
         try performRead { ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
             var predicates: [NSPredicate] = []
+
             if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
                 predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
             }
@@ -207,7 +221,7 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
             if let pattern = payeePattern {
                 predicates.append(NSPredicate(format: "pTitle LIKE[cd] %@", "*\(pattern)*"))
             }
-            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+
             if !predicates.isEmpty {
                 request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             }
@@ -267,19 +281,23 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
         minTransactions: Int = 1
     ) throws -> [PayeeCategorySummaryDTO] {
         try performRead { ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
             var predicates: [NSPredicate] = []
+
             if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
                 predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
             }
             if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
                 predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
             }
-            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+
             if !predicates.isEmpty {
                 request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             }
 
             let transactions = try ctx.fetch(request)
+
+            // Group by title (payee)
             var payeeMap: [String: (total: Int, categories: [Int: (name: String, path: String, count: Int)], uncategorized: Int)] = [:]
 
             for tx in transactions {
@@ -314,7 +332,12 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
                         title: title,
                         totalTransactions: entry.total,
                         categories: entry.categories.map { (catId, info) in
-                            PayeeCategoryEntryDTO(categoryId: catId, categoryName: info.name, categoryPath: info.path, count: info.count)
+                            PayeeCategoryEntryDTO(
+                                categoryId: catId,
+                                categoryName: info.name,
+                                categoryPath: info.path,
+                                count: info.count
+                            )
                         }.sorted { $0.count > $1.count },
                         uncategorizedCount: entry.uncategorized
                     )
@@ -421,6 +444,7 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
         dryRun: Bool = false,
         uncategorizedOnly: Bool = false
     ) throws -> BulkRecategorizeResultDTO {
+        // Find matching transactions and gather metadata on the context's thread
         struct TxData {
             let id: Int
             let title: String
@@ -432,6 +456,7 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
             let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
             request.predicate = NSPredicate(format: "pTitle LIKE[cd] %@", "*\(payeePattern)*")
             request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
+
             let transactions = try ctx.fetch(request)
             return transactions.map { tx in
                 let lineItems = Self.relatedSet(tx, "lineItems")
@@ -454,13 +479,14 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
             }
         }
 
-        let catName = try categoryRepo.get(categoryId: categoryId)?.name ?? "Unknown"
         var results: [RecategorizationResultDTO] = []
 
         for txData in txDataList {
+            // Check if already categorized
             if uncategorizedOnly && txData.hasCat { continue }
 
             if dryRun {
+                let catName = try categoryRepo.get(categoryId: categoryId)?.name ?? "Unknown"
                 results.append(RecategorizationResultDTO(
                     transactionId: txData.id,
                     title: txData.title,
