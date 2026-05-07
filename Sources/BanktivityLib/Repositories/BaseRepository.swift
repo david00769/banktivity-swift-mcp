@@ -16,44 +16,6 @@ open class BaseRepository: @unchecked Sendable {
         container.viewContext
     }
 
-    /// Perform a fetch request and return results
-    public func fetch<T: NSFetchRequestResult>(_ request: NSFetchRequest<T>) throws -> [T] {
-        try context.fetch(request)
-    }
-
-    /// Fetch a single object by entity name and primary key (Z_PK).
-    /// Handles entity inheritance by trying the base entity and all subentities.
-    /// Uses fetch requests to verify entity type, since existingObject(with:) can
-    /// return objects with wrong entity types for sibling entities in inheritance.
-    public func fetchByPK(entityName: String, pk: Int) throws -> NSManagedObject? {
-        let coordinator = container.persistentStoreCoordinator
-        guard let store = coordinator.persistentStores.first,
-              let entity = container.managedObjectModel.entitiesByName[entityName]
-        else {
-            return nil
-        }
-
-        var entityNames = [entity.name!]
-        func collectSubentities(_ e: NSEntityDescription) {
-            for sub in e.subentities {
-                if let name = sub.name { entityNames.append(name) }
-                collectSubentities(sub)
-            }
-        }
-        collectSubentities(entity)
-
-        for name in entityNames {
-            let uri = objectURI(store: store, entityName: name, pk: pk)
-            guard let objectID = coordinator.managedObjectID(forURIRepresentation: uri) else { continue }
-            let request = NSFetchRequest<NSManagedObject>(entityName: name)
-            request.predicate = NSPredicate(format: "SELF == %@", objectID)
-            request.fetchLimit = 1
-            if let obj = try? context.fetch(request).first { return obj }
-        }
-
-        return nil
-    }
-
     /// Construct the Core Data object URI for a given store, entity, and PK.
     /// Format: x-coredata://<storeUUID>/<entityName>/p<pk>
     public func objectURI(store: NSPersistentStore, entityName: String, pk: Int) -> URL {

@@ -42,42 +42,6 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
-    public func resolveSecurity(symbol: String?, id: Int?) throws -> NSManagedObject {
-        nonisolated(unsafe) var result: NSManagedObject?
-        nonisolated(unsafe) var resolveError: Error?
-        context.performAndWait {
-            do {
-                if let id = id {
-                    guard let security = try fetchByPK(entityName: "Security", pk: id) else {
-                        resolveError = ToolError.notFound("Security not found with ID: \(id)")
-                        return
-                    }
-                    result = security
-                } else {
-                    guard let symbol = symbol else {
-                        resolveError = ToolError.missingParameter("Either symbol or id is required")
-                        return
-                    }
-                    let request = NSFetchRequest<NSManagedObject>(entityName: "Security")
-                    request.predicate = NSPredicate(format: "pSymbol ==[c] %@", symbol)
-                    request.fetchLimit = 1
-                    guard let security = try context.fetch(request).first else {
-                        resolveError = ToolError.notFound("Security not found with symbol: \(symbol)")
-                        return
-                    }
-                    result = security
-                }
-            } catch {
-                resolveError = error
-            }
-        }
-        if let error = resolveError { throw error }
-        guard let security = result else {
-            throw ToolError.notFound("Security not found")
-        }
-        return security
-    }
-
     public func getPrices(
         symbol: String? = nil,
         id: Int? = nil,
@@ -142,7 +106,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         name: String,
         currencyCode: String = "EUR"
     ) throws -> SecurityDTO {
-        let pk: Int = try performWriteReturning { ctx in
+        try performWriteReturning { ctx in
             let existing = NSFetchRequest<NSManagedObject>(entityName: "Security")
             existing.predicate = NSPredicate(format: "pSymbol ==[c] %@", symbol)
             existing.fetchLimit = 1
@@ -156,9 +120,10 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let currency = try ctx.fetch(currRequest).first
 
             let sec = Self.createObject(entityName: "Security", in: ctx)
+            let uniqueID = Self.generateUUID()
             sec.setValue(symbol, forKey: "pSymbol")
             sec.setValue(name, forKey: "pName")
-            sec.setValue(Self.generateUUID(), forKey: "pUniqueID")
+            sec.setValue(uniqueID, forKey: "pUniqueID")
             sec.setValue(false, forKey: "pExcludeFromQuoteUpdates")
             sec.setValue(false, forKey: "pIsIndex")
             sec.setValue(false, forKey: "pTradesInPence")
@@ -171,11 +136,15 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             if let currency = currency { sec.setValue(currency, forKey: "pCurrency") }
 
             try ctx.obtainPermanentIDs(for: [sec])
-            return Self.extractPK(from: sec.objectID)
+            return SecurityDTO(
+                id: Self.extractPK(from: sec.objectID),
+                name: name,
+                symbol: symbol,
+                uniqueId: uniqueID,
+                currency: currency.flatMap { Self.string($0, "pCode") },
+                securityType: 0
+            )
         }
-
-        let security = try resolveSecurity(symbol: nil, id: pk)
-        return mapToSecurityDTO(security)
     }
 
     public func createShareAdjustment(
