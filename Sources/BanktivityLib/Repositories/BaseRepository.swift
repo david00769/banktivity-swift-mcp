@@ -50,14 +50,21 @@ open class BaseRepository: @unchecked Sendable {
         }
     }
 
-    /// Perform work on a background context and save
+    /// Perform work on a background context and save.
+    ///
+    /// The viewContext is configured with `automaticallyMergesChangesFromParent = true`,
+    /// but the merge happens asynchronously on the main run loop — which doesn't run
+    /// in this CLI/MCP-server process. Subsequent reads through `performRead` therefore
+    /// re-fetch from the persistent store rather than relying on cached objects in the
+    /// viewContext, which is why every read path here goes through `fetchByPK` or a
+    /// fresh `NSFetchRequest`. Don't cache `NSManagedObject` instances across calls.
     public func performWrite(_ block: @escaping @Sendable (NSManagedObjectContext) throws -> Void) throws {
         _ = try perform(on: container.newBackgroundContext(), save: true) { ctx in
             try block(ctx)
         }
     }
 
-    /// Perform a write that returns a value
+    /// Perform a write that returns a value. See `performWrite` for context lifecycle notes.
     public func performWriteReturning<T: Sendable>(_ block: @escaping @Sendable (NSManagedObjectContext) throws -> T) throws -> T {
         try perform(on: container.newBackgroundContext(), save: true, block)
     }
