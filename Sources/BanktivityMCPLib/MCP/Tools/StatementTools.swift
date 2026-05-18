@@ -127,7 +127,7 @@ func registerStatementTools(
     // reconcile_line_items
     registry.register(
         name: "reconcile_line_items",
-        description: "Assign line items to a statement (sets pCleared=true). Validates account ownership, date range, and no double-assignment.",
+        description: "Assign explicitly selected line items to a statement (sets pCleared=true). Validates account ownership and no double-assignment; callers implementing automatic selection should filter candidates by date before calling.",
         inputSchema: ToolHelpers.schema(
             properties: [
                 "statement_id": ToolHelpers.property(type: "number", description: "The statement ID"),

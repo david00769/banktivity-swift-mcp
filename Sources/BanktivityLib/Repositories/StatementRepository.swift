@@ -160,8 +160,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         struct StatementInfo: Sendable {
             let accountId: Int
             let uuid: String
-            let startTs: Double?
-            let endTs: Double?
         }
         let info: StatementInfo = try performRead { [self] ctx in
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
@@ -172,16 +170,12 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             }
             return StatementInfo(
                 accountId: Self.extractPK(from: account.objectID),
-                uuid: Self.stringValue(statement, "pUniqueID"),
-                startTs: Self.dateValue(statement, "pStartDate"),
-                endTs: Self.dateValue(statement, "pEndDate")
+                uuid: Self.stringValue(statement, "pUniqueID")
             )
         }
 
         let statementAccountId = info.accountId
         let statementUUID = info.uuid
-        let startTs = info.startTs
-        let endTs = info.endTs
 
         struct ReconcileLineInfo: Sendable {
             let liUUID: String
@@ -211,17 +205,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                     throw ToolError.invalidInput("Line item \(liId) has no account")
                 }
 
-                // Validate date range (allow 2-day buffer before start for credit card timing)
-                if let startTs = startTs, let endTs = endTs,
-                   let tx = Self.relatedObject(li, "pTransaction"),
-                   let txDate = Self.dateValue(tx, "pDate") {
-                    let bufferSeconds: Double = 2 * 86400
-                    guard txDate >= (startTs - bufferSeconds) && txDate <= endTs else {
-                        let dateStr = DateConversion.toISO(txDate)
-                        throw ToolError.invalidInput("Line item \(liId) transaction date \(dateStr) is outside statement date range")
-                    }
-                }
-
                 // Validate no double-assignment to a different statement
                 if let existingStatement = Self.relatedObject(li, "pStatement") {
                     let existingId = Self.extractPK(from: existingStatement.objectID)
@@ -243,6 +226,10 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                     }
                     result[txUUID, default: []].append(ReconcileLineInfo(liUUID: liUUID, liId: liId))
                 }
+            }
+
+            if !lineItemIds.isEmpty {
+                Self.setNow(stmtInCtx, "pModificationDate")
             }
 
             return result
