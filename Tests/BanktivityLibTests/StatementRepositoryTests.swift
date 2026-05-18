@@ -135,4 +135,103 @@ struct StatementRepositoryTests {
             )
         }
     }
+
+    @Test("Account reconciliation status is derived from active statements")
+    func accountReconciliationStatusUsesActiveStatements() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let card = try createCreditCard(named: "Statement History Card", using: repos.accounts)
+        let initialStatus = try repos.statements.getAccountReconciliationStatus(accountId: card.id)
+
+        #expect(initialStatus.accountId == card.id)
+        #expect(!initialStatus.hasReconciledStatements)
+        #expect(initialStatus.statementCount == 0)
+        #expect(initialStatus.lastStatementId == nil)
+        #expect(initialStatus.lastReconciledStatementEndDate == nil)
+
+        _ = try repos.statements.create(
+            accountId: card.id,
+            startDate: "2026-01-01",
+            endDate: "2026-01-31",
+            beginningBalance: 0,
+            endingBalance: -25.0
+        )
+        let latestStatement = try repos.statements.create(
+            accountId: card.id,
+            startDate: "2026-02-01",
+            endDate: "2026-02-28",
+            beginningBalance: -25.0,
+            endingBalance: -40.0
+        )
+
+        let status = try repos.statements.getAccountReconciliationStatus(accountId: card.id)
+
+        #expect(status.hasReconciledStatements)
+        #expect(status.statementCount == 2)
+        #expect(status.lastStatementId == latestStatement.id)
+        #expect(status.lastReconciledStatementEndDate == "2026-02-28")
+    }
+
+    @Test("Deleting a statement preserves line item cleared state")
+    func deleteStatementPreservesLineItemClearedState() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let card = try createCreditCard(named: "Delete Statement Card", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-03-15",
+            title: "Statement charge",
+            lineItems: [(accountId: card.id, amount: -12.0, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: card.id)
+        let statement = try repos.statements.create(
+            accountId: card.id,
+            startDate: "2026-03-01",
+            endDate: "2026-03-31",
+            beginningBalance: 0,
+            endingBalance: -12.0
+        )
+
+        _ = try repos.statements.reconcileLineItems(statementId: statement.id, lineItemIds: [lineItemId])
+        let reconciledStatement = try #require(try repos.statements.get(statementId: statement.id))
+        #expect(reconciledStatement.reconciledLineItemCount == 1)
+
+        #expect(try repos.statements.delete(statementId: statement.id))
+
+        let status = try repos.statements.getAccountReconciliationStatus(accountId: card.id)
+        #expect(!status.hasReconciledStatements)
+        let lineItem = try #require(repos.statements.getUnreconciledLineItems(accountId: card.id).first { $0.id == lineItemId })
+        #expect(lineItem.statementId == nil)
+        #expect(lineItem.cleared)
+    }
+
+    @Test("Unreconciling line items preserves cleared state")
+    func unreconcileLineItemsPreservesClearedState() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let card = try createCreditCard(named: "Unreconcile Card", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-15",
+            title: "Statement charge",
+            lineItems: [(accountId: card.id, amount: -18.0, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: card.id)
+        let statement = try repos.statements.create(
+            accountId: card.id,
+            startDate: "2026-04-01",
+            endDate: "2026-04-30",
+            beginningBalance: 0,
+            endingBalance: -18.0
+        )
+
+        _ = try repos.statements.reconcileLineItems(statementId: statement.id, lineItemIds: [lineItemId])
+        let result = try #require(try repos.statements.unreconcileLineItems(statementId: statement.id, lineItemIds: [lineItemId]))
+
+        #expect(result.reconciledLineItemCount == 0)
+        let lineItem = try #require(repos.statements.getUnreconciledLineItems(accountId: card.id).first { $0.id == lineItemId })
+        #expect(lineItem.statementId == nil)
+        #expect(lineItem.cleared)
+    }
 }

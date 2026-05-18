@@ -39,6 +39,37 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
+    public func getAccountReconciliationStatus(accountId: Int) throws -> AccountReconciliationStatusDTO {
+        guard let account = try fetchByPK(entityName: "Account", pk: accountId) else {
+            throw ToolError.notFound("Account not found: \(accountId)")
+        }
+
+        let request = NSFetchRequest<NSManagedObject>(entityName: "Statement")
+        request.predicate = NSPredicate(format: "pAccount == %@", account)
+        request.sortDescriptors = [
+            NSSortDescriptor(key: "pEndDate", ascending: false),
+            NSSortDescriptor(key: "pStartDate", ascending: false),
+        ]
+
+        let statements = try context.fetch(request)
+        let lastStatement = statements.first
+        let lastStatementId = lastStatement.map { Self.extractPK(from: $0.objectID) }
+        let lastEndDate: String?
+        if let lastStatement, let ts = Self.dateValue(lastStatement, "pEndDate") {
+            lastEndDate = DateConversion.toISO(ts)
+        } else {
+            lastEndDate = nil
+        }
+
+        return AccountReconciliationStatusDTO(
+            accountId: accountId,
+            hasReconciledStatements: !statements.isEmpty,
+            statementCount: statements.count,
+            lastStatementId: lastStatementId,
+            lastReconciledStatementEndDate: lastEndDate
+        )
+    }
+
     // MARK: - Write Operations
 
     public func create(
@@ -124,7 +155,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 for objectID in ids {
                     let liInCtx = try ctx.existingObject(with: objectID)
                     liInCtx.setValue(nil, forKey: "pStatement")
-                    liInCtx.setValue(false, forKey: "pCleared")
                 }
             }
         }
@@ -145,7 +175,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 updater.updateTransactionBlob(transactionUUID: txUUID) { xml in
                     var result = xml
                     for liUUID in liUUIDs {
-                        result = updater.patchCleared(xml: result, lineItemUUID: liUUID, cleared: false)
                         result = updater.patchStatement(xml: result, lineItemUUID: liUUID, statementUUID: nil)
                     }
                     return result
@@ -291,7 +320,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 }
 
                 li.setValue(nil, forKey: "pStatement")
-                li.setValue(false, forKey: "pCleared")
             }
 
             return result
@@ -303,7 +331,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 updater.updateTransactionBlob(transactionUUID: txUUID) { xml in
                     var result = xml
                     for liUUID in liUUIDs {
-                        result = updater.patchCleared(xml: result, lineItemUUID: liUUID, cleared: false)
                         result = updater.patchStatement(xml: result, lineItemUUID: liUUID, statementUUID: nil)
                     }
                     return result

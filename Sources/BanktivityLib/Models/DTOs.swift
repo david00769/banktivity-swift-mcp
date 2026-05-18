@@ -352,6 +352,22 @@ public struct StatementDTO: Codable, Sendable {
     }
 }
 
+public struct AccountReconciliationStatusDTO: Codable, Sendable {
+    public let accountId: Int
+    public let hasReconciledStatements: Bool
+    public let statementCount: Int
+    public let lastStatementId: Int?
+    public let lastReconciledStatementEndDate: String?
+
+    public init(accountId: Int, hasReconciledStatements: Bool, statementCount: Int, lastStatementId: Int?, lastReconciledStatementEndDate: String?) {
+        self.accountId = accountId
+        self.hasReconciledStatements = hasReconciledStatements
+        self.statementCount = statementCount
+        self.lastStatementId = lastStatementId
+        self.lastReconciledStatementEndDate = lastReconciledStatementEndDate
+    }
+}
+
 public struct SecurityHoldingDTO: Codable, Sendable {
     public let accountId: Int
     public let accountName: String
