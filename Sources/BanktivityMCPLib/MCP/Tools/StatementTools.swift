@@ -25,6 +25,20 @@ func registerStatementTools(
         return try ToolHelpers.jsonResponse(results)
     }
 
+    // get_account_reconciliation_status
+    registry.register(
+        name: "get_account_reconciliation_status",
+        description: "Get account statement reconciliation status derived only from active statements",
+        inputSchema: ToolHelpers.schema(properties: [
+            "account_id": ToolHelpers.property(type: "number", description: "The account ID"),
+            "account_name": ToolHelpers.property(type: "string", description: "The account name (alternative to account_id)"),
+        ])
+    ) { arguments in
+        let accountId = try resolveAccountId(accounts: accounts, arguments: arguments)
+        let result = try statements.getAccountReconciliationStatus(accountId: accountId)
+        return try ToolHelpers.jsonResponse(result)
+    }
+
     // get_statement
     registry.register(
         name: "get_statement",
@@ -102,7 +116,7 @@ func registerStatementTools(
     // delete_statement
     registry.register(
         name: "delete_statement",
-        description: "Delete a statement and unreconcile all its line items",
+        description: "Delete a statement and remove statement links from its line items while preserving their cleared state",
         inputSchema: ToolHelpers.schema(
             properties: [
                 "statement_id": ToolHelpers.property(type: "number", description: "The statement ID to delete"),
@@ -158,7 +172,7 @@ func registerStatementTools(
     // unreconcile_line_items
     registry.register(
         name: "unreconcile_line_items",
-        description: "Remove line items from a statement (sets pCleared=false)",
+        description: "Remove line items from a statement while preserving their cleared state",
         inputSchema: ToolHelpers.schema(
             properties: [
                 "statement_id": ToolHelpers.property(type: "number", description: "The statement ID"),
