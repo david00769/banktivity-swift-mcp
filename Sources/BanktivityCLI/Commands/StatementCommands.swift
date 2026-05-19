@@ -7,7 +7,7 @@ import Foundation
 struct Statements: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Statement reconciliation operations",
-        subcommands: [List.self, Get.self, Create.self, Delete.self, Reconcile.self, Unreconcile.self, Unreconciled.self]
+        subcommands: [List.self, Status.self, Get.self, Create.self, Delete.self, Reconcile.self, Unreconcile.self, Unreconciled.self]
     )
 
     struct List: AsyncParsableCommand {
@@ -31,6 +31,30 @@ struct Statements: AsyncParsableCommand {
             let resolvedId = try accountRepo.resolveAccountId(id: accountId, name: accountName)
             let results = try statements.list(accountId: resolvedId)
             try outputJSON(results, format: parent.format)
+        }
+    }
+
+    struct Status: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Get statement reconciliation status for an account")
+
+        @OptionGroup var parent: GlobalOptions
+
+        @Option(name: .long, help: "Account ID")
+        var accountId: Int?
+
+        @Option(name: .long, help: "Account name (alternative to --account-id)")
+        var accountName: String?
+
+        func run() async throws {
+            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
+            let container = try BanktivityCLI.createContainer(vaultPath: path)
+            let accountRepo = AccountRepository(container: container)
+            let lineItemRepo = LineItemRepository(container: container)
+            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
+
+            let resolvedId = try accountRepo.resolveAccountId(id: accountId, name: accountName)
+            let result = try statements.getAccountReconciliationStatus(accountId: resolvedId)
+            try outputJSON(result, format: parent.format)
         }
     }
 

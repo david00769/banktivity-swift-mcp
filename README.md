@@ -159,6 +159,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ### Statements (Reconciliation)
 - `list_statements` — List statements for an account
+- `get_account_reconciliation_status` — Get statement count and latest statement end date for an account
 - `get_statement` — Get a statement with reconciliation progress
 - `create_statement` — Create a new statement with balance validation
 - `delete_statement` — Delete a statement and unreconcile its line items
@@ -192,6 +193,7 @@ banktivity-cli --vault ~/Documents/Banktivity/My\ Accounts.bank8 accounts list
 banktivity-cli accounts balance --account-name "Checking"
 banktivity-cli transactions list --account-name "Checking" --start-date 2025-01-01 --limit 10
 banktivity-cli transactions create --account-name "Checking" --date 2025-06-15 --title "Coffee" --amount -4.50 --category-name "Food"
+banktivity-cli statements status --account-name "Checking"
 banktivity-cli tags get-by-tag --tag-name "Vacation" --limit 20
 banktivity-cli tags bulk-tag --transaction-ids "100,101,102" --tag-name "Vacation"
 banktivity-cli export turtle --output vault.ttl
@@ -208,12 +210,12 @@ banktivity-cli export turtle --output vault.ttl
 - `templates list`, `templates get`, `templates create`, `templates update`, `templates delete`
 - `import-rules list`, `import-rules get`, `import-rules match`, `import-rules create`, `import-rules update`, `import-rules delete`
 - `scheduled list`, `scheduled get`, `scheduled create`, `scheduled update`, `scheduled delete`
-- `statements list`, `statements get`, `statements create`, `statements delete`, `statements reconcile`, `statements unreconcile`, `statements unreconciled`
+- `statements list`, `statements status`, `statements get`, `statements create`, `statements delete`, `statements reconcile`, `statements unreconcile`, `statements unreconciled`
 - `securities list`, `securities create`, `securities prices`, `securities holdings`, `securities trades`, `securities income`, `securities adjust`, `securities import-prices`, `securities delete-prices`
 - `export turtle`
 - `schema`
 
-Most commands that accept `--account-id` also accept `--account-name` as an alternative. The `transactions create` command supports `--line-items` with a JSON array for multi-line-item (split) transactions.
+Most commands that accept `--account-id` also accept `--account-name` as an alternative. Statement dates use local-day statement boundaries, and statement reconciliation preserves existing cleared-state semantics when assigning or unassigning line items. The `transactions create` command supports `--line-items` with a JSON array for multi-line-item (split) transactions.
 
 Use `--format compact` for machine-readable single-line JSON output (default is pretty-printed).
 
