@@ -96,6 +96,19 @@ Use `get_account_reconciliation_status` through MCP or `banktivity-cli statement
 | `create_tag` | `--name "name"` | Create a new tag |
 | `create_category` | `--name "name" --type expense\|income --parent_path "Parent"` | Create category or subcategory |
 
+### MCP-Only Forex Repair
+
+Cross-currency transfer repair is not available through `banktivity-cli`. If a user asks to fix a foreign-exchange transfer, use the MCP server tool `repair_forex_transfer`; do not try to emulate it with `create_transaction`, `update_transaction`, `add_line_item`, or generic line-item edits.
+
+Use `repair_forex_transfer` only after the source account, target account, fee category, gross source amount, source-currency fee, target amount, and exchange rate are known from source evidence. The tool repairs an existing transaction. It does not create a new forex transfer.
+
+The Banktivity model is:
+
+- transaction currency is the source account currency
+- source line is the gross source-currency debit
+- target line keeps the source amount after fees as the transaction amount, with `pExchangeRate` set to the forex rate and `accountAmount` equal to the target-currency receipt
+- fee line is a separate source-currency category split
+
 ### Export
 
 | Tool | Key Arguments | Notes |
