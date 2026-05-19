@@ -96,11 +96,11 @@ Use `get_account_reconciliation_status` through MCP or `banktivity-cli statement
 | `create_tag` | `--name "name"` | Create a new tag |
 | `create_category` | `--name "name" --type expense\|income --parent_path "Parent"` | Create category or subcategory |
 
-### MCP-Only Forex Repair
+### Forex Repair
 
-Cross-currency transfer repair is not available through `banktivity-cli`. If a user asks to fix a foreign-exchange transfer, use the MCP server tool `repair_forex_transfer`; do not try to emulate it with `create_transaction`, `update_transaction`, `add_line_item`, or generic line-item edits.
+Cross-currency transfer repair is available through MCP as `repair_forex_transfer` and through the CLI as `transactions repair-forex`. Prefer the MCP tool when operating as an assistant, and use the CLI for scripting or manual reproduction. Do not emulate forex repair with `create_transaction`, `update_transaction`, `add_line_item`, or generic line-item edits.
 
-Use `repair_forex_transfer` only after the source account, target account, fee category, gross source amount, source-currency fee, target amount, and exchange rate are known from source evidence. The tool repairs an existing transaction. It does not create a new forex transfer.
+Use forex repair only after the source account, target account, fee category, gross source amount, source-currency fee, target amount, and exchange rate are known from source evidence. The tool repairs an existing transaction. It does not create a new forex transfer. For real vault writes, make a backup first and visually inspect Banktivity after the MCP or CLI write.
 
 The Banktivity model is:
 
@@ -108,6 +108,12 @@ The Banktivity model is:
 - source line is the gross source-currency debit
 - target line keeps the source amount after fees as the transaction amount, with `pExchangeRate` set to the forex rate and `accountAmount` equal to the target-currency receipt
 - fee line is a separate source-currency category split
+
+CLI example:
+
+```sh
+banktivity-cli transactions repair-forex --transaction-id 11074 --source-account-id 291 --target-account-id 273 --fee-category-id 81 --gross-source-amount 30000 --source-fee-amount 121.56 --target-amount 19113.24 --exchange-rate 0.6397
+```
 
 ### Export
 
