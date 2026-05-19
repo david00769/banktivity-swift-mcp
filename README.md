@@ -111,7 +111,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 #### Cross-Currency Transfer Repair
 
-`repair_forex_transfer` is an MCP-only repair tool for existing cross-currency transfer transactions. Use it when a transfer already exists in Banktivity but was recorded with equal numeric source/target amounts or without a fee split. It is not exposed through `banktivity-cli`, and it does not create new transfers.
+`repair_forex_transfer` repairs existing cross-currency transfer transactions through MCP, and the same `BanktivityLib` repair path is available in the CLI as `transactions repair-forex`. Use it when a transfer already exists in Banktivity but was recorded with equal numeric source/target amounts or without a fee split. It does not create new transfers.
 
 Required inputs:
 
@@ -147,6 +147,26 @@ Example MCP call arguments:
   "target_memo": "USD receipt",
   "fee_memo": "Wise fee"
 }
+```
+
+Equivalent CLI example:
+
+```sh
+banktivity-cli transactions repair-forex \
+  --transaction-id 11074 \
+  --source-account-id 291 \
+  --target-account-id 273 \
+  --fee-category-id 81 \
+  --gross-source-amount 30000.00 \
+  --source-fee-amount 121.56 \
+  --target-amount 19113.24 \
+  --exchange-rate 0.6397 \
+  --title "Wise Forex Transfer" \
+  --date 2025-04-27 \
+  --note "Wise transfer reference" \
+  --source-memo "AUD gross debit" \
+  --target-memo "USD receipt" \
+  --fee-memo "Wise fee"
 ```
 
 ### Line Items
@@ -227,13 +247,15 @@ Example MCP call arguments:
 
 ## CLI
 
-A standalone CLI (`banktivity-cli`) provides most query and write functionality without an MCP server. MCP-only tools, such as `repair_forex_transfer`, are noted in the tool list above. Set `BANKTIVITY_FILE_PATH` or pass `--vault`:
+A standalone CLI (`banktivity-cli`) provides the same core query and write functionality without an MCP server. Set `BANKTIVITY_FILE_PATH` or pass `--vault`:
 
 ```sh
 banktivity-cli --vault ~/Documents/Banktivity/My\ Accounts.bank8 accounts list
 banktivity-cli accounts balance --account-name "Checking"
 banktivity-cli transactions list --account-name "Checking" --start-date 2025-01-01 --limit 10
 banktivity-cli transactions create --account-name "Checking" --date 2025-06-15 --title "Coffee" --amount -4.50 --category-name "Food"
+banktivity-cli transactions repair-forex --transaction-id 11074 --source-account-id 291 --target-account-id 273 --fee-category-id 81 --gross-source-amount 30000 --source-fee-amount 121.56 --target-amount 19113.24 --exchange-rate 0.6397
+banktivity-cli statements status --account-name "Checking"
 banktivity-cli tags get-by-tag --tag-name "Vacation" --limit 20
 banktivity-cli tags bulk-tag --transaction-ids "100,101,102" --tag-name "Vacation"
 banktivity-cli export turtle --output vault.ttl
@@ -242,7 +264,7 @@ banktivity-cli export turtle --output vault.ttl
 ### CLI Subcommands
 
 - `accounts list`, `accounts balance`, `accounts net-worth`, `accounts spending`, `accounts income`, `accounts summary`
-- `transactions list`, `transactions search`, `transactions get`, `transactions create`, `transactions update`, `transactions delete`
+- `transactions list`, `transactions search`, `transactions get`, `transactions create`, `transactions repair-forex`, `transactions update`, `transactions delete`
 - `categories list`, `categories get`, `categories tree`, `categories create`
 - `tags list`, `tags create`, `tags tag-transaction`, `tags get-by-tag`, `tags bulk-tag`
 - `uncategorized list`, `uncategorized suggest`, `uncategorized recategorize`, `uncategorized bulk-recategorize`, `uncategorized review`, `uncategorized payee-summary`
