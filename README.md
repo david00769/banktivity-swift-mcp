@@ -3,7 +3,7 @@
 A Swift library, [MCP](https://modelcontextprotocol.io/) server, and CLI for [Banktivity](https://www.iggsoftware.com/banktivity/) personal finance files. Provides full read/write access to `.bank8` vaults — accounts, transactions, categories, tags, templates, import rules, scheduled transactions, statements, securities, and RDF export.
 
 - **BanktivityLib** — pure domain library with Core Data repositories and RDF export, no server dependencies
-- **banktivity-mcp** — MCP server exposing 64 tools over stdio, for AI assistants like Claude
+- **banktivity-mcp** — MCP server exposing 66 tools over stdio, for AI assistants like Claude
 - **banktivity-cli** — standalone CLI for scripting and automation
 
 Inspired by [banktivity-mcp](https://github.com/mhriemers/banktivity-mcp) (TypeScript/Node.js), this is a ground-up rewrite in Swift. The original uses `better-sqlite3` to read and write Core Data's SQLite store directly, bypassing Core Data's internal change tracking. This works for reads, but direct SQL writes are invisible to CloudKit sync — Banktivity doesn't know the data changed, and the vault can become corrupted or fail to sync. This Swift version uses `NSPersistentContainer` so all mutations go through Core Data's API, ensuring proper change tracking and CloudKit compatibility.
@@ -105,8 +105,49 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 - `search_transactions` — Full-text search across payees, memos, etc.
 - `get_transaction` — Get a single transaction by ID
 - `create_transaction` — Create a new transaction
+- `repair_forex_transfer` — Repair an existing cross-currency transfer with a target-currency receipt and source-currency fee split
 - `update_transaction` — Update an existing transaction
 - `delete_transaction` — Delete a transaction
+
+#### Cross-Currency Transfer Repair
+
+`repair_forex_transfer` is an MCP-only repair tool for existing cross-currency transfer transactions. Use it when a transfer already exists in Banktivity but was recorded with equal numeric source/target amounts or without a fee split. It is not exposed through `banktivity-cli`, and it does not create new transfers.
+
+Required inputs:
+
+- `transaction_id` — existing transaction to repair
+- `source_account_id` — account debited in the source currency
+- `target_account_id` — account receiving funds in the target currency
+- `fee_category_id` — expense category for the source-currency fee
+- `gross_source_amount` — full source-currency debit
+- `source_fee_amount` — fee in the source currency
+- `target_amount` — amount received in the target account currency
+- `exchange_rate` — rate from source amount after fees to target currency
+
+Optional inputs are `title`, `date`, `note`, `source_memo`, `target_memo`, and `fee_memo`.
+
+The repaired transaction is stored in the source account currency. The target line item stores `gross_source_amount - source_fee_amount` as its transaction amount, `exchange_rate` as `pExchangeRate`, and `target_amount` as the target account amount. The fee is a separate source-currency category split. Transactions with unmanaged extra line items are rejected instead of merged or deleted.
+
+Example MCP call arguments:
+
+```json
+{
+  "transaction_id": 11074,
+  "source_account_id": 291,
+  "target_account_id": 273,
+  "fee_category_id": 81,
+  "gross_source_amount": 30000.00,
+  "source_fee_amount": 121.56,
+  "target_amount": 19113.24,
+  "exchange_rate": 0.6397,
+  "title": "Wise Forex Transfer",
+  "date": "2025-04-27",
+  "note": "Wise transfer reference",
+  "source_memo": "AUD gross debit",
+  "target_memo": "USD receipt",
+  "fee_memo": "Wise fee"
+}
+```
 
 ### Line Items
 - `get_line_item` — Get a specific line item
@@ -186,7 +227,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ## CLI
 
-A standalone CLI (`banktivity-cli`) provides the same functionality without an MCP server. Set `BANKTIVITY_FILE_PATH` or pass `--vault`:
+A standalone CLI (`banktivity-cli`) provides most query and write functionality without an MCP server. MCP-only tools, such as `repair_forex_transfer`, are noted in the tool list above. Set `BANKTIVITY_FILE_PATH` or pass `--vault`:
 
 ```sh
 banktivity-cli --vault ~/Documents/Banktivity/My\ Accounts.bank8 accounts list
