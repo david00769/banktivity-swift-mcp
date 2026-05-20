@@ -10,6 +10,12 @@ Inspired by [banktivity-mcp](https://github.com/mhriemers/banktivity-mcp) (TypeS
 
 > **WARNING: This server can modify your Banktivity data.** Write tools (create, update, delete) make real changes to your `.bank8` vault. While the server uses Core Data for proper change tracking and includes a write guard that blocks mutations when Banktivity is open, AI assistants can and will make mistakes. **Back up your vault regularly** and consider working on a copy until you're confident in your workflow. The authors are not responsible for any data loss or corruption.
 
+Write operations are serialized within each running process. This protects
+concurrent MCP tool calls handled by one `banktivity-mcp` server and overlapping
+writes inside one CLI command, but it is not a cross-process file lock. Do not
+run multiple `banktivity-cli` or `banktivity-mcp` processes against the same
+vault at the same time.
+
 ## Requirements
 
 - macOS 14+
