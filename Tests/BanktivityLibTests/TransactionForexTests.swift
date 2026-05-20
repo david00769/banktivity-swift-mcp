@@ -60,17 +60,17 @@ struct TransactionForexTests {
 
     private func makeForexAccounts(_ repos: Repos) throws -> (source: AccountDTO, target: AccountDTO, fee: CategoryDTO) {
         let source = try repos.accounts.create(
-            name: "Macquarie AUD",
+            name: "Source Currency Account",
             accountClass: AccountClass.savings,
             currencyCode: "AUD"
         )
         let target = try repos.accounts.create(
-            name: "Chase USD",
+            name: "Target Currency Account",
             accountClass: AccountClass.checking,
             currencyCode: "USD"
         )
         let fee = try repos.categories.create(
-            name: "Wise Fees",
+            name: "Provider Fees",
             type: "expense",
             currencyCode: "AUD"
         )
@@ -93,10 +93,10 @@ struct TransactionForexTests {
 
         let original = try repos.transactions.create(
             date: "2026-04-27",
-            title: "Wise equal numeric transfer",
+            title: "Sample equal numeric transfer",
             lineItems: [
-                (accountId: ids.source.id, amount: -3000, memo: "source"),
-                (accountId: ids.target.id, amount: 3000, memo: "target"),
+                (accountId: ids.source.id, amount: -100, memo: "source"),
+                (accountId: ids.target.id, amount: 100, memo: "target"),
             ]
         )
 
@@ -105,19 +105,19 @@ struct TransactionForexTests {
             sourceAccountId: ids.source.id,
             targetAccountId: ids.target.id,
             feeCategoryId: ids.fee.id,
-            grossSourceAmount: 3000,
-            sourceFeeAmount: 100,
-            targetAmount: 1450,
-            exchangeRate: 0.5,
-            title: "Wise Forex Transfer",
+            grossSourceAmount: 100,
+            sourceFeeAmount: 1,
+            targetAmount: 74.25,
+            exchangeRate: 0.75,
+            title: "Cross-Currency Transfer",
             note: "TRANSFER-TEST",
             date: "2026-04-27",
-            sourceMemo: "AUD gross",
-            targetMemo: "USD receipt",
-            feeMemo: "Wise fee"
+            sourceMemo: "Source-currency gross",
+            targetMemo: "Target-currency receipt",
+            feeMemo: "Provider fee"
         ))
 
-        #expect(repaired.title == "Wise Forex Transfer")
+        #expect(repaired.title == "Cross-Currency Transfer")
         #expect(repaired.transactionType?.lowercased() == "transfer")
         #expect(repaired.lineItems.count == 3)
 
@@ -125,22 +125,22 @@ struct TransactionForexTests {
         let target = try line(repaired, accountId: ids.target.id)
         let fee = try line(repaired, accountId: ids.fee.id)
 
-        expectClose(source.amount, -3000)
+        expectClose(source.amount, -100)
         expectClose(source.exchangeRate, 1)
-        expectClose(source.accountAmount, -3000)
-        expectClose(source.runningBalance ?? 0, -3000)
-        #expect(source.memo == "AUD gross")
+        expectClose(source.accountAmount, -100)
+        expectClose(source.runningBalance ?? 0, -100)
+        #expect(source.memo == "Source-currency gross")
 
-        expectClose(target.amount, 2900)
-        expectClose(target.exchangeRate, 0.5)
-        expectClose(target.accountAmount, 1450)
-        expectClose(target.runningBalance ?? 0, 1450)
-        #expect(target.memo == "USD receipt")
+        expectClose(target.amount, 99)
+        expectClose(target.exchangeRate, 0.75)
+        expectClose(target.accountAmount, 74.25)
+        expectClose(target.runningBalance ?? 0, 74.25)
+        #expect(target.memo == "Target-currency receipt")
 
-        expectClose(fee.amount, 100)
+        expectClose(fee.amount, 1)
         expectClose(fee.exchangeRate, 1)
-        expectClose(fee.accountAmount, 100)
-        #expect(fee.memo == "Wise fee")
+        expectClose(fee.accountAmount, 1)
+        #expect(fee.memo == "Provider fee")
     }
 
     @Test("repairForexTransfer stores source account currency on transaction")
@@ -151,10 +151,10 @@ struct TransactionForexTests {
 
         let original = try repos.transactions.create(
             date: "2026-04-27",
-            title: "Wise currency test",
+            title: "Currency storage test",
             lineItems: [
-                (accountId: ids.source.id, amount: -3000, memo: nil),
-                (accountId: ids.target.id, amount: 3000, memo: nil),
+                (accountId: ids.source.id, amount: -100, memo: nil),
+                (accountId: ids.target.id, amount: 100, memo: nil),
             ]
         )
 
@@ -163,10 +163,10 @@ struct TransactionForexTests {
             sourceAccountId: ids.source.id,
             targetAccountId: ids.target.id,
             feeCategoryId: ids.fee.id,
-            grossSourceAmount: 3000,
-            sourceFeeAmount: 100,
-            targetAmount: 1450,
-            exchangeRate: 0.5
+            grossSourceAmount: 100,
+            sourceFeeAmount: 1,
+            targetAmount: 74.25,
+            exchangeRate: 0.75
         )
 
         let tx = try #require(try repos.transactions.fetchByPK(entityName: "Transaction", pk: original.id))
@@ -182,10 +182,10 @@ struct TransactionForexTests {
 
         let original = try repos.transactions.create(
             date: "2026-04-27",
-            title: "Wise mismatch test",
+            title: "Mismatched target amount test",
             lineItems: [
-                (accountId: ids.source.id, amount: -3000, memo: nil),
-                (accountId: ids.target.id, amount: 3000, memo: nil),
+                (accountId: ids.source.id, amount: -100, memo: nil),
+                (accountId: ids.target.id, amount: 100, memo: nil),
             ]
         )
 
@@ -195,10 +195,10 @@ struct TransactionForexTests {
                 sourceAccountId: ids.source.id,
                 targetAccountId: ids.target.id,
                 feeCategoryId: ids.fee.id,
-                grossSourceAmount: 3000,
-                sourceFeeAmount: 100,
-                targetAmount: 1400,
-                exchangeRate: 0.5
+                grossSourceAmount: 100,
+                sourceFeeAmount: 1,
+                targetAmount: 74,
+                exchangeRate: 0.75
             )
         }
     }
@@ -212,11 +212,11 @@ struct TransactionForexTests {
 
         let original = try repos.transactions.create(
             date: "2026-04-27",
-            title: "Wise extra line test",
+            title: "Extra line test",
             lineItems: [
-                (accountId: ids.source.id, amount: -3000, memo: nil),
-                (accountId: ids.target.id, amount: 2900, memo: nil),
-                (accountId: otherCategory.id, amount: 100, memo: nil),
+                (accountId: ids.source.id, amount: -100, memo: nil),
+                (accountId: ids.target.id, amount: 99, memo: nil),
+                (accountId: otherCategory.id, amount: 1, memo: nil),
             ]
         )
 
@@ -226,10 +226,10 @@ struct TransactionForexTests {
                 sourceAccountId: ids.source.id,
                 targetAccountId: ids.target.id,
                 feeCategoryId: ids.fee.id,
-                grossSourceAmount: 3000,
-                sourceFeeAmount: 100,
-                targetAmount: 1450,
-                exchangeRate: 0.5
+                grossSourceAmount: 100,
+                sourceFeeAmount: 1,
+                targetAmount: 74.25,
+                exchangeRate: 0.75
             )
         }
     }

@@ -132,20 +132,20 @@ Example MCP call arguments:
 
 ```json
 {
-  "transaction_id": 11074,
-  "source_account_id": 291,
-  "target_account_id": 273,
-  "fee_category_id": 81,
-  "gross_source_amount": 30000.00,
-  "source_fee_amount": 121.56,
-  "target_amount": 19113.24,
-  "exchange_rate": 0.6397,
-  "title": "Wise Forex Transfer",
+  "transaction_id": 1001,
+  "source_account_id": 2001,
+  "target_account_id": 2002,
+  "fee_category_id": 3001,
+  "gross_source_amount": 100.00,
+  "source_fee_amount": 1.00,
+  "target_amount": 74.25,
+  "exchange_rate": 0.75,
+  "title": "Cross-Currency Transfer",
   "date": "2025-04-27",
-  "note": "Wise transfer reference",
-  "source_memo": "AUD gross debit",
-  "target_memo": "USD receipt",
-  "fee_memo": "Wise fee"
+  "note": "Provider transfer reference",
+  "source_memo": "Source-currency gross debit",
+  "target_memo": "Target-currency receipt",
+  "fee_memo": "Provider fee"
 }
 ```
 
@@ -153,20 +153,20 @@ Equivalent CLI example:
 
 ```sh
 banktivity-cli transactions repair-forex \
-  --transaction-id 11074 \
-  --source-account-id 291 \
-  --target-account-id 273 \
-  --fee-category-id 81 \
-  --gross-source-amount 30000.00 \
-  --source-fee-amount 121.56 \
-  --target-amount 19113.24 \
-  --exchange-rate 0.6397 \
-  --title "Wise Forex Transfer" \
+  --transaction-id 1001 \
+  --source-account-id 2001 \
+  --target-account-id 2002 \
+  --fee-category-id 3001 \
+  --gross-source-amount 100.00 \
+  --source-fee-amount 1.00 \
+  --target-amount 74.25 \
+  --exchange-rate 0.75 \
+  --title "Cross-Currency Transfer" \
   --date 2025-04-27 \
-  --note "Wise transfer reference" \
-  --source-memo "AUD gross debit" \
-  --target-memo "USD receipt" \
-  --fee-memo "Wise fee"
+  --note "Provider transfer reference" \
+  --source-memo "Source-currency gross debit" \
+  --target-memo "Target-currency receipt" \
+  --fee-memo "Provider fee"
 ```
 
 ### Line Items
@@ -254,7 +254,6 @@ banktivity-cli --vault ~/Documents/Banktivity/My\ Accounts.bank8 accounts list
 banktivity-cli accounts balance --account-name "Checking"
 banktivity-cli transactions list --account-name "Checking" --start-date 2025-01-01 --limit 10
 banktivity-cli transactions create --account-name "Checking" --date 2025-06-15 --title "Coffee" --amount -4.50 --category-name "Food"
-banktivity-cli transactions repair-forex --transaction-id 11074 --source-account-id 291 --target-account-id 273 --fee-category-id 81 --gross-source-amount 30000 --source-fee-amount 121.56 --target-amount 19113.24 --exchange-rate 0.6397
 banktivity-cli statements status --account-name "Checking"
 banktivity-cli tags get-by-tag --tag-name "Vacation" --limit 20
 banktivity-cli tags bulk-tag --transaction-ids "100,101,102" --tag-name "Vacation"

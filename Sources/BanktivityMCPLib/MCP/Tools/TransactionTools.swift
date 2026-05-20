@@ -152,17 +152,17 @@ func registerTransactionTools(
     // repair_forex_transfer
     registry.register(
         name: "repair_forex_transfer",
-        description: "Repair an existing cross-currency transfer using source-currency gross amount, Wise fee split, target amount, and exchange rate",
+        description: "Repair an existing cross-currency transfer using source-currency gross amount, provider fee split, target amount, and exchange rate",
         inputSchema: ToolHelpers.schema(
             properties: [
                 "transaction_id": ToolHelpers.property(type: "number", description: "Existing transaction ID to repair"),
                 "source_account_id": ToolHelpers.property(type: "number", description: "Source account ID, in the source currency"),
                 "target_account_id": ToolHelpers.property(type: "number", description: "Target account ID, in the target currency"),
-                "fee_category_id": ToolHelpers.property(type: "number", description: "Expense category/account ID for the source-currency Wise fee"),
+                "fee_category_id": ToolHelpers.property(type: "number", description: "Expense category/account ID for the source-currency provider fee"),
                 "gross_source_amount": ToolHelpers.property(type: "number", description: "Gross source amount debited from the source account"),
-                "source_fee_amount": ToolHelpers.property(type: "number", description: "Wise fee in the source currency"),
+                "source_fee_amount": ToolHelpers.property(type: "number", description: "Provider fee in the source currency"),
                 "target_amount": ToolHelpers.property(type: "number", description: "Amount received in the target account currency"),
-                "exchange_rate": ToolHelpers.property(type: "number", description: "Wise exchange rate from source-after-fee to target currency"),
+                "exchange_rate": ToolHelpers.property(type: "number", description: "Provider exchange rate from source-after-fee to target currency"),
                 "title": ToolHelpers.property(type: "string", description: "Optional replacement title"),
                 "note": ToolHelpers.property(type: "string", description: "Optional replacement note"),
                 "date": ToolHelpers.property(type: "string", description: "Optional replacement date in ISO format (YYYY-MM-DD)"),

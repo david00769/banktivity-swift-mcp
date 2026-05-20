@@ -112,7 +112,7 @@ The Banktivity model is:
 CLI example:
 
 ```sh
-banktivity-cli transactions repair-forex --transaction-id 11074 --source-account-id 291 --target-account-id 273 --fee-category-id 81 --gross-source-amount 30000 --source-fee-amount 121.56 --target-amount 19113.24 --exchange-rate 0.6397
+banktivity-cli transactions repair-forex --transaction-id 1001 --source-account-id 2001 --target-account-id 2002 --fee-category-id 3001 --gross-source-amount 100 --source-fee-amount 1 --target-amount 74.25 --exchange-rate 0.75
 ```
 
 ### Export
