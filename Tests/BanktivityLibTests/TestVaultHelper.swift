@@ -10,31 +10,40 @@ enum TestVaultHelper {
         let container: NSPersistentContainer
     }
 
+    private static let vaultLock = NSLock()
+
     static func createFreshVault() throws -> TestVault {
-        let tmpDir = NSTemporaryDirectory()
-        let vaultPath = (tmpDir as NSString).appendingPathComponent("test-\(UUID().uuidString).bank8")
-        let storeContentPath = (vaultPath as NSString).appendingPathComponent("StoreContent")
+        vaultLock.lock()
+        do {
+            let tmpDir = NSTemporaryDirectory()
+            let vaultPath = (tmpDir as NSString).appendingPathComponent("test-\(UUID().uuidString).bank8")
+            let storeContentPath = (vaultPath as NSString).appendingPathComponent("StoreContent")
 
-        try FileManager.default.createDirectory(atPath: storeContentPath, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(atPath: storeContentPath, withIntermediateDirectories: true)
 
-        // Copy .momd fixtures
-        let fixturesPath = findFixturesPath()
-        let contents = try FileManager.default.contentsOfDirectory(atPath: fixturesPath)
-        for item in contents where item.hasSuffix(".momd") {
-            let src = (fixturesPath as NSString).appendingPathComponent(item)
-            let dst = (storeContentPath as NSString).appendingPathComponent(item)
-            try FileManager.default.copyItem(atPath: src, toPath: dst)
+            // Copy .momd fixtures
+            let fixturesPath = findFixturesPath()
+            let contents = try FileManager.default.contentsOfDirectory(atPath: fixturesPath)
+            for item in contents where item.hasSuffix(".momd") {
+                let src = (fixturesPath as NSString).appendingPathComponent(item)
+                let dst = (storeContentPath as NSString).appendingPathComponent(item)
+                try FileManager.default.copyItem(atPath: src, toPath: dst)
+            }
+
+            // Create empty core.sql (Core Data will create schema)
+            FileManager.default.createFile(atPath: (storeContentPath as NSString).appendingPathComponent("core.sql"), contents: nil)
+
+            let container = try PersistentContainerFactory.create(bankFilePath: vaultPath)
+            return TestVault(path: vaultPath, container: container)
+        } catch {
+            vaultLock.unlock()
+            throw error
         }
-
-        // Create empty core.sql (Core Data will create schema)
-        FileManager.default.createFile(atPath: (storeContentPath as NSString).appendingPathComponent("core.sql"), contents: nil)
-
-        let container = try PersistentContainerFactory.create(bankFilePath: vaultPath)
-        return TestVault(path: vaultPath, container: container)
     }
 
     static func cleanup(_ vault: TestVault) {
         try? FileManager.default.removeItem(atPath: vault.path)
+        vaultLock.unlock()
     }
 
     static func seedCurrencies(in container: NSPersistentContainer) throws -> (usd: NSManagedObject, eur: NSManagedObject) {
