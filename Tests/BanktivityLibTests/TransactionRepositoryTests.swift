@@ -29,26 +29,26 @@ struct TransactionRepositoryTests {
         defer { TestVaultHelper.cleanup(repos.vault) }
 
         let account = try repos.accounts.create(
-            name: "Macquarie Transaction Test",
+            name: "Synthetic Checking",
             accountClass: AccountClass.checking,
             currencyCode: "USD"
         )
 
         let existing = try repos.transactions.create(
             date: "2026-05-10",
-            title: "Payment to American Express",
-            lineItems: [(accountId: account.id, amount: -108.84, memo: nil)]
+            title: "Later Vendor Alpha Payment",
+            lineItems: [(accountId: account.id, amount: -10.0, memo: nil)]
         )
 
         let created = try repos.transactions.create(
             date: "2026-04-09",
-            title: "American Express",
-            lineItems: [(accountId: account.id, amount: -8699.28, memo: nil)]
+            title: "Vendor Alpha",
+            lineItems: [(accountId: account.id, amount: -20.0, memo: nil)]
         )
 
         #expect(created.id != existing.id)
-        #expect(created.title == "American Express")
+        #expect(created.title == "Vendor Alpha")
         #expect(created.date == "2026-04-09")
-        #expect(created.lineItems.contains { $0.accountId == account.id && abs($0.amount - -8699.28) < 0.005 })
+        #expect(created.lineItems.contains { $0.accountId == account.id && abs($0.amount - -20.0) < 0.005 })
     }
 }
