@@ -280,7 +280,8 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         pricePerShare: Double? = nil,
         amount: Double? = nil,
         securitySymbol: String? = nil,
-        securityId: Int? = nil
+        securityId: Int? = nil,
+        cashLineItemAmount: Double? = nil
     ) throws -> SecurityTradeDTO {
         // Resolve new security if specified
         let newSecurityObjectID: NSManagedObjectID?
@@ -298,6 +299,15 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let txUUID: String
             let liUUID: String
             let trade: SecurityTradeDTO
+            let cashSync: CashSyncInfo?
+        }
+
+        struct CashSyncInfo: Sendable {
+            let accountId: Int
+            let cashLineItemUUID: String
+            let cashAmount: Double
+            let offsetLineItemUUID: String
+            let offsetAmount: Double
         }
 
         let result: UpdateResult = try performWriteReturning { [self] ctx in
@@ -356,6 +366,32 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 sli.setValue(secInCtx, forKey: "pSecurity")
             }
 
+            let cashSync: CashSyncInfo?
+            if let cashLineItemAmount = cashLineItemAmount {
+                guard let account = Self.relatedObject(li, "pAccount") else {
+                    throw ToolError.invalidInput("Cash line repair requires the security line item to belong to an account")
+                }
+                let offsetCandidates = lineItems.filter { candidate in
+                    candidate.objectID != li.objectID && Self.relatedObject(candidate, "pAccount") == nil
+                }
+                guard offsetCandidates.count == 1 else {
+                    throw ToolError.invalidInput("Cash line repair requires exactly one balancing line item without an account")
+                }
+                let offsetLI = offsetCandidates.first!
+                let offsetAmount = -cashLineItemAmount
+                li.setValue(cashLineItemAmount as NSNumber, forKey: "pTransactionAmount")
+                offsetLI.setValue(offsetAmount as NSNumber, forKey: "pTransactionAmount")
+                cashSync = CashSyncInfo(
+                    accountId: Self.extractPK(from: account.objectID),
+                    cashLineItemUUID: Self.stringValue(li, "pUniqueID"),
+                    cashAmount: cashLineItemAmount,
+                    offsetLineItemUUID: Self.stringValue(offsetLI, "pUniqueID"),
+                    offsetAmount: offsetAmount
+                )
+            } else {
+                cashSync = nil
+            }
+
             Self.setNow(tx, "pModificationDate")
 
             // Build return DTO
@@ -393,7 +429,11 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let txUUID = Self.stringValue(tx, "pUniqueID")
             let liUUID = Self.stringValue(li, "pUniqueID")
 
-            return UpdateResult(txUUID: txUUID, liUUID: liUUID, trade: trade)
+            return UpdateResult(txUUID: txUUID, liUUID: liUUID, trade: trade, cashSync: cashSync)
+        }
+
+        if let cashSync = result.cashSync {
+            try LineItemRepository(container: container).recalculateRunningBalances(accountId: cashSync.accountId)
         }
 
         // Patch sync blob (non-fatal)
@@ -404,6 +444,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let ppsStr = pricePerShare.map { updater.formatDecimalPublic($0) }
             let amountStr = amount.map { updater.formatDecimalPublic($0) }
             let secRef = newSecurityUUID.map { "Security:\($0)" }
+            let cashSync = result.cashSync
 
             updater.updateTransactionBlob(transactionUUID: result.txUUID) { xml in
                 var patched = xml
@@ -422,6 +463,20 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 if let v = secRef {
                     patched = SyncBlobUpdater.patchSecurityLineItemFieldStatic(
                         xml: patched, lineItemUUID: liUUID, fieldName: "security", fieldType: "reference", value: v)
+                }
+                if let cashSync {
+                    patched = updater.patchLineItemAmounts(
+                        xml: patched,
+                        lineItemUUID: cashSync.cashLineItemUUID,
+                        accountAmount: cashSync.cashAmount,
+                        transactionAmount: cashSync.cashAmount
+                    )
+                    patched = updater.patchLineItemAmounts(
+                        xml: patched,
+                        lineItemUUID: cashSync.offsetLineItemUUID,
+                        accountAmount: cashSync.offsetAmount,
+                        transactionAmount: cashSync.offsetAmount
+                    )
                 }
                 return patched
             }
