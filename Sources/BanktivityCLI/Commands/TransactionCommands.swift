@@ -119,7 +119,7 @@ struct Transactions: AsyncParsableCommand {
         @Option(name: .long, help: "Transaction title/payee")
         var title: String
 
-        @Option(name: .long, help: "Transaction amount (required unless --line-items is provided)")
+        @Option(name: .long, parsing: .unconditional, help: "Transaction amount (required unless --line-items is provided)")
         var amount: Double?
 
         @Option(name: .long, help: "Category ID for the second line item")

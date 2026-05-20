@@ -72,10 +72,10 @@ struct Statements: AsyncParsableCommand {
         @Option(name: .long, help: "End date (YYYY-MM-DD)")
         var endDate: String
 
-        @Option(name: .long, help: "Beginning balance")
+        @Option(name: .long, parsing: .unconditional, help: "Beginning balance")
         var beginningBalance: Double
 
-        @Option(name: .long, help: "Ending balance")
+        @Option(name: .long, parsing: .unconditional, help: "Ending balance")
         var endingBalance: Double
 
         @Option(name: .long, help: "Statement name")
