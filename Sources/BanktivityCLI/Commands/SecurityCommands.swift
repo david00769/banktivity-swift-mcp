@@ -331,7 +331,7 @@ struct Securities: AsyncParsableCommand {
     struct UpdateTrade: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "update-trade",
-            abstract: "Update security line item fields (shares, price, amount, security, cash line) on an existing transaction"
+            abstract: "Update security line item fields (shares, price, amount, commission, security, cash line) on an existing transaction"
         )
 
         @OptionGroup var parent: GlobalOptions
@@ -347,6 +347,9 @@ struct Securities: AsyncParsableCommand {
 
         @Option(name: .long, parsing: .unconditional, help: "Cash amount (negative for buy outflow)")
         var amount: Double?
+
+        @Option(name: .long, help: "Commission or fee amount")
+        var commission: Double?
 
         @Option(name: .long, help: "Security ticker symbol")
         var symbol: String?
@@ -368,6 +371,7 @@ struct Securities: AsyncParsableCommand {
             let result = try securities.updateSecurityLineItem(
                 transactionId: transactionId,
                 shares: shares, pricePerShare: pricePerShare, amount: amount,
+                commission: commission,
                 securitySymbol: symbol, securityId: securityId,
                 cashLineItemAmount: cashLineAmount
             )
