@@ -38,11 +38,11 @@ struct StatementRepositoryTests {
         let repos = try makeRepositories()
         defer { TestVaultHelper.cleanup(repos.vault) }
 
-        let card = try createCreditCard(named: "Manual Picker Card", using: repos.accounts)
+        let card = try createCreditCard(named: "Synthetic Statement Account", using: repos.accounts)
         let transaction = try repos.transactions.create(
             date: "2026-03-26",
-            title: "Mammoth Cave",
-            lineItems: [(accountId: card.id, amount: -7.05, memo: nil)]
+            title: "Sample Merchant",
+            lineItems: [(accountId: card.id, amount: -10.0, memo: nil)]
         )
         let lineItemId = try accountLineItemId(in: transaction, accountId: card.id)
 
@@ -51,7 +51,7 @@ struct StatementRepositoryTests {
             startDate: "2026-03-29",
             endDate: "2026-04-28",
             beginningBalance: 0,
-            endingBalance: -7.05,
+            endingBalance: -10.0,
             name: "April statement"
         )
 
@@ -61,7 +61,7 @@ struct StatementRepositoryTests {
         )
 
         #expect(result.reconciledLineItemCount == 1)
-        #expect(abs(result.reconciledBalance - -7.05) < 0.005)
+        #expect(abs(result.reconciledBalance - -10.0) < 0.005)
         #expect(result.isBalanced)
     }
 

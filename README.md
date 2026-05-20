@@ -193,7 +193,6 @@ banktivity-cli --vault ~/Documents/Banktivity/My\ Accounts.bank8 accounts list
 banktivity-cli accounts balance --account-name "Checking"
 banktivity-cli transactions list --account-name "Checking" --start-date 2025-01-01 --limit 10
 banktivity-cli transactions create --account-name "Checking" --date 2025-06-15 --title "Coffee" --amount -4.50 --category-name "Food"
-banktivity-cli statements status --account-name "Checking"
 banktivity-cli tags get-by-tag --tag-name "Vacation" --limit 20
 banktivity-cli tags bulk-tag --transaction-ids "100,101,102" --tag-name "Vacation"
 banktivity-cli export turtle --output vault.ttl
