@@ -317,6 +317,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         shares: Double? = nil,
         pricePerShare: Double? = nil,
         amount: Double? = nil,
+        commission: Double? = nil,
         securitySymbol: String? = nil,
         securityId: Int? = nil,
         cashLineItemAmount: Double? = nil
@@ -422,6 +423,9 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             if let amount = amount {
                 sli.setValue(amount as NSNumber, forKey: "pAmount")
             }
+            if let commission = commission {
+                sli.setValue(commission as NSNumber, forKey: "pCommission")
+            }
             if let secObjID = newSecurityObjectID,
                let secInCtx = try? ctx.existingObject(with: secObjID) {
                 sli.setValue(secInCtx, forKey: "pSecurity")
@@ -504,6 +508,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let sharesStr = shares.map { updater.formatDecimalPublic($0) }
             let ppsStr = pricePerShare.map { updater.formatDecimalPublic($0) }
             let amountStr = amount.map { updater.formatDecimalPublic($0) }
+            let commissionStr = commission.map { updater.formatDecimalPublic($0) }
             let secRef = newSecurityUUID.map { "Security:\($0)" }
             let cashSync = result.cashSync
 
@@ -520,6 +525,10 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 if let v = amountStr {
                     patched = SyncBlobUpdater.patchSecurityLineItemFieldStatic(
                         xml: patched, lineItemUUID: liUUID, fieldName: "cost", fieldType: "decimal", value: v)
+                }
+                if let v = commissionStr {
+                    patched = SyncBlobUpdater.patchSecurityLineItemFieldStatic(
+                        xml: patched, lineItemUUID: liUUID, fieldName: "commission", fieldType: "decimal", value: v)
                 }
                 if let v = secRef {
                     patched = SyncBlobUpdater.patchSecurityLineItemFieldStatic(
