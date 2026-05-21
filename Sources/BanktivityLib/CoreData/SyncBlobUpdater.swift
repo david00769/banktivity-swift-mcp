@@ -267,6 +267,21 @@ public final class SyncBlobUpdater: @unchecked Sendable {
         return xml.replacingCharacters(in: range, with: patched)
     }
 
+    public func patchLineItemAmounts(xml: String, lineItemUUID: String, accountAmount: Double, transactionAmount: Double) -> String {
+        guard let range = lineItemRecordRange(in: xml, lineItemUUID: lineItemUUID) else { return xml }
+        let record = String(xml[range])
+        let accountAmountValue = formatDecimal(accountAmount)
+        let transactionAmountValue = formatDecimal(transactionAmount)
+
+        guard let withAccountAmount = replaceField(in: record, name: "accountAmount", type: "decimal", newContent: accountAmountValue) else {
+            return xml
+        }
+        guard let withTransactionAmount = replaceField(in: withAccountAmount, name: "transacitonAmount", type: "decimal", newContent: transactionAmountValue) else {
+            return xml
+        }
+        return xml.replacingCharacters(in: range, with: withTransactionAmount)
+    }
+
     // MARK: - XML Patching: Recategorize
 
     public func patchAccount(xml: String, lineItemUUID: String, accountUUID: String) -> String {
@@ -672,12 +687,37 @@ public final class SyncBlobUpdater: @unchecked Sendable {
             return nil
         }
 
-        // Search forwards for the closing </record>
-        guard let recordEnd = xml.range(of: "</record>", range: identifierRange.upperBound..<xml.endIndex) else {
-            return nil
+        // LineItem records can contain nested SecurityLineItem records. Walk record
+        // tags so the returned range encloses the whole LineItem, not the nested record.
+        var depth = 0
+        var cursor = recordStart.lowerBound
+        while cursor < xml.endIndex {
+            let searchRange = cursor..<xml.endIndex
+            let nextOpen = xml.range(of: "<record", range: searchRange)
+            let nextClose = xml.range(of: "</record>", range: searchRange)
+
+            if let open = nextOpen,
+               nextClose == nil || open.lowerBound < nextClose!.lowerBound {
+                guard let tagEnd = xml.range(of: ">", range: open.lowerBound..<xml.endIndex) else {
+                    return nil
+                }
+                let slashIndex = xml.index(before: tagEnd.lowerBound)
+                if xml[slashIndex] != "/" {
+                    depth += 1
+                }
+                cursor = tagEnd.upperBound
+                continue
+            }
+
+            guard let close = nextClose else { return nil }
+            depth -= 1
+            cursor = close.upperBound
+            if depth == 0 {
+                return recordStart.lowerBound..<close.upperBound
+            }
         }
 
-        return recordStart.lowerBound..<recordEnd.upperBound
+        return nil
     }
 
     private func replaceField(in xml: String, name: String, type: String, newContent: String) -> String? {

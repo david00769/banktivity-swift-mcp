@@ -141,8 +141,9 @@ struct Transactions: AsyncParsableCommand {
             try await guardWrite(writeGuard)
 
             let accounts = AccountRepository(container: container)
+            let syncBlobUpdater = SyncBlobUpdater(container: container)
             let lineItemRepo = LineItemRepository(container: container)
-            let transactions = TransactionRepository(container: container, lineItemRepo: lineItemRepo)
+            let transactions = TransactionRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: syncBlobUpdater)
 
             let resolvedLineItems: [(accountId: Int, amount: Double, memo: String?)]
 

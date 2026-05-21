@@ -331,7 +331,7 @@ struct Securities: AsyncParsableCommand {
     struct UpdateTrade: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "update-trade",
-            abstract: "Update security line item fields (shares, price, amount, security) on an existing transaction"
+            abstract: "Update security line item fields (shares, price, amount, security, cash line) on an existing transaction"
         )
 
         @OptionGroup var parent: GlobalOptions
@@ -354,6 +354,9 @@ struct Securities: AsyncParsableCommand {
         @Option(name: .long, help: "Security ID (alternative to --symbol)")
         var securityId: Int?
 
+        @Option(name: .long, parsing: .unconditional, help: "Also set the investment account cash line item to this amount and the balancing line item to the opposite amount")
+        var cashLineAmount: Double?
+
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
@@ -365,7 +368,8 @@ struct Securities: AsyncParsableCommand {
             let result = try securities.updateSecurityLineItem(
                 transactionId: transactionId,
                 shares: shares, pricePerShare: pricePerShare, amount: amount,
-                securitySymbol: symbol, securityId: securityId
+                securitySymbol: symbol, securityId: securityId,
+                cashLineItemAmount: cashLineAmount
             )
             try outputJSON(result, format: parent.format)
         }
