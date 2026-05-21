@@ -98,10 +98,12 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
     }
 
     private func get(uniqueID: String) throws -> TransactionDTO? {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
-        request.predicate = NSPredicate(format: "pUniqueID == %@", uniqueID)
-        request.fetchLimit = 1
-        return try fetch(request).first.map { mapToDTO($0) }
+        try performRead { [self] ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+            request.predicate = NSPredicate(format: "pUniqueID == %@", uniqueID)
+            request.fetchLimit = 1
+            return try ctx.fetch(request).first.map { self.mapToDTO($0) }
+        }
     }
 
     /// Get total transaction count
