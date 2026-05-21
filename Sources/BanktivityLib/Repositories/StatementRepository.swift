@@ -16,23 +16,27 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
     // MARK: - Read Operations
 
     public func list(accountId: Int) throws -> [StatementSummaryDTO] {
-        guard let account = try fetchByPK(entityName: "Account", pk: accountId) else {
-            throw ToolError.notFound("Account not found: \(accountId)")
+        try performRead { [self] ctx in
+            guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
+                throw ToolError.notFound("Account not found: \(accountId)")
+            }
+
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Statement")
+            request.predicate = NSPredicate(format: "pAccount == %@", account)
+            request.sortDescriptors = [NSSortDescriptor(key: "pStartDate", ascending: true)]
+
+            let statements = try ctx.fetch(request)
+            return statements.map { self.mapToSummaryDTO($0) }
         }
-
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Statement")
-        request.predicate = NSPredicate(format: "pAccount == %@", account)
-        request.sortDescriptors = [NSSortDescriptor(key: "pStartDate", ascending: true)]
-
-        let statements = try context.fetch(request)
-        return statements.map { mapToSummaryDTO($0) }
     }
 
     public func get(statementId: Int) throws -> StatementDTO? {
-        guard let statement = try fetchByPK(entityName: "Statement", pk: statementId) else {
-            return nil
+        try performRead { [self] ctx in
+            guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
+                return nil
+            }
+            return self.mapToDTO(statement)
         }
-        return mapToDTO(statement)
     }
 
     // MARK: - Write Operations
@@ -87,26 +91,33 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
     }
 
     public func delete(statementId: Int) throws -> Bool {
-        guard let statement = try fetchByPK(entityName: "Statement", pk: statementId) else {
-            return false
+        // Gather UUID and blob-patch info on the context's thread
+        struct PreReadData: Sendable {
+            let statementUUID: String
+            let txLineItems: [String: [String]]
+            let lineItemObjectIDs: [NSManagedObjectID]
         }
-
-        // Get UUID for sync record deletion
-        let statementUUID = Self.stringValue(statement, "pUniqueID")
-
-        // Gather info for blob patching before cascade
-        var txLineItems: [String: [String]] = [:]
-        let lineItems = Self.relatedSet(statement, "pLineItems")
-        for li in lineItems {
-            let liUUID = Self.stringValue(li, "pUniqueID")
-            if let tx = Self.relatedObject(li, "pTransaction") {
-                let txUUID = Self.stringValue(tx, "pUniqueID")
-                txLineItems[txUUID, default: []].append(liUUID)
+        let preRead: PreReadData? = try performRead { [self] ctx in
+            guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else { return nil }
+            let statementUUID = Self.stringValue(statement, "pUniqueID")
+            var txLineItems: [String: [String]] = [:]
+            let lineItems = Self.relatedSet(statement, "pLineItems")
+            for li in lineItems {
+                let liUUID = Self.stringValue(li, "pUniqueID")
+                if let tx = Self.relatedObject(li, "pTransaction") {
+                    let txUUID = Self.stringValue(tx, "pUniqueID")
+                    txLineItems[txUUID, default: []].append(liUUID)
+                }
             }
+            return PreReadData(statementUUID: statementUUID, txLineItems: txLineItems, lineItemObjectIDs: lineItems.map { $0.objectID })
         }
+        guard let preRead = preRead else { return false }
+
+        let statementUUID = preRead.statementUUID
+        let txLineItems = preRead.txLineItems
 
         // Cascade: unreconcile all line items first
-        let lineItemObjectIDs = lineItems.map { $0.objectID }
+        let lineItemObjectIDs = preRead.lineItemObjectIDs
         if !lineItemObjectIDs.isEmpty {
             let ids = lineItemObjectIDs
             try performWrite { ctx in
@@ -146,28 +157,44 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
     }
 
     public func reconcileLineItems(statementId: Int, lineItemIds: [Int]) throws -> StatementDTO {
-        guard let statement = try fetchByPK(entityName: "Statement", pk: statementId) else {
-            throw ToolError.notFound("Statement not found: \(statementId)")
+        struct StatementInfo: Sendable {
+            let accountId: Int
+            let uuid: String
+            let startTs: Double?
+            let endTs: Double?
+        }
+        let info: StatementInfo = try performRead { [self] ctx in
+            guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
+                throw ToolError.notFound("Statement not found: \(statementId)")
+            }
+            guard let account = Self.relatedObject(statement, "pAccount") else {
+                throw ToolError.invalidInput("Statement has no associated account")
+            }
+            return StatementInfo(
+                accountId: Self.extractPK(from: account.objectID),
+                uuid: Self.stringValue(statement, "pUniqueID"),
+                startTs: Self.dateValue(statement, "pStartDate"),
+                endTs: Self.dateValue(statement, "pEndDate")
+            )
         }
 
-        let statementAccountId: Int
-        if let account = Self.relatedObject(statement, "pAccount") {
-            statementAccountId = Self.extractPK(from: account.objectID)
-        } else {
-            throw ToolError.invalidInput("Statement has no associated account")
-        }
+        let statementAccountId = info.accountId
+        let statementUUID = info.uuid
+        let startTs = info.startTs
+        let endTs = info.endTs
 
-        let statementUUID = Self.stringValue(statement, "pUniqueID")
-        let startTs = Self.dateValue(statement, "pStartDate")
-        let endTs = Self.dateValue(statement, "pEndDate")
+        struct ReconcileLineInfo: Sendable {
+            let liUUID: String
+            let liId: Int
+        }
 
         // Collect line item UUID → transaction UUID mapping for blob patching
-        nonisolated(unsafe) var txLineItems: [String: [(liUUID: String, liId: Int)]] = [:]
-
-        try performWrite { [self] ctx in
+        let txLineItems: [String: [ReconcileLineInfo]] = try performWriteReturning { [self] ctx in
             guard let stmtInCtx = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
                 throw ToolError.notFound("Statement not found: \(statementId)")
             }
+
+            var result: [String: [ReconcileLineInfo]] = [:]
 
             for liId in lineItemIds {
                 guard let li = try fetchByPK(entityName: "LineItem", pk: liId, in: ctx) else {
@@ -211,12 +238,14 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 let liUUID = Self.stringValue(li, "pUniqueID")
                 if let tx = Self.relatedObject(li, "pTransaction") {
                     let txUUID = Self.stringValue(tx, "pUniqueID")
-                    if txLineItems[txUUID] == nil {
+                    if result[txUUID] == nil {
                         Self.setNow(tx, "pModificationDate")
                     }
-                    txLineItems[txUUID, default: []].append((liUUID: liUUID, liId: liId))
+                    result[txUUID, default: []].append(ReconcileLineInfo(liUUID: liUUID, liId: liId))
                 }
             }
+
+            return result
         }
 
         // Patch sync blobs (non-fatal)
@@ -240,13 +269,16 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
     }
 
     public func unreconcileLineItems(statementId: Int, lineItemIds: [Int]) throws -> StatementDTO? {
-        guard try fetchByPK(entityName: "Statement", pk: statementId) != nil else {
+        let exists: Bool = try performRead { [self] ctx in
+            try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) != nil
+        }
+        guard exists else {
             throw ToolError.notFound("Statement not found: \(statementId)")
         }
 
-        nonisolated(unsafe) var txLineItems: [String: [String]] = [:]
+        let txLineItems: [String: [String]] = try performWriteReturning { [self] ctx in
+            var result: [String: [String]] = [:]
 
-        try performWrite { [self] ctx in
             for liId in lineItemIds {
                 guard let li = try fetchByPK(entityName: "LineItem", pk: liId, in: ctx) else {
                     throw ToolError.notFound("Line item not found: \(liId)")
@@ -265,15 +297,17 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 let liUUID = Self.stringValue(li, "pUniqueID")
                 if let tx = Self.relatedObject(li, "pTransaction") {
                     let txUUID = Self.stringValue(tx, "pUniqueID")
-                    if txLineItems[txUUID] == nil {
+                    if result[txUUID] == nil {
                         Self.setNow(tx, "pModificationDate")
                     }
-                    txLineItems[txUUID, default: []].append(liUUID)
+                    result[txUUID, default: []].append(liUUID)
                 }
 
                 li.setValue(nil, forKey: "pStatement")
                 li.setValue(false, forKey: "pCleared")
             }
+
+            return result
         }
 
         // Patch sync blobs (non-fatal)
@@ -294,30 +328,32 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
     }
 
     public func getUnreconciledLineItems(accountId: Int, startDate: String? = nil, endDate: String? = nil) throws -> [LineItemDTO] {
-        guard let account = try fetchByPK(entityName: "Account", pk: accountId) else {
-            throw ToolError.notFound("Account not found: \(accountId)")
+        try performRead { [self] ctx in
+            guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
+                throw ToolError.notFound("Account not found: \(accountId)")
+            }
+
+            let request = NSFetchRequest<NSManagedObject>(entityName: "LineItem")
+            var predicates: [NSPredicate] = [
+                NSPredicate(format: "pAccount == %@", account),
+                NSPredicate(format: "pStatement == nil"),
+            ]
+
+            if let start = startDate, let startTs = DateConversion.fromISO(start) {
+                predicates.append(NSPredicate(format: "pTransaction.pDate >= %@", DateConversion.toDate(startTs) as NSDate))
+            }
+            if let end = endDate, let endTs = DateConversion.fromISO(end) {
+                predicates.append(NSPredicate(format: "pTransaction.pDate <= %@", DateConversion.toDate(endTs) as NSDate))
+            }
+
+            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+            request.sortDescriptors = [
+                NSSortDescriptor(key: "pTransaction.pDate", ascending: true),
+            ]
+
+            let lineItems = try ctx.fetch(request)
+            return lineItems.map { self.lineItemRepo.mapToDTO($0) }
         }
-
-        let request = NSFetchRequest<NSManagedObject>(entityName: "LineItem")
-        var predicates: [NSPredicate] = [
-            NSPredicate(format: "pAccount == %@", account),
-            NSPredicate(format: "pStatement == nil"),
-        ]
-
-        if let start = startDate, let startTs = DateConversion.fromISO(start) {
-            predicates.append(NSPredicate(format: "pTransaction.pDate >= %@", DateConversion.toDate(startTs) as NSDate))
-        }
-        if let end = endDate, let endTs = DateConversion.fromISO(end) {
-            predicates.append(NSPredicate(format: "pTransaction.pDate <= %@", DateConversion.toDate(endTs) as NSDate))
-        }
-
-        request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-        request.sortDescriptors = [
-            NSSortDescriptor(key: "pTransaction.pDate", ascending: true),
-        ]
-
-        let lineItems = try context.fetch(request)
-        return lineItems.map { lineItemRepo.mapToDTO($0) }
     }
 
     // MARK: - Validation

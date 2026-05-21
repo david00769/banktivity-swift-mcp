@@ -14,26 +14,32 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
 
     /// List all tags
     public func list() throws -> [TagDTO] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Tag")
-        request.sortDescriptors = [NSSortDescriptor(key: "pName", ascending: true)]
+        try performRead { [self] ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Tag")
+            request.sortDescriptors = [NSSortDescriptor(key: "pName", ascending: true)]
 
-        let results = try fetch(request)
-        return results.map { mapToDTO($0) }
+            let results = try ctx.fetch(request)
+            return results.map { self.mapToDTO($0) }
+        }
     }
 
     /// Get a tag by primary key
     public func get(tagId: Int) throws -> TagDTO? {
-        guard let object = try fetchByPK(entityName: "Tag", pk: tagId) else { return nil }
-        return mapToDTO(object)
+        try performRead { [self] ctx in
+            guard let object = try fetchByPK(entityName: "Tag", pk: tagId, in: ctx) else { return nil }
+            return self.mapToDTO(object)
+        }
     }
 
     /// Find a tag by name (case-insensitive)
     public func findByName(_ name: String) throws -> TagDTO? {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Tag")
-        request.predicate = NSPredicate(format: "pName ==[cd] %@", name)
-        request.fetchLimit = 1
-        guard let object = try fetch(request).first else { return nil }
-        return mapToDTO(object)
+        try performRead { [self] ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Tag")
+            request.predicate = NSPredicate(format: "pName ==[cd] %@", name)
+            request.fetchLimit = 1
+            guard let object = try ctx.fetch(request).first else { return nil }
+            return self.mapToDTO(object)
+        }
     }
 
     // MARK: - Write Operations
@@ -45,7 +51,7 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
             return existing
         }
 
-        let pk = try performWriteReturning { ctx -> Int in
+        _ = try performWriteReturning { ctx -> Int in
             let tag = Self.createObject(entityName: "Tag", in: ctx)
             tag.setValue(name, forKey: "pName")
             tag.setValue(name.uppercased().trimmingCharacters(in: .whitespaces), forKey: "pCanonicalName")
@@ -77,9 +83,32 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
 
     /// Add a tag to all line items of a transaction
     public func tagTransaction(transactionId: Int, tagId: Int) throws -> Int {
-        nonisolated(unsafe) var syncInfo: (txUUID: String, lineItemTagUUIDs: [(liUUID: String, tagUUIDs: [String])])?
+        let outcome = try applyTagOutcome(transactionId: transactionId, tagId: tagId, add: true)
+        applyTagSyncBlob(outcome: outcome)
+        return outcome.count
+    }
 
-        let count = try performWriteReturning { [self] ctx -> Int in
+    /// Remove a tag from all line items of a transaction
+    public func untagTransaction(transactionId: Int, tagId: Int) throws -> Int {
+        let outcome = try applyTagOutcome(transactionId: transactionId, tagId: tagId, add: false)
+        applyTagSyncBlob(outcome: outcome)
+        return outcome.count
+    }
+
+    private struct LineItemTagInfo: Sendable {
+        let liUUID: String
+        let tagUUIDs: [String]
+    }
+
+    private struct TagOutcome: Sendable {
+        let count: Int
+        let txUUID: String
+        let lineItemTagInfo: [LineItemTagInfo]
+        var didChange: Bool { count > 0 }
+    }
+
+    private func applyTagOutcome(transactionId: Int, tagId: Int, add: Bool) throws -> TagOutcome {
+        try performWriteReturning { [self] ctx in
             guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
                 throw ToolError.notFound("Transaction not found: \(transactionId)")
             }
@@ -87,92 +116,46 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
                 throw ToolError.notFound("Tag not found: \(tagId)")
             }
 
-            let txUUID = Self.stringValue(tx, "pUniqueID")
             let lineItems = Self.relatedSet(tx, "lineItems")
             var count = 0
-            var liTagInfo: [(liUUID: String, tagUUIDs: [String])] = []
+            var info: [LineItemTagInfo] = []
 
             for li in lineItems {
                 let tags = li.mutableSetValue(forKey: "pTags")
-                if !tags.contains(tag) {
+                if add, !tags.contains(tag) {
                     tags.add(tag)
+                    count += 1
+                } else if !add, tags.contains(tag) {
+                    tags.remove(tag)
                     count += 1
                 }
                 // Collect current tag UUIDs for blob patching
                 let liUUID = Self.stringValue(li, "pUniqueID")
                 let currentTagUUIDs = (tags as? Set<NSManagedObject>)?.map { Self.stringValue($0, "pUniqueID") } ?? []
-                liTagInfo.append((liUUID: liUUID, tagUUIDs: currentTagUUIDs))
+                info.append(LineItemTagInfo(liUUID: liUUID, tagUUIDs: currentTagUUIDs))
             }
 
             if count > 0 {
                 Self.setNow(tx, "pModificationDate")
-                syncInfo = (txUUID: txUUID, lineItemTagUUIDs: liTagInfo)
             }
-            return count
-        }
 
-        // Patch sync blob (non-fatal)
-        if let updater = syncBlobUpdater, let info = syncInfo {
-            updater.updateTransactionBlob(transactionUUID: info.txUUID) { xml in
-                var result = xml
-                for item in info.lineItemTagUUIDs {
-                    result = updater.patchTags(xml: result, lineItemUUID: item.liUUID, tagUUIDs: item.tagUUIDs)
-                }
-                return result
-            }
+            return TagOutcome(
+                count: count,
+                txUUID: Self.stringValue(tx, "pUniqueID"),
+                lineItemTagInfo: info
+            )
         }
-
-        return count
     }
 
-    /// Remove a tag from all line items of a transaction
-    public func untagTransaction(transactionId: Int, tagId: Int) throws -> Int {
-        nonisolated(unsafe) var syncInfo: (txUUID: String, lineItemTagUUIDs: [(liUUID: String, tagUUIDs: [String])])?
-
-        let count = try performWriteReturning { [self] ctx -> Int in
-            guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
-                throw ToolError.notFound("Transaction not found: \(transactionId)")
+    private func applyTagSyncBlob(outcome: TagOutcome) {
+        guard outcome.didChange, let updater = syncBlobUpdater else { return }
+        updater.updateTransactionBlob(transactionUUID: outcome.txUUID) { xml in
+            var result = xml
+            for item in outcome.lineItemTagInfo {
+                result = updater.patchTags(xml: result, lineItemUUID: item.liUUID, tagUUIDs: item.tagUUIDs)
             }
-            guard let tag = try fetchByPK(entityName: "Tag", pk: tagId, in: ctx) else {
-                throw ToolError.notFound("Tag not found: \(tagId)")
-            }
-
-            let txUUID = Self.stringValue(tx, "pUniqueID")
-            let lineItems = Self.relatedSet(tx, "lineItems")
-            var count = 0
-            var liTagInfo: [(liUUID: String, tagUUIDs: [String])] = []
-
-            for li in lineItems {
-                let tags = li.mutableSetValue(forKey: "pTags")
-                if tags.contains(tag) {
-                    tags.remove(tag)
-                    count += 1
-                }
-                // Collect current tag UUIDs after removal for blob patching
-                let liUUID = Self.stringValue(li, "pUniqueID")
-                let currentTagUUIDs = (tags as? Set<NSManagedObject>)?.map { Self.stringValue($0, "pUniqueID") } ?? []
-                liTagInfo.append((liUUID: liUUID, tagUUIDs: currentTagUUIDs))
-            }
-
-            if count > 0 {
-                Self.setNow(tx, "pModificationDate")
-                syncInfo = (txUUID: txUUID, lineItemTagUUIDs: liTagInfo)
-            }
-            return count
+            return result
         }
-
-        // Patch sync blob (non-fatal)
-        if let updater = syncBlobUpdater, let info = syncInfo {
-            updater.updateTransactionBlob(transactionUUID: info.txUUID) { xml in
-                var result = xml
-                for item in info.lineItemTagUUIDs {
-                    result = updater.patchTags(xml: result, lineItemUUID: item.liUUID, tagUUIDs: item.tagUUIDs)
-                }
-                return result
-            }
-        }
-
-        return count
     }
 
     /// Resolve a tag ID from either an ID or a name (auto-creates if name given)
@@ -217,43 +200,45 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
         transactionRepo: TransactionRepository
     ) throws -> [TransactionDTO] {
         let resolvedId = try resolveTagId(id: tagId, name: tagName)
-        let txObjects = try getTransactionsByTag(
+        let txIds = try getTransactionsByTag(
             tagId: resolvedId,
             startDate: startDate,
             endDate: endDate,
             limit: limit
         )
-        return txObjects.compactMap { obj in
-            try? transactionRepo.get(transactionId: Self.extractPK(from: obj.objectID))
-        }
+        return txIds.compactMap { try? transactionRepo.get(transactionId: $0) }
     }
 
-    /// Get transactions that have a specific tag (raw Core Data objects)
+    /// Get primary keys of transactions that have a specific tag.
+    /// Returns PKs rather than NSManagedObjects so callers don't need to handle
+    /// Core Data thread confinement.
     public func getTransactionsByTag(
         tagId: Int,
         accountId: Int? = nil,
         startDate: String? = nil,
         endDate: String? = nil,
         limit: Int = 50
-    ) throws -> [NSManagedObject] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
-        var predicates: [NSPredicate] = []
+    ) throws -> [Int] {
+        try performRead { ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+            var predicates: [NSPredicate] = [
+                NSPredicate(format: "ANY lineItems.pTags.@pk == %d", tagId)
+            ]
 
-        // Filter by tag through line items
-        predicates.append(NSPredicate(format: "ANY lineItems.pTags.@pk == %d", tagId))
+            if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
+                predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
+            }
+            if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
+                predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
+            }
 
-        if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
-            predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
+            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+            request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
+            request.fetchLimit = limit
+
+            let results = try ctx.fetch(request)
+            return results.map { Self.extractPK(from: $0.objectID) }
         }
-        if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
-            predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
-        }
-
-        request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-        request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
-        request.fetchLimit = limit
-
-        return try fetch(request)
     }
 
     // MARK: - DTO Mapping

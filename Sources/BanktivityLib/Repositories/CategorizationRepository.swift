@@ -29,169 +29,174 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
         limit: Int? = nil,
         excludeTransfers: Bool = true
     ) throws -> [UncategorizedTransactionDTO] {
-        // Fetch transactions where at least one line item goes to an income/expense category
-        // but another line item has no category assignment
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+        try performRead { ctx in
+            // Fetch transactions where at least one line item goes to an income/expense category
+            // but another line item has no category assignment
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
 
-        var predicates: [NSPredicate] = []
+            var predicates: [NSPredicate] = []
 
-        if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
-            predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
-        }
-        if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
-            predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
-        }
-
-        if !predicates.isEmpty {
-            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-        }
-
-        request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
-        if let limit = limit { request.fetchLimit = limit * 3 } // fetch extra, filter later
-
-        let transactions = try fetch(request)
-        var results: [UncategorizedTransactionDTO] = []
-
-        for tx in transactions {
-            if let limit = limit, results.count >= limit { break }
-
-            let lineItems = Self.relatedSet(tx, "lineItems")
-            var hasCategory = false
-            var hasNonCategory = false
-            var primaryAccountName = ""
-            var amount = 0.0
-            var lineItemDTOs: [LineItemDTO] = []
-
-            for li in lineItems {
-                guard let account = Self.relatedObject(li, "pAccount") else { continue }
-                let acClass = Self.intValue(account, "pAccountClass")
-                let liAmount = Self.doubleValue(li, "pTransactionAmount")
-
-                if acClass == AccountClass.income || acClass == AccountClass.expense {
-                    hasCategory = true
-                } else {
-                    hasNonCategory = true
-                    primaryAccountName = Self.stringValue(account, "pName")
-                    amount = liAmount
-                }
-
-                lineItemDTOs.append(LineItemDTO(
-                    id: Self.extractPK(from: li.objectID),
-                    accountId: Self.extractPK(from: account.objectID),
-                    accountName: Self.stringValue(account, "pName"),
-                    amount: liAmount,
-                    memo: Self.string(li, "pMemo"),
-                    runningBalance: Self.doubleValue(li, "pRunningBalance")
-                ))
+            if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
+                predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
+            }
+            if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
+                predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
             }
 
-            // Uncategorized: has non-category line items but no category line items
-            if hasNonCategory && !hasCategory {
-                if excludeTransfers && lineItems.count == 2 {
-                    // Check if it's a transfer (both line items are non-category)
-                    let allNonCategory = lineItems.allSatisfy { li in
-                        guard let account = Self.relatedObject(li, "pAccount") else { return false }
-                        let acClass = Self.intValue(account, "pAccountClass")
-                        return acClass != AccountClass.income && acClass != AccountClass.expense
+            if !predicates.isEmpty {
+                request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+            }
+
+            request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
+            if let limit = limit { request.fetchLimit = limit * 3 } // fetch extra, filter later
+
+            let transactions = try ctx.fetch(request)
+            var results: [UncategorizedTransactionDTO] = []
+
+            for tx in transactions {
+                if let limit = limit, results.count >= limit { break }
+
+                let lineItems = Self.relatedSet(tx, "lineItems")
+                var hasCategory = false
+                var hasNonCategory = false
+                var primaryAccountName = ""
+                var amount = 0.0
+                var lineItemDTOs: [LineItemDTO] = []
+
+                for li in lineItems {
+                    guard let account = Self.relatedObject(li, "pAccount") else { continue }
+                    let acClass = Self.intValue(account, "pAccountClass")
+                    let liAmount = Self.doubleValue(li, "pTransactionAmount")
+
+                    if acClass == AccountClass.income || acClass == AccountClass.expense {
+                        hasCategory = true
+                    } else {
+                        hasNonCategory = true
+                        primaryAccountName = Self.stringValue(account, "pName")
+                        amount = liAmount
                     }
-                    if allNonCategory { continue }
+
+                    lineItemDTOs.append(LineItemDTO(
+                        id: Self.extractPK(from: li.objectID),
+                        accountId: Self.extractPK(from: account.objectID),
+                        accountName: Self.stringValue(account, "pName"),
+                        amount: liAmount,
+                        memo: Self.string(li, "pMemo"),
+                        runningBalance: Self.doubleValue(li, "pRunningBalance")
+                    ))
                 }
 
-                let dateStr: String
-                if let d = Self.dateValue(tx, "pDate") { dateStr = DateConversion.toISO(d) }
-                else { dateStr = "unknown" }
+                // Uncategorized: has non-category line items but no category line items
+                if hasNonCategory && !hasCategory {
+                    if excludeTransfers && lineItems.count == 2 {
+                        // Check if it's a transfer (both line items are non-category)
+                        let allNonCategory = lineItems.allSatisfy { li in
+                            guard let account = Self.relatedObject(li, "pAccount") else { return false }
+                            let acClass = Self.intValue(account, "pAccountClass")
+                            return acClass != AccountClass.income && acClass != AccountClass.expense
+                        }
+                        if allNonCategory { continue }
+                    }
 
-                results.append(UncategorizedTransactionDTO(
-                    id: Self.extractPK(from: tx.objectID),
-                    date: dateStr,
-                    title: Self.stringValue(tx, "pTitle"),
-                    note: Self.string(tx, "pNote"),
-                    accountName: primaryAccountName,
-                    amount: amount,
-                    lineItems: lineItemDTOs
-                ))
+                    let dateStr: String
+                    if let d = Self.dateValue(tx, "pDate") { dateStr = DateConversion.toISO(d) }
+                    else { dateStr = "unknown" }
+
+                    results.append(UncategorizedTransactionDTO(
+                        id: Self.extractPK(from: tx.objectID),
+                        date: dateStr,
+                        title: Self.stringValue(tx, "pTitle"),
+                        note: Self.string(tx, "pNote"),
+                        accountName: primaryAccountName,
+                        amount: amount,
+                        lineItems: lineItemDTOs
+                    ))
+                }
             }
-        }
 
-        return results
+            return results
+        }
     }
 
     /// Suggest category for a merchant based on import rules and historical data
     public func suggestCategory(merchantName: String) throws -> [CategorySuggestionDTO] {
-        var suggestions: [CategorySuggestionDTO] = []
-
         // Check import rules first
         let matchingRules = try importRuleRepo.match(description: merchantName)
-        for rule in matchingRules {
-            // The rule's template tells us the category
-            if let template = try? fetchByPK(entityName: "TransactionTemplate", pk: rule.templateId) {
-                let templateLineItems = Self.relatedSet(template, "pLineItemTemplates")
-                for li in templateLineItems {
-                    let accountId = Self.stringValue(li, "pAccountID")
-                    // Look up the account/category by uniqueID
-                    let catRequest = NSFetchRequest<NSManagedObject>(entityName: "Account")
-                    catRequest.predicate = NSPredicate(format: "pUniqueID == %@", accountId)
-                    catRequest.fetchLimit = 1
-                    if let cat = try fetch(catRequest).first {
-                        let acClass = Self.intValue(cat, "pAccountClass")
-                        if acClass == AccountClass.income || acClass == AccountClass.expense {
-                            suggestions.append(CategorySuggestionDTO(
-                                categoryId: Self.extractPK(from: cat.objectID),
-                                categoryName: Self.stringValue(cat, "pName"),
-                                categoryPath: Self.stringValue(cat, "pFullName"),
-                                confidence: 0.9,
-                                reason: "Matched import rule: \(rule.pattern)",
-                                matchCount: 1
-                            ))
+
+        return try performRead { [self] ctx in
+            var suggestions: [CategorySuggestionDTO] = []
+
+            for rule in matchingRules {
+                // The rule's template tells us the category
+                if let template = try? fetchByPK(entityName: "TransactionTemplate", pk: rule.templateId, in: ctx) {
+                    let templateLineItems = Self.relatedSet(template, "pLineItemTemplates")
+                    for li in templateLineItems {
+                        let accountId = Self.stringValue(li, "pAccountID")
+                        // Look up the account/category by uniqueID
+                        let catRequest = NSFetchRequest<NSManagedObject>(entityName: "Account")
+                        catRequest.predicate = NSPredicate(format: "pUniqueID == %@", accountId)
+                        catRequest.fetchLimit = 1
+                        if let cat = try ctx.fetch(catRequest).first {
+                            let acClass = Self.intValue(cat, "pAccountClass")
+                            if acClass == AccountClass.income || acClass == AccountClass.expense {
+                                suggestions.append(CategorySuggestionDTO(
+                                    categoryId: Self.extractPK(from: cat.objectID),
+                                    categoryName: Self.stringValue(cat, "pName"),
+                                    categoryPath: Self.stringValue(cat, "pFullName"),
+                                    confidence: 0.9,
+                                    reason: "Matched import rule: \(rule.pattern)",
+                                    matchCount: 1
+                                ))
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Check historical transactions with similar titles
-        let searchRequest = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
-        searchRequest.predicate = NSPredicate(format: "pTitle LIKE[cd] %@", "*\(merchantName)*")
-        searchRequest.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
-        searchRequest.fetchLimit = 50
+            // Check historical transactions with similar titles
+            let searchRequest = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+            searchRequest.predicate = NSPredicate(format: "pTitle LIKE[cd] %@", "*\(merchantName)*")
+            searchRequest.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
+            searchRequest.fetchLimit = 50
 
-        let historicalTx = try fetch(searchRequest)
-        var categoryCounts: [Int: (name: String, path: String, count: Int)] = [:]
+            let historicalTx = try ctx.fetch(searchRequest)
+            var categoryCounts: [Int: (name: String, path: String, count: Int)] = [:]
 
-        for tx in historicalTx {
-            let lineItems = Self.relatedSet(tx, "lineItems")
-            for li in lineItems {
-                guard let account = Self.relatedObject(li, "pAccount") else { continue }
-                let acClass = Self.intValue(account, "pAccountClass")
-                if acClass == AccountClass.income || acClass == AccountClass.expense {
-                    let catId = Self.extractPK(from: account.objectID)
-                    let existing = categoryCounts[catId]
-                    categoryCounts[catId] = (
-                        name: Self.stringValue(account, "pName"),
-                        path: Self.stringValue(account, "pFullName"),
-                        count: (existing?.count ?? 0) + 1
-                    )
+            for tx in historicalTx {
+                let lineItems = Self.relatedSet(tx, "lineItems")
+                for li in lineItems {
+                    guard let account = Self.relatedObject(li, "pAccount") else { continue }
+                    let acClass = Self.intValue(account, "pAccountClass")
+                    if acClass == AccountClass.income || acClass == AccountClass.expense {
+                        let catId = Self.extractPK(from: account.objectID)
+                        let existing = categoryCounts[catId]
+                        categoryCounts[catId] = (
+                            name: Self.stringValue(account, "pName"),
+                            path: Self.stringValue(account, "pFullName"),
+                            count: (existing?.count ?? 0) + 1
+                        )
+                    }
                 }
             }
-        }
 
-        let totalMatches = categoryCounts.values.reduce(0) { $0 + $1.count }
-        for (catId, info) in categoryCounts {
-            // Skip if already suggested by import rule
-            if suggestions.contains(where: { $0.categoryId == catId }) { continue }
-            let confidence = min(0.8, Double(info.count) / max(1.0, Double(totalMatches)) * 0.8 + 0.3)
-            suggestions.append(CategorySuggestionDTO(
-                categoryId: catId,
-                categoryName: info.name,
-                categoryPath: info.path,
-                confidence: confidence,
-                reason: "Historical: \(info.count) matching transactions",
-                matchCount: info.count
-            ))
-        }
+            let totalMatches = categoryCounts.values.reduce(0) { $0 + $1.count }
+            for (catId, info) in categoryCounts {
+                // Skip if already suggested by import rule
+                if suggestions.contains(where: { $0.categoryId == catId }) { continue }
+                let confidence = min(0.8, Double(info.count) / max(1.0, Double(totalMatches)) * 0.8 + 0.3)
+                suggestions.append(CategorySuggestionDTO(
+                    categoryId: catId,
+                    categoryName: info.name,
+                    categoryPath: info.path,
+                    confidence: confidence,
+                    reason: "Historical: \(info.count) matching transactions",
+                    matchCount: info.count
+                ))
+            }
 
-        suggestions.sort { $0.confidence > $1.confidence }
-        return suggestions
+            suggestions.sort { $0.confidence > $1.confidence }
+            return suggestions
+        }
     }
 
     /// Review categorizations for transactions
@@ -203,67 +208,69 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
         endDate: String? = nil,
         limit: Int? = nil
     ) throws -> [ReviewedTransactionDTO] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
-        var predicates: [NSPredicate] = []
+        try performRead { ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+            var predicates: [NSPredicate] = []
 
-        if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
-            predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
-        }
-        if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
-            predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
-        }
-        if let pattern = payeePattern {
-            predicates.append(NSPredicate(format: "pTitle LIKE[cd] %@", "*\(pattern)*"))
-        }
-
-        if !predicates.isEmpty {
-            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-        }
-        request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
-        if let limit = limit { request.fetchLimit = limit }
-
-        let transactions = try fetch(request)
-        var results: [ReviewedTransactionDTO] = []
-
-        for tx in transactions {
-            let lineItems = Self.relatedSet(tx, "lineItems")
-            var primaryAccountName = ""
-            var amount = 0.0
-            var catId: Int? = nil
-            var catName: String? = nil
-            var catPath: String? = nil
-
-            for li in lineItems {
-                guard let account = Self.relatedObject(li, "pAccount") else { continue }
-                let acClass = Self.intValue(account, "pAccountClass")
-                if acClass == AccountClass.income || acClass == AccountClass.expense {
-                    catId = Self.extractPK(from: account.objectID)
-                    catName = Self.stringValue(account, "pName")
-                    catPath = Self.stringValue(account, "pFullName")
-                } else {
-                    primaryAccountName = Self.stringValue(account, "pName")
-                    amount = Self.doubleValue(li, "pTransactionAmount")
-                }
+            if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
+                predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
+            }
+            if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
+                predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
+            }
+            if let pattern = payeePattern {
+                predicates.append(NSPredicate(format: "pTitle LIKE[cd] %@", "*\(pattern)*"))
             }
 
-            let dateStr: String
-            if let d = Self.dateValue(tx, "pDate") { dateStr = DateConversion.toISO(d) }
-            else { dateStr = "unknown" }
+            if !predicates.isEmpty {
+                request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+            }
+            request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
+            if let limit = limit { request.fetchLimit = limit }
 
-            results.append(ReviewedTransactionDTO(
-                id: Self.extractPK(from: tx.objectID),
-                date: dateStr,
-                title: Self.stringValue(tx, "pTitle"),
-                note: Self.string(tx, "pNote"),
-                accountName: primaryAccountName,
-                amount: amount,
-                categoryId: catId,
-                categoryName: catName,
-                categoryPath: catPath
-            ))
+            let transactions = try ctx.fetch(request)
+            var results: [ReviewedTransactionDTO] = []
+
+            for tx in transactions {
+                let lineItems = Self.relatedSet(tx, "lineItems")
+                var primaryAccountName = ""
+                var amount = 0.0
+                var catId: Int? = nil
+                var catName: String? = nil
+                var catPath: String? = nil
+
+                for li in lineItems {
+                    guard let account = Self.relatedObject(li, "pAccount") else { continue }
+                    let acClass = Self.intValue(account, "pAccountClass")
+                    if acClass == AccountClass.income || acClass == AccountClass.expense {
+                        catId = Self.extractPK(from: account.objectID)
+                        catName = Self.stringValue(account, "pName")
+                        catPath = Self.stringValue(account, "pFullName")
+                    } else {
+                        primaryAccountName = Self.stringValue(account, "pName")
+                        amount = Self.doubleValue(li, "pTransactionAmount")
+                    }
+                }
+
+                let dateStr: String
+                if let d = Self.dateValue(tx, "pDate") { dateStr = DateConversion.toISO(d) }
+                else { dateStr = "unknown" }
+
+                results.append(ReviewedTransactionDTO(
+                    id: Self.extractPK(from: tx.objectID),
+                    date: dateStr,
+                    title: Self.stringValue(tx, "pTitle"),
+                    note: Self.string(tx, "pNote"),
+                    accountName: primaryAccountName,
+                    amount: amount,
+                    categoryId: catId,
+                    categoryName: catName,
+                    categoryPath: catPath
+                ))
+            }
+
+            return results
         }
-
-        return results
     }
 
     /// Get payee category summary
@@ -273,79 +280,83 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
         endDate: String? = nil,
         minTransactions: Int = 1
     ) throws -> [PayeeCategorySummaryDTO] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
-        var predicates: [NSPredicate] = []
+        try performRead { ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+            var predicates: [NSPredicate] = []
 
-        if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
-            predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
-        }
-        if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
-            predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
-        }
-
-        if !predicates.isEmpty {
-            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-        }
-
-        let transactions = try fetch(request)
-
-        // Group by title (payee)
-        var payeeMap: [String: (total: Int, categories: [Int: (name: String, path: String, count: Int)], uncategorized: Int)] = [:]
-
-        for tx in transactions {
-            let title = Self.stringValue(tx, "pTitle")
-            var entry = payeeMap[title] ?? (total: 0, categories: [:], uncategorized: 0)
-            entry.total += 1
-
-            let lineItems = Self.relatedSet(tx, "lineItems")
-            var hasCat = false
-            for li in lineItems {
-                guard let account = Self.relatedObject(li, "pAccount") else { continue }
-                let acClass = Self.intValue(account, "pAccountClass")
-                if acClass == AccountClass.income || acClass == AccountClass.expense {
-                    let catId = Self.extractPK(from: account.objectID)
-                    let existing = entry.categories[catId]
-                    entry.categories[catId] = (
-                        name: Self.stringValue(account, "pName"),
-                        path: Self.stringValue(account, "pFullName"),
-                        count: (existing?.count ?? 0) + 1
-                    )
-                    hasCat = true
-                }
+            if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
+                predicates.append(NSPredicate(format: "pDate >= %@", DateConversion.toDate(ts) as NSDate))
             }
-            if !hasCat { entry.uncategorized += 1 }
-            payeeMap[title] = entry
-        }
+            if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
+                predicates.append(NSPredicate(format: "pDate <= %@", DateConversion.toDate(ts) as NSDate))
+            }
 
-        return payeeMap
-            .filter { $0.value.total >= minTransactions }
-            .map { (title, entry) in
-                PayeeCategorySummaryDTO(
-                    title: title,
-                    totalTransactions: entry.total,
-                    categories: entry.categories.map { (catId, info) in
-                        PayeeCategoryEntryDTO(
-                            categoryId: catId,
-                            categoryName: info.name,
-                            categoryPath: info.path,
-                            count: info.count
+            if !predicates.isEmpty {
+                request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+            }
+
+            let transactions = try ctx.fetch(request)
+
+            // Group by title (payee)
+            var payeeMap: [String: (total: Int, categories: [Int: (name: String, path: String, count: Int)], uncategorized: Int)] = [:]
+
+            for tx in transactions {
+                let title = Self.stringValue(tx, "pTitle")
+                var entry = payeeMap[title] ?? (total: 0, categories: [:], uncategorized: 0)
+                entry.total += 1
+
+                let lineItems = Self.relatedSet(tx, "lineItems")
+                var hasCat = false
+                for li in lineItems {
+                    guard let account = Self.relatedObject(li, "pAccount") else { continue }
+                    let acClass = Self.intValue(account, "pAccountClass")
+                    if acClass == AccountClass.income || acClass == AccountClass.expense {
+                        let catId = Self.extractPK(from: account.objectID)
+                        let existing = entry.categories[catId]
+                        entry.categories[catId] = (
+                            name: Self.stringValue(account, "pName"),
+                            path: Self.stringValue(account, "pFullName"),
+                            count: (existing?.count ?? 0) + 1
                         )
-                    }.sorted { $0.count > $1.count },
-                    uncategorizedCount: entry.uncategorized
-                )
+                        hasCat = true
+                    }
+                }
+                if !hasCat { entry.uncategorized += 1 }
+                payeeMap[title] = entry
             }
-            .sorted { $0.totalTransactions > $1.totalTransactions }
+
+            return payeeMap
+                .filter { $0.value.total >= minTransactions }
+                .map { (title, entry) in
+                    PayeeCategorySummaryDTO(
+                        title: title,
+                        totalTransactions: entry.total,
+                        categories: entry.categories.map { (catId, info) in
+                            PayeeCategoryEntryDTO(
+                                categoryId: catId,
+                                categoryName: info.name,
+                                categoryPath: info.path,
+                                count: info.count
+                            )
+                        }.sorted { $0.count > $1.count },
+                        uncategorizedCount: entry.uncategorized
+                    )
+                }
+                .sorted { $0.totalTransactions > $1.totalTransactions }
+        }
     }
 
     // MARK: - Write Operations
 
     /// Recategorize a single transaction
     public func recategorize(transactionId: Int, categoryId: Int) throws -> RecategorizationResultDTO? {
-        nonisolated(unsafe) var oldCategoryName: String?
-        nonisolated(unsafe) var newCategoryName: String = ""
-        nonisolated(unsafe) var syncInfo: (txUUID: String, liUUID: String, catUUID: String)?
+        struct RecategorizeOutcome: Sendable {
+            let oldCategoryName: String?
+            let newCategoryName: String
+            let syncInfo: (txUUID: String, liUUID: String, catUUID: String)?
+        }
 
-        try performWrite { [self] ctx in
+        let outcome: RecategorizeOutcome = try performWriteReturning { [self] ctx in
             guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
                 throw ToolError.notFound("Transaction not found: \(transactionId)")
             }
@@ -353,7 +364,7 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
                 throw ToolError.notFound("Category not found: \(categoryId)")
             }
 
-            newCategoryName = Self.stringValue(categoryAccount, "pName")
+            let newCategoryName = Self.stringValue(categoryAccount, "pName")
             let catUUID = Self.stringValue(categoryAccount, "pUniqueID")
             let txUUID = Self.stringValue(tx, "pUniqueID")
             let lineItems = Self.relatedSet(tx, "lineItems")
@@ -362,6 +373,7 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
             var categoryLineItem: NSManagedObject?
             var primaryLineItem: NSManagedObject?
             var orphanedLineItems: [NSManagedObject] = []
+            var oldCategoryName: String?
 
             for li in lineItems {
                 guard let account = Self.relatedObject(li, "pAccount") else {
@@ -377,6 +389,8 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
                     primaryLineItem = li
                 }
             }
+
+            var syncInfo: (txUUID: String, liUUID: String, catUUID: String)?
 
             if let existingCatLI = categoryLineItem {
                 // Update existing category line item to new category
@@ -411,10 +425,16 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
 
             // Mark transaction as modified
             Self.setNow(tx, "pModificationDate")
+
+            return RecategorizeOutcome(
+                oldCategoryName: oldCategoryName,
+                newCategoryName: newCategoryName,
+                syncInfo: syncInfo
+            )
         }
 
         // Patch sync blob (non-fatal)
-        if let updater = syncBlobUpdater, let info = syncInfo {
+        if let updater = syncBlobUpdater, let info = outcome.syncInfo {
             updater.updateTransactionBlob(transactionUUID: info.txUUID) { xml in
                 updater.patchAccount(xml: xml, lineItemUUID: info.liUUID, accountUUID: info.catUUID)
             }
@@ -423,8 +443,8 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
         return RecategorizationResultDTO(
             transactionId: transactionId,
             title: (try? get(transactionId: transactionId))?.title ?? "",
-            oldCategoryName: oldCategoryName,
-            newCategoryName: newCategoryName
+            oldCategoryName: outcome.oldCategoryName,
+            newCategoryName: outcome.newCategoryName
         )
     }
 
@@ -435,43 +455,57 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
         dryRun: Bool = false,
         uncategorizedOnly: Bool = false
     ) throws -> BulkRecategorizeResultDTO {
-        // Find matching transactions
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
-        request.predicate = NSPredicate(format: "pTitle LIKE[cd] %@", "*\(payeePattern)*")
-        request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
+        // Find matching transactions and gather metadata on the context's thread
+        struct TxData {
+            let id: Int
+            let title: String
+            let hasCat: Bool
+            let oldCatName: String?
+        }
 
-        let transactions = try fetch(request)
+        let txDataList: [TxData] = try performRead { ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+            request.predicate = NSPredicate(format: "pTitle LIKE[cd] %@", "*\(payeePattern)*")
+            request.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
+
+            let transactions = try ctx.fetch(request)
+            return transactions.map { tx in
+                let lineItems = Self.relatedSet(tx, "lineItems")
+                var hasCat = false
+                var oldCatName: String?
+                for li in lineItems {
+                    guard let account = Self.relatedObject(li, "pAccount") else { continue }
+                    let acClass = Self.intValue(account, "pAccountClass")
+                    if acClass == AccountClass.income || acClass == AccountClass.expense {
+                        hasCat = true
+                        oldCatName = Self.stringValue(account, "pName")
+                    }
+                }
+                return TxData(
+                    id: Self.extractPK(from: tx.objectID),
+                    title: Self.stringValue(tx, "pTitle"),
+                    hasCat: hasCat,
+                    oldCatName: oldCatName
+                )
+            }
+        }
+
         var results: [RecategorizationResultDTO] = []
 
-        for tx in transactions {
-            let txId = Self.extractPK(from: tx.objectID)
-            let title = Self.stringValue(tx, "pTitle")
-
+        for txData in txDataList {
             // Check if already categorized
-            let lineItems = Self.relatedSet(tx, "lineItems")
-            var hasCat = false
-            var oldCatName: String?
-            for li in lineItems {
-                guard let account = Self.relatedObject(li, "pAccount") else { continue }
-                let acClass = Self.intValue(account, "pAccountClass")
-                if acClass == AccountClass.income || acClass == AccountClass.expense {
-                    hasCat = true
-                    oldCatName = Self.stringValue(account, "pName")
-                }
-            }
-
-            if uncategorizedOnly && hasCat { continue }
+            if uncategorizedOnly && txData.hasCat { continue }
 
             if dryRun {
                 let catName = try categoryRepo.get(categoryId: categoryId)?.name ?? "Unknown"
                 results.append(RecategorizationResultDTO(
-                    transactionId: txId,
-                    title: title,
-                    oldCategoryName: oldCatName,
+                    transactionId: txData.id,
+                    title: txData.title,
+                    oldCategoryName: txData.oldCatName,
                     newCategoryName: catName
                 ))
             } else {
-                if let result = try recategorize(transactionId: txId, categoryId: categoryId) {
+                if let result = try recategorize(transactionId: txData.id, categoryId: categoryId) {
                     results.append(result)
                 }
             }
@@ -482,7 +516,9 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
 
     /// Helper to get transaction title by ID (for recategorization results)
     private func get(transactionId: Int) throws -> (title: String, Void)? {
-        guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId) else { return nil }
-        return (title: Self.stringValue(tx, "pTitle"), ())
+        try performRead { [self] ctx in
+            guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else { return nil }
+            return (title: Self.stringValue(tx, "pTitle"), ())
+        }
     }
 }

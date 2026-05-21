@@ -6,7 +6,8 @@ import Foundation
 /// Repository for line item operations using Core Data
 public final class LineItemRepository: BaseRepository, @unchecked Sendable {
 
-    /// Get line items for a transaction (by managed object)
+    /// Get line items for a transaction (by managed object).
+    /// Must be called from within a performRead or performWrite block.
     public func getForTransaction(_ transaction: NSManagedObject) -> [LineItemDTO] {
         let lineItems = Self.relatedSet(transaction, "lineItems")
 
@@ -17,18 +18,22 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
 
     /// Get line items for a transaction by primary key
     public func getForTransactionPK(_ transactionPK: Int) throws -> [LineItemDTO] {
-        guard let txObject = try fetchByPK(entityName: "Transaction", pk: transactionPK) else {
-            return []
+        try performRead { [self] ctx in
+            guard let txObject = try fetchByPK(entityName: "Transaction", pk: transactionPK, in: ctx) else {
+                return []
+            }
+            return self.getForTransaction(txObject)
         }
-        return getForTransaction(txObject)
     }
 
     /// Get a single line item by primary key
     public func get(lineItemId: Int) throws -> LineItemDTO? {
-        guard let object = try fetchByPK(entityName: "LineItem", pk: lineItemId) else {
-            return nil
+        try performRead { [self] ctx in
+            guard let object = try fetchByPK(entityName: "LineItem", pk: lineItemId, in: ctx) else {
+                return nil
+            }
+            return self.mapToDTO(object)
         }
-        return mapToDTO(object)
     }
 
     // MARK: - Write Operations

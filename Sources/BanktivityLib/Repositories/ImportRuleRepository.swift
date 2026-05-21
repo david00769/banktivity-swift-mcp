@@ -8,19 +8,23 @@ public final class ImportRuleRepository: BaseRepository, @unchecked Sendable {
 
     /// List all import rules
     public func list() throws -> [ImportRuleDTO] {
-        // Import rules are TemplateSelector entities with a specific Z_ENT
-        let request = NSFetchRequest<NSManagedObject>(entityName: "ImportSourceTemplateSelector")
-        request.sortDescriptors = [NSSortDescriptor(key: "pDetailsExpression", ascending: true)]
-        let results = try fetch(request)
-        return try results.compactMap { try mapToDTO($0) }
+        try performRead { [self] ctx in
+            // Import rules are TemplateSelector entities with a specific Z_ENT
+            let request = NSFetchRequest<NSManagedObject>(entityName: "ImportSourceTemplateSelector")
+            request.sortDescriptors = [NSSortDescriptor(key: "pDetailsExpression", ascending: true)]
+            let results = try ctx.fetch(request)
+            return try results.compactMap { try self.mapToDTO($0) }
+        }
     }
 
     /// Get a rule by PK
     public func get(ruleId: Int) throws -> ImportRuleDTO? {
-        guard let object = try fetchByPK(entityName: "ImportSourceTemplateSelector", pk: ruleId) else {
-            return nil
+        try performRead { [self] ctx in
+            guard let object = try fetchByPK(entityName: "ImportSourceTemplateSelector", pk: ruleId, in: ctx) else {
+                return nil
+            }
+            return try self.mapToDTO(object)
         }
-        return try mapToDTO(object)
     }
 
     /// Match import rules against a description

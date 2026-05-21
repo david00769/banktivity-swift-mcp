@@ -22,73 +22,79 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
         limit: Int? = nil,
         offset: Int? = nil
     ) throws -> [TransactionDTO] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+        try performRead { [self] ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
 
-        var predicates: [NSPredicate] = []
+            var predicates: [NSPredicate] = []
 
-        if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
-            predicates.append(NSPredicate(
-                format: "pDate >= %@", DateConversion.toDate(ts) as NSDate
-            ))
-        }
-
-        if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
-            predicates.append(NSPredicate(
-                format: "pDate <= %@", DateConversion.toDate(ts) as NSDate
-            ))
-        }
-
-        if let accountId = accountId {
-            // Filter transactions that have at least one line item in this account
-            if let account = try fetchByPK(entityName: "Account", pk: accountId) {
+            if let startDate = startDate, let ts = DateConversion.fromISO(startDate) {
                 predicates.append(NSPredicate(
-                    format: "ANY lineItems.pAccount == %@", account
+                    format: "pDate >= %@", DateConversion.toDate(ts) as NSDate
                 ))
             }
+
+            if let endDate = endDate, let ts = DateConversion.fromISO(endDate) {
+                predicates.append(NSPredicate(
+                    format: "pDate <= %@", DateConversion.toDate(ts) as NSDate
+                ))
+            }
+
+            if let accountId = accountId {
+                // Filter transactions that have at least one line item in this account
+                if let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) {
+                    predicates.append(NSPredicate(
+                        format: "ANY lineItems.pAccount == %@", account
+                    ))
+                }
+            }
+
+            if !predicates.isEmpty {
+                request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+            }
+
+            request.sortDescriptors = [
+                NSSortDescriptor(key: "pDate", ascending: false)
+            ]
+
+            if let limit = limit {
+                request.fetchLimit = limit
+            }
+
+            if let offset = offset {
+                request.fetchOffset = offset
+            }
+
+            let results = try ctx.fetch(request)
+            return results.map { self.mapToDTO($0) }
         }
-
-        if !predicates.isEmpty {
-            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-        }
-
-        request.sortDescriptors = [
-            NSSortDescriptor(key: "pDate", ascending: false)
-        ]
-
-        if let limit = limit {
-            request.fetchLimit = limit
-        }
-
-        if let offset = offset {
-            request.fetchOffset = offset
-        }
-
-        let results = try fetch(request)
-        return results.map { mapToDTO($0) }
     }
 
     /// Search transactions by title or note (case-insensitive LIKE)
     public func search(query: String, limit: Int = 50) throws -> [TransactionDTO] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
-        let pattern = "*\(query)*"
-        request.predicate = NSPredicate(
-            format: "pTitle LIKE[cd] %@ OR pNote LIKE[cd] %@", pattern, pattern
-        )
-        request.sortDescriptors = [
-            NSSortDescriptor(key: "pDate", ascending: false)
-        ]
-        request.fetchLimit = limit
+        try performRead { [self] ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+            let pattern = "*\(query)*"
+            request.predicate = NSPredicate(
+                format: "pTitle LIKE[cd] %@ OR pNote LIKE[cd] %@", pattern, pattern
+            )
+            request.sortDescriptors = [
+                NSSortDescriptor(key: "pDate", ascending: false)
+            ]
+            request.fetchLimit = limit
 
-        let results = try fetch(request)
-        return results.map { mapToDTO($0) }
+            let results = try ctx.fetch(request)
+            return results.map { self.mapToDTO($0) }
+        }
     }
 
     /// Get a single transaction by primary key
     public func get(transactionId: Int) throws -> TransactionDTO? {
-        guard let object = try fetchByPK(entityName: "Transaction", pk: transactionId) else {
-            return nil
+        try performRead { [self] ctx in
+            guard let object = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
+                return nil
+            }
+            return self.mapToDTO(object)
         }
-        return mapToDTO(object)
     }
 
     /// Get total transaction count
@@ -245,17 +251,21 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
 
     /// Update an existing transaction
     public func update(transactionId: Int, title: String? = nil, note: String? = nil, date: String? = nil, cleared: Bool? = nil, transactionType: String? = nil) throws -> TransactionDTO? {
-        nonisolated(unsafe) var dateChanged = false
-        nonisolated(unsafe) var txUUID: String?
-        nonisolated(unsafe) var newTxTypeBaseType: String?
-        nonisolated(unsafe) var newTxTypeUUID: String?
+        struct UpdateOutcome: Sendable {
+            let txUUID: String
+            let dateChanged: Bool
+            let newTxTypeBaseType: String?
+            let newTxTypeUUID: String?
+        }
 
-        try performWrite { [self] ctx in
+        let outcome: UpdateOutcome = try performWriteReturning { [self] ctx in
             guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
                 throw ToolError.notFound("Transaction not found: \(transactionId)")
             }
 
-            txUUID = Self.stringValue(tx, "pUniqueID")
+            var dateChanged = false
+            var newTxTypeBaseType: String?
+            var newTxTypeUUID: String?
 
             if let title = title { tx.setValue(title, forKey: "pTitle") }
             if let note = note { tx.setValue(note, forKey: "pNote") }
@@ -280,10 +290,17 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                 newTxTypeUUID = Self.stringValue(txType, "pUniqueID")
             }
             Self.setNow(tx, "pModificationDate")
+
+            return UpdateOutcome(
+                txUUID: Self.stringValue(tx, "pUniqueID"),
+                dateChanged: dateChanged,
+                newTxTypeBaseType: newTxTypeBaseType,
+                newTxTypeUUID: newTxTypeUUID
+            )
         }
 
         // If date changed, recalculate running balances for affected accounts
-        if dateChanged {
+        if outcome.dateChanged {
             if let lineItems = try? lineItemRepo.getForTransactionPK(transactionId) {
                 let accountIds = Set(lineItems.map(\.accountId))
                 for accountId in accountIds {
@@ -293,13 +310,13 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
         }
 
         // Patch sync blob (non-fatal)
-        if let updater = syncBlobUpdater, let uuid = txUUID {
-            updater.updateTransactionBlob(transactionUUID: uuid) { xml in
+        if let updater = syncBlobUpdater {
+            updater.updateTransactionBlob(transactionUUID: outcome.txUUID) { xml in
                 var result = xml
                 if let t = title { result = updater.patchTransactionTitle(xml: result, title: t) }
                 if let n = note { result = updater.patchTransactionNote(xml: result, note: n) }
                 if let d = date { result = updater.patchTransactionDate(xml: result, date: d + "T00:00:00+0000") }
-                if let bt = newTxTypeBaseType, let tu = newTxTypeUUID {
+                if let bt = outcome.newTxTypeBaseType, let tu = outcome.newTxTypeUUID {
                     result = updater.patchTransactionType(xml: result, baseType: bt, typeUUID: tu)
                 }
                 return result
@@ -311,10 +328,10 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
 
     /// Delete a transaction and its line items
     public func delete(transactionId: Int) throws -> Bool {
-        // Get affected account IDs and transaction UUID before deletion
-        var txUUID: String?
-        if let tx = try fetchByPK(entityName: "Transaction", pk: transactionId) {
-            txUUID = Self.stringValue(tx, "pUniqueID")
+        // Get UUID and affected account IDs on the context's thread before deletion
+        let txUUID: String? = try performRead { [self] ctx in
+            guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else { return nil }
+            return Self.stringValue(tx, "pUniqueID")
         }
 
         let lineItems = try lineItemRepo.getForTransactionPK(transactionId)

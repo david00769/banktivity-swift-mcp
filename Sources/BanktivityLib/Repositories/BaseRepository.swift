@@ -16,44 +16,6 @@ open class BaseRepository: @unchecked Sendable {
         container.viewContext
     }
 
-    /// Perform a fetch request and return results
-    public func fetch<T: NSFetchRequestResult>(_ request: NSFetchRequest<T>) throws -> [T] {
-        try context.fetch(request)
-    }
-
-    /// Fetch a single object by entity name and primary key (Z_PK).
-    /// Handles entity inheritance by trying the base entity and all subentities.
-    /// Uses fetch requests to verify entity type, since existingObject(with:) can
-    /// return objects with wrong entity types for sibling entities in inheritance.
-    public func fetchByPK(entityName: String, pk: Int) throws -> NSManagedObject? {
-        let coordinator = container.persistentStoreCoordinator
-        guard let store = coordinator.persistentStores.first,
-              let entity = container.managedObjectModel.entitiesByName[entityName]
-        else {
-            return nil
-        }
-
-        var entityNames = [entity.name!]
-        func collectSubentities(_ e: NSEntityDescription) {
-            for sub in e.subentities {
-                if let name = sub.name { entityNames.append(name) }
-                collectSubentities(sub)
-            }
-        }
-        collectSubentities(entity)
-
-        for name in entityNames {
-            let uri = objectURI(store: store, entityName: name, pk: pk)
-            guard let objectID = coordinator.managedObjectID(forURIRepresentation: uri) else { continue }
-            let request = NSFetchRequest<NSManagedObject>(entityName: name)
-            request.predicate = NSPredicate(format: "SELF == %@", objectID)
-            request.fetchLimit = 1
-            if let obj = try? context.fetch(request).first { return obj }
-        }
-
-        return nil
-    }
-
     /// Construct the Core Data object URI for a given store, entity, and PK.
     /// Format: x-coredata://<storeUUID>/<entityName>/p<pk>
     public func objectURI(store: NSPersistentStore, entityName: String, pk: Int) -> URL {
@@ -66,9 +28,19 @@ open class BaseRepository: @unchecked Sendable {
 
     /// Count entities matching a predicate
     public func count(entityName: String, predicate: NSPredicate? = nil) throws -> Int {
-        let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
-        request.predicate = predicate
-        return try context.count(for: request)
+        nonisolated(unsafe) let pred = predicate
+        return try performRead { ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
+            request.predicate = pred
+            return try ctx.count(for: request)
+        }
+    }
+
+    /// Perform a read on the view context's thread, returning a Sendable value.
+    /// Use this for all reads to avoid Core Data threading violations when called
+    /// from Swift concurrency cooperative threads.
+    public func performRead<T: Sendable>(_ block: @escaping @Sendable (NSManagedObjectContext) throws -> T) throws -> T {
+        try perform(on: context, save: false, block)
     }
 
     /// Save the context
@@ -78,47 +50,43 @@ open class BaseRepository: @unchecked Sendable {
         }
     }
 
-    /// Perform work on a background context and save
+    /// Perform work on a background context and save.
+    ///
+    /// The viewContext is configured with `automaticallyMergesChangesFromParent = true`,
+    /// but the merge happens asynchronously on the main run loop — which doesn't run
+    /// in this CLI/MCP-server process. Subsequent reads through `performRead` therefore
+    /// re-fetch from the persistent store rather than relying on cached objects in the
+    /// viewContext, which is why every read path here goes through `fetchByPK` or a
+    /// fresh `NSFetchRequest`. Don't cache `NSManagedObject` instances across calls.
     public func performWrite(_ block: @escaping @Sendable (NSManagedObjectContext) throws -> Void) throws {
-        let bgContext = container.newBackgroundContext()
-        nonisolated(unsafe) var writeError: Error?
-        bgContext.performAndWait {
-            do {
-                try block(bgContext)
-                if bgContext.hasChanges {
-                    try bgContext.save()
-                }
-            } catch {
-                writeError = error
-            }
-        }
-        if let error = writeError {
-            throw error
+        _ = try perform(on: container.newBackgroundContext(), save: true) { ctx in
+            try block(ctx)
         }
     }
 
-    /// Perform a write that returns a value
+    /// Perform a write that returns a value. See `performWrite` for context lifecycle notes.
     public func performWriteReturning<T: Sendable>(_ block: @escaping @Sendable (NSManagedObjectContext) throws -> T) throws -> T {
-        let bgContext = container.newBackgroundContext()
-        nonisolated(unsafe) var result: T?
-        nonisolated(unsafe) var writeError: Error?
-        bgContext.performAndWait {
-            do {
-                result = try block(bgContext)
-                if bgContext.hasChanges {
-                    try bgContext.save()
+        try perform(on: container.newBackgroundContext(), save: true, block)
+    }
+
+    /// Run `block` on `ctx`'s queue via performAndWait, optionally saving on success,
+    /// and propagate the result or error back to the caller's thread.
+    private func perform<T: Sendable>(
+        on ctx: NSManagedObjectContext,
+        save: Bool,
+        _ block: @escaping @Sendable (NSManagedObjectContext) throws -> T
+    ) throws -> T {
+        nonisolated(unsafe) var outcome: Result<T, Error>!
+        ctx.performAndWait {
+            outcome = Result {
+                let value = try block(ctx)
+                if save && ctx.hasChanges {
+                    try ctx.save()
                 }
-            } catch {
-                writeError = error
+                return value
             }
         }
-        if let error = writeError {
-            throw error
-        }
-        guard let value = result else {
-            throw RepositoryError.unexpectedNilResult
-        }
-        return value
+        return try outcome.get()
     }
 
     /// Create a new managed object in the given context
