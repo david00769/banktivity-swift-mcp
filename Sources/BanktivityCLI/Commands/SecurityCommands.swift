@@ -7,7 +7,7 @@ import Foundation
 struct Securities: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Security and price history operations",
-        subcommands: [List.self, Create.self, Prices.self, ImportPrices.self, DeletePrices.self, FixPrices.self, Holdings.self, Trades.self, Income.self, Adjust.self, UpdateTrade.self]
+        subcommands: [List.self, Create.self, Prices.self, ImportPrices.self, DeletePrices.self, FixPrices.self, Holdings.self, Trades.self, Income.self, CreateTrade.self, Adjust.self, UpdateTrade.self]
     )
 
     struct List: AsyncParsableCommand {
@@ -283,6 +283,76 @@ struct Securities: AsyncParsableCommand {
                 startDate: startDate, endDate: endDate
             )
             try outputJSON(results, format: parent.format)
+        }
+    }
+
+    struct CreateTrade: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "create-trade",
+            abstract: "Create a security buy/sell transaction with cash and balancing line items"
+        )
+
+        @OptionGroup var parent: GlobalOptions
+
+        @Option(name: .long, help: "Investment account ID")
+        var accountId: Int
+
+        @Option(name: .long, help: "Security ticker symbol")
+        var symbol: String?
+
+        @Option(name: .long, help: "Security ID (alternative to --symbol)")
+        var id: Int?
+
+        @Option(name: .long, parsing: .unconditional, help: "Number of shares. Negative creates a sell; positive creates a buy")
+        var shares: Double
+
+        @Option(name: .long, help: "Price per share")
+        var pricePerShare: Double
+
+        @Option(name: .long, parsing: .unconditional, help: "Security trade amount/cost")
+        var amount: Double
+
+        @Option(name: .long, help: "Commission or fee amount")
+        var commission: Double = 0
+
+        @Option(name: .long, parsing: .unconditional, help: "Investment account cash line amount. Positive for sell inflow, negative for buy outflow")
+        var cashLineAmount: Double
+
+        @Option(name: .long, help: "Date of trade (YYYY-MM-DD)")
+        var date: String
+
+        @Option(name: .long, help: "Transaction title")
+        var title: String?
+
+        @Option(name: .long, help: "Cash line memo")
+        var memo: String?
+
+        @Option(name: .long, help: "Income/expense category ID for the balancing line. Defaults to an unknown balancing line")
+        var offsetCategoryId: Int?
+
+        func run() async throws {
+            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
+            let container = try BanktivityCLI.createContainer(vaultPath: path)
+            let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
+            try await guardWrite(writeGuard)
+
+            let syncBlobUpdater = SyncBlobUpdater(container: container)
+            let securities = SecurityRepository(container: container, syncBlobUpdater: syncBlobUpdater)
+            let result = try securities.createSecurityTrade(
+                accountId: accountId,
+                symbol: symbol,
+                id: id,
+                shares: shares,
+                pricePerShare: pricePerShare,
+                amount: amount,
+                commission: commission,
+                cashLineItemAmount: cashLineAmount,
+                date: date,
+                title: title,
+                memo: memo,
+                offsetCategoryId: offsetCategoryId
+            )
+            try outputJSON(result, format: parent.format)
         }
     }
 

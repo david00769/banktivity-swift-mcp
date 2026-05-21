@@ -242,6 +242,68 @@ func registerSecurityTools(
         return try ToolHelpers.jsonResponse(result)
     }
 
+    // create_security_trade
+    registry.register(
+        name: "create_security_trade",
+        description: "Create a security buy/sell transaction with an investment-account cash line and a balancing unknown/category line. Positive shares create a buy; negative shares create a sell.",
+        inputSchema: ToolHelpers.schema(
+            properties: [
+                "account_id": ToolHelpers.property(type: "number", description: "Investment account ID"),
+                "symbol": ToolHelpers.property(type: "string", description: "Security ticker symbol"),
+                "id": ToolHelpers.property(type: "number", description: "Security ID (alternative to symbol)"),
+                "shares": ToolHelpers.property(type: "number", description: "Number of shares. Negative creates a sell; positive creates a buy"),
+                "price_per_share": ToolHelpers.property(type: "number", description: "Price per share"),
+                "amount": ToolHelpers.property(type: "number", description: "Security trade amount/cost"),
+                "commission": ToolHelpers.property(type: "number", description: "Commission or fee amount"),
+                "cash_line_amount": ToolHelpers.property(type: "number", description: "Investment account cash line amount. Positive for sell inflow, negative for buy outflow"),
+                "date": ToolHelpers.property(type: "string", description: "Trade date in YYYY-MM-DD format"),
+                "title": ToolHelpers.property(type: "string", description: "Transaction title"),
+                "memo": ToolHelpers.property(type: "string", description: "Cash line memo"),
+                "offset_category_id": ToolHelpers.property(type: "number", description: "Income/expense category ID for the balancing line. Omit to create an unknown balancing line"),
+            ],
+            required: ["account_id", "shares", "price_per_share", "amount", "cash_line_amount", "date"]
+        )
+    ) { arguments in
+        if let msg = await writeGuard.guardWriteAccess() {
+            return ToolHelpers.errorResponse(msg)
+        }
+
+        guard let accountId = ToolHelpers.getInt(arguments, key: "account_id") else {
+            return ToolHelpers.errorResponse("account_id is required")
+        }
+        guard let shares = ToolHelpers.getDouble(arguments, key: "shares") else {
+            return ToolHelpers.errorResponse("shares is required")
+        }
+        guard let pricePerShare = ToolHelpers.getDouble(arguments, key: "price_per_share") else {
+            return ToolHelpers.errorResponse("price_per_share is required")
+        }
+        guard let amount = ToolHelpers.getDouble(arguments, key: "amount") else {
+            return ToolHelpers.errorResponse("amount is required")
+        }
+        guard let cashLineAmount = ToolHelpers.getDouble(arguments, key: "cash_line_amount") else {
+            return ToolHelpers.errorResponse("cash_line_amount is required")
+        }
+        guard let date = ToolHelpers.getString(arguments, key: "date") else {
+            return ToolHelpers.errorResponse("date is required")
+        }
+
+        let result = try securities.createSecurityTrade(
+            accountId: accountId,
+            symbol: ToolHelpers.getString(arguments, key: "symbol"),
+            id: ToolHelpers.getInt(arguments, key: "id"),
+            shares: shares,
+            pricePerShare: pricePerShare,
+            amount: amount,
+            commission: ToolHelpers.getDouble(arguments, key: "commission") ?? 0,
+            cashLineItemAmount: cashLineAmount,
+            date: date,
+            title: ToolHelpers.getString(arguments, key: "title"),
+            memo: ToolHelpers.getString(arguments, key: "memo"),
+            offsetCategoryId: ToolHelpers.getInt(arguments, key: "offset_category_id")
+        )
+        return try ToolHelpers.jsonResponse(result)
+    }
+
     // get_security_income
     registry.register(
         name: "get_security_income",

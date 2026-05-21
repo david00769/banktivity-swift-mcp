@@ -202,11 +202,7 @@ public final class SyncBlobUpdater: @unchecked Sendable {
 
             if let sli = li.securityLineItem {
                 xml += "<record type=\"SecurityLineItem\" name=\"securityLineItem\">"
-                if sli.hasDistributionType {
-                    xml += "<field type=\"decimal\" name=\"commission\">\(formatDecimal(sli.commission))</field>"
-                } else {
-                    xml += "<field type=\"decimal\" name=\"commission\" null=\"null\"/>"
-                }
+                xml += "<field type=\"decimal\" name=\"commission\">\(formatDecimal(sli.commission))</field>"
                 xml += "<field type=\"decimal\" name=\"cost\">\(formatDecimal(sli.amount))</field>"
                 xml += "<field enum=\"IGGCSyncAccountingSecurityCostBasisMethod\" name=\"costBasisMethod\">unknown</field>"
                 if sli.hasDistributionType {
