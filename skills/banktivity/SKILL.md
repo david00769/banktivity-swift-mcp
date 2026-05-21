@@ -63,7 +63,7 @@ Always redirect stderr with `2>/dev/null` — CoreData prints harmless warnings 
 | `get_statement` | `--statement_id N` | Full details with reconciliation progress |
 | `create_statement` | `--account_id N --start_date --end_date --beginning_balance --ending_balance` | Validates balance continuity |
 | `delete_statement` | `--statement_id N` | Cascade-unreconciles line items |
-| `reconcile_line_items` | `--statement_id N --line_item_ids 1,2,3` | Sets pCleared=true; validates account/date |
+| `reconcile_line_items` | `--statement_id N --line_item_ids 1,2,3` | Assigns selected line items to a statement; rejects wrong-account or already-assigned rows |
 | `unreconcile_line_items` | `--statement_id N --line_item_ids 1,2,3` | Sets pCleared=false |
 | `get_unreconciled_line_items` | `--account_id N --start_date --end_date` | Unreconciled line items for date range |
 
