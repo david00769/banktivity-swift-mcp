@@ -169,9 +169,12 @@ struct TransactionForexTests {
             exchangeRate: 0.75
         )
 
-        let tx = try #require(try repos.transactions.fetchByPK(entityName: "Transaction", pk: original.id))
-        let currency = try #require(BaseRepository.relatedObject(tx, "pCurrency"))
-        #expect(BaseRepository.stringValue(currency, "pCode") == "AUD")
+        let currencyCode = try repos.transactions.performRead { ctx in
+            let tx = try #require(try repos.transactions.fetchByPK(entityName: "Transaction", pk: original.id, in: ctx))
+            let currency = try #require(BaseRepository.relatedObject(tx, "pCurrency"))
+            return BaseRepository.stringValue(currency, "pCode")
+        }
+        #expect(currencyCode == "AUD")
     }
 
     @Test("repairForexTransfer rejects mismatched target amount")
