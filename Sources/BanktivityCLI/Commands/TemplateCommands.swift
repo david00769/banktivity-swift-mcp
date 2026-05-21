@@ -53,7 +53,7 @@ struct Templates: AsyncParsableCommand {
         @Option(name: .long, help: "Template title (payee name)")
         var title: String
 
-        @Option(name: .long, help: "Default amount")
+        @Option(name: .long, parsing: .unconditional, help: "Default amount")
         var amount: Double
 
         @Option(name: .long, help: "Optional note")
@@ -91,7 +91,7 @@ struct Templates: AsyncParsableCommand {
         @Option(name: .long, help: "New title")
         var title: String?
 
-        @Option(name: .long, help: "New amount")
+        @Option(name: .long, parsing: .unconditional, help: "New amount")
         var amount: Double?
 
         @Option(name: .long, help: "New note")

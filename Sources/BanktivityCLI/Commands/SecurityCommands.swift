@@ -300,7 +300,7 @@ struct Securities: AsyncParsableCommand {
         @Option(name: .long, help: "Account ID")
         var accountId: Int
 
-        @Option(name: .long, help: "Number of shares to adjust (negative to reduce)")
+        @Option(name: .long, parsing: .unconditional, help: "Number of shares to adjust (negative to reduce)")
         var shares: Double
 
         @Option(name: .long, help: "Date of adjustment (YYYY-MM-DD)")
@@ -309,7 +309,7 @@ struct Securities: AsyncParsableCommand {
         @Option(name: .long, help: "Transaction title")
         var title: String?
 
-        @Option(name: .long, help: "Cash amount (negative for buy outflow)")
+        @Option(name: .long, parsing: .unconditional, help: "Cash amount (negative for buy outflow)")
         var amount: Double?
 
         func run() async throws {
@@ -339,13 +339,13 @@ struct Securities: AsyncParsableCommand {
         @Argument(help: "Transaction ID")
         var transactionId: Int
 
-        @Option(name: .long, help: "Number of shares")
+        @Option(name: .long, parsing: .unconditional, help: "Number of shares")
         var shares: Double?
 
         @Option(name: .long, help: "Price per share")
         var pricePerShare: Double?
 
-        @Option(name: .long, help: "Cash amount (negative for buy outflow)")
+        @Option(name: .long, parsing: .unconditional, help: "Cash amount (negative for buy outflow)")
         var amount: Double?
 
         @Option(name: .long, help: "Security ticker symbol")

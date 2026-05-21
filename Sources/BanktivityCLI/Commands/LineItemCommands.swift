@@ -45,7 +45,7 @@ struct LineItems: AsyncParsableCommand {
         @Option(name: .long, help: "Account name (alternative to --account-id)")
         var accountName: String?
 
-        @Option(name: .long, help: "Amount")
+        @Option(name: .long, parsing: .unconditional, help: "Amount")
         var amount: Double
 
         @Option(name: .long, help: "Optional memo")
@@ -85,7 +85,7 @@ struct LineItems: AsyncParsableCommand {
         @Option(name: .long, help: "New account name (alternative to --account-id)")
         var accountName: String?
 
-        @Option(name: .long, help: "New amount")
+        @Option(name: .long, parsing: .unconditional, help: "New amount")
         var amount: Double?
 
         @Option(name: .long, help: "New memo")
