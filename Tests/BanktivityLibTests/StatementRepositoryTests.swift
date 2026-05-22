@@ -230,6 +230,44 @@ struct StatementRepositoryTests {
         #expect(status.lastReconciledStatementEndDate == "2026-02-28")
     }
 
+    @Test("Statement get returns deterministic reconciled line item membership")
+    func getReturnsStatementLineItems() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let card = try createCreditCard(named: "Membership Card", using: repos.accounts)
+        let laterTransaction = try repos.transactions.create(
+            date: "2026-04-20",
+            title: "Later statement charge",
+            lineItems: [(accountId: card.id, amount: -20.0, memo: "later")]
+        )
+        let earlierTransaction = try repos.transactions.create(
+            date: "2026-04-05",
+            title: "Earlier statement charge",
+            lineItems: [(accountId: card.id, amount: -10.0, memo: "earlier")]
+        )
+        let laterLineItemId = try accountLineItemId(in: laterTransaction, accountId: card.id)
+        let earlierLineItemId = try accountLineItemId(in: earlierTransaction, accountId: card.id)
+
+        let statement = try repos.statements.create(
+            accountId: card.id,
+            startDate: "2026-04-01",
+            endDate: "2026-04-30",
+            beginningBalance: 0,
+            endingBalance: -30.0
+        )
+
+        _ = try repos.statements.reconcileLineItems(
+            statementId: statement.id,
+            lineItemIds: [laterLineItemId, earlierLineItemId]
+        )
+
+        let result = try #require(try repos.statements.get(statementId: statement.id))
+        #expect(result.reconciledLineItemCount == 2)
+        #expect(result.lineItems.map(\.id) == [earlierLineItemId, laterLineItemId])
+        #expect(result.lineItems.allSatisfy { $0.statementId == statement.id })
+    }
+
     @Test("Deleting a statement preserves line item cleared state")
     func deleteStatementPreservesLineItemClearedState() throws {
         let repos = try makeRepositories()

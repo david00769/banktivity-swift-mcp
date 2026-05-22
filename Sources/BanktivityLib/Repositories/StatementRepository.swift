@@ -471,6 +471,22 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             modifiedAt = nil
         }
 
+        let lineItemDTOs = lineItems
+            .sorted { lhs, rhs in
+                let lhsTransaction = Self.relatedObject(lhs, "pTransaction")
+                let rhsTransaction = Self.relatedObject(rhs, "pTransaction")
+                let lhsDate = lhsTransaction.flatMap { Self.dateValue($0, "pDate") } ?? 0
+                let rhsDate = rhsTransaction.flatMap { Self.dateValue($0, "pDate") } ?? 0
+                if lhsDate != rhsDate { return lhsDate < rhsDate }
+
+                let lhsTransactionId = lhsTransaction.map { Self.extractPK(from: $0.objectID) } ?? 0
+                let rhsTransactionId = rhsTransaction.map { Self.extractPK(from: $0.objectID) } ?? 0
+                if lhsTransactionId != rhsTransactionId { return lhsTransactionId < rhsTransactionId }
+
+                return Self.extractPK(from: lhs.objectID) < Self.extractPK(from: rhs.objectID)
+            }
+            .map { lineItemRepo.mapToDTO($0) }
+
         return StatementDTO(
             id: pk,
             accountId: accountId,
@@ -485,6 +501,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             reconciledBalance: reconciledBalance,
             difference: difference,
             isBalanced: abs(difference) < 0.005,
+            lineItems: lineItemDTOs,
             createdAt: createdAt,
             modifiedAt: modifiedAt
         )

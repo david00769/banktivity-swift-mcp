@@ -339,15 +339,17 @@ public struct StatementDTO: Codable, Sendable {
     public let reconciledBalance: Double
     public let difference: Double
     public let isBalanced: Bool
+    public let lineItems: [LineItemDTO]
     public let createdAt: String?
     public let modifiedAt: String?
 
-    public init(id: Int, accountId: Int, accountName: String, name: String?, note: String?, startDate: String, endDate: String, beginningBalance: Double, endingBalance: Double, reconciledLineItemCount: Int, reconciledBalance: Double, difference: Double, isBalanced: Bool, createdAt: String?, modifiedAt: String?) {
+    public init(id: Int, accountId: Int, accountName: String, name: String?, note: String?, startDate: String, endDate: String, beginningBalance: Double, endingBalance: Double, reconciledLineItemCount: Int, reconciledBalance: Double, difference: Double, isBalanced: Bool, lineItems: [LineItemDTO], createdAt: String?, modifiedAt: String?) {
         self.id = id; self.accountId = accountId; self.accountName = accountName
         self.name = name; self.note = note; self.startDate = startDate; self.endDate = endDate
         self.beginningBalance = beginningBalance; self.endingBalance = endingBalance
         self.reconciledLineItemCount = reconciledLineItemCount; self.reconciledBalance = reconciledBalance
         self.difference = difference; self.isBalanced = isBalanced
+        self.lineItems = lineItems
         self.createdAt = createdAt; self.modifiedAt = modifiedAt
     }
 }

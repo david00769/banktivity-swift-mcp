@@ -42,7 +42,7 @@ func registerStatementTools(
     // get_statement
     registry.register(
         name: "get_statement",
-        description: "Get a statement with reconciliation progress (reconciled balance, difference, isBalanced)",
+        description: "Get a statement with reconciliation progress and line item membership (reconciled balance, difference, isBalanced, lineItems)",
         inputSchema: ToolHelpers.schema(
             properties: [
                 "statement_id": ToolHelpers.property(type: "number", description: "The statement ID"),
