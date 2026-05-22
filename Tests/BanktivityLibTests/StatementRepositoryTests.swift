@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Steve Flinter. MIT License.
 
+import CoreData
 import Foundation
 import Testing
 @testable import BanktivityLib
@@ -62,6 +63,62 @@ struct StatementRepositoryTests {
 
         #expect(result.reconciledLineItemCount == 1)
         #expect(abs(result.reconciledBalance - -10.0) < 0.005)
+        #expect(result.isBalanced)
+    }
+
+    @Test("Explicit reconciliation accepts line items on visible statement end date")
+    func reconcileAllowsVisibleEndDateLineItems() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let card = try createCreditCard(named: "Visible End Date Card", using: repos.accounts)
+        let base = BaseRepository(container: repos.vault.container)
+        let lineItemId: Int = try base.performWriteReturning { ctx in
+            guard let accountObject = try base.fetchByPK(entityName: "Account", pk: card.id, in: ctx) else {
+                throw ToolError.notFound("Account not found: \(card.id)")
+            }
+
+            let transaction = BaseRepository.createObject(entityName: "Transaction", in: ctx)
+            transaction.setValue("End-date charge", forKey: "pTitle")
+            transaction.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            transaction.setValue(false, forKey: "pCleared")
+            transaction.setValue(false, forKey: "pVoid")
+            transaction.setValue(false, forKey: "pAdjustment")
+            transaction.setValue(BaseRepository.relatedObject(accountObject, "currency"), forKey: "pCurrency")
+            BaseRepository.setNow(transaction, "pCreationTime")
+            BaseRepository.setNow(transaction, "pModificationDate")
+            let endDateTs = try #require(DateConversion.fromISO("2026-04-28"))
+            transaction.setValue(DateConversion.toDate(endDateTs + 3600), forKey: "pDate")
+
+            let lineItem = BaseRepository.createObject(entityName: "LineItem", in: ctx)
+            lineItem.setValue(-25.0 as NSNumber, forKey: "pTransactionAmount")
+            lineItem.setValue(1.0 as NSNumber, forKey: "pExchangeRate")
+            lineItem.setValue(0.0 as NSNumber, forKey: "pRunningBalance")
+            lineItem.setValue(false, forKey: "pCleared")
+            lineItem.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            BaseRepository.setNow(lineItem, "pCreationTime")
+            lineItem.setValue(accountObject, forKey: "pAccount")
+            lineItem.setValue(transaction, forKey: "pTransaction")
+            try ctx.obtainPermanentIDs(for: [lineItem])
+            return BaseRepository.extractPK(from: lineItem.objectID)
+        }
+
+        let statement = try repos.statements.create(
+            accountId: card.id,
+            startDate: "2026-03-29",
+            endDate: "2026-04-28",
+            beginningBalance: 0,
+            endingBalance: -25.0,
+            name: "April statement"
+        )
+
+        let result = try repos.statements.reconcileLineItems(
+            statementId: statement.id,
+            lineItemIds: [lineItemId]
+        )
+
+        #expect(result.reconciledLineItemCount == 1)
+        #expect(abs(result.reconciledBalance - -25.0) < 0.005)
         #expect(result.isBalanced)
     }
 
