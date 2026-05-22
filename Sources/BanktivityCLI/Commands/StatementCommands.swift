@@ -59,7 +59,7 @@ struct Statements: AsyncParsableCommand {
     }
 
     struct Get: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Get a statement with reconciliation progress")
+        static let configuration = CommandConfiguration(abstract: "Get a statement with reconciliation progress and line item membership")
 
         @OptionGroup var parent: GlobalOptions
 
