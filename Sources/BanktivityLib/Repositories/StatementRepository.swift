@@ -434,11 +434,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
 
         let lineItems = Self.relatedSet(object, "pLineItems")
         let reconciledBalance = lineItems.reduce(0.0) { sum, li in
-            var amount = Self.doubleValue(li, "pTransactionAmount")
-            if let sli = Self.relatedObject(li, "pSecurityLineItem") {
-                amount += Self.doubleValue(sli, "pAmount")
-            }
-            return sum + amount
+            sum + Self.statementBalanceAmount(for: li)
         }
         let expectedChange = endingBalance - beginningBalance
         let difference = expectedChange - reconciledBalance
@@ -514,11 +510,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
 
         let lineItems = Self.relatedSet(object, "pLineItems")
         let reconciledBalance = lineItems.reduce(0.0) { sum, li in
-            var amount = Self.doubleValue(li, "pTransactionAmount")
-            if let sli = Self.relatedObject(li, "pSecurityLineItem") {
-                amount += Self.doubleValue(sli, "pAmount")
-            }
-            return sum + amount
+            sum + Self.statementBalanceAmount(for: li)
         }
         let expectedChange = endingBalance - beginningBalance
         let difference = expectedChange - reconciledBalance
@@ -547,5 +539,13 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             reconciledLineItemCount: lineItems.count,
             isBalanced: abs(difference) < 0.005
         )
+    }
+
+    private static func statementBalanceAmount(for lineItem: NSManagedObject) -> Double {
+        var amount = doubleValue(lineItem, "pTransactionAmount") * doubleValue(lineItem, "pExchangeRate")
+        if let securityLineItem = relatedObject(lineItem, "pSecurityLineItem") {
+            amount += doubleValue(securityLineItem, "pAmount")
+        }
+        return amount
     }
 }
