@@ -261,6 +261,53 @@ func registerSecurityTools(
         return try ToolHelpers.jsonResponse(result)
     }
 
+    // create_security_income
+    registry.register(
+        name: "create_security_income",
+        description: "Create a native investment income transaction for a security. Currently supports dividend income.",
+        inputSchema: ToolHelpers.schema(
+            properties: [
+                "account_id": ToolHelpers.property(type: "number", description: "Investment account ID"),
+                "symbol": ToolHelpers.property(type: "string", description: "Security ticker symbol"),
+                "id": ToolHelpers.property(type: "number", description: "Security ID (alternative to symbol)"),
+                "amount": ToolHelpers.property(type: "number", description: "Positive income amount"),
+                "date": ToolHelpers.property(type: "string", description: "Income date in YYYY-MM-DD format"),
+                "title": ToolHelpers.property(type: "string", description: "Transaction title"),
+                "memo": ToolHelpers.property(type: "string", description: "Cash line memo"),
+                "offset_category_id": ToolHelpers.property(type: "number", description: "Income/expense category ID for the balancing line. Omit to create an unknown balancing line"),
+                "income_type": ToolHelpers.property(type: "string", description: "Income type. Currently only dividend is supported"),
+            ],
+            required: ["account_id", "amount", "date"]
+        )
+    ) { arguments in
+        if let msg = await writeGuard.guardWriteAccess() {
+            return ToolHelpers.errorResponse(msg)
+        }
+
+        guard let accountId = ToolHelpers.getInt(arguments, key: "account_id") else {
+            return ToolHelpers.errorResponse("account_id is required")
+        }
+        guard let amount = ToolHelpers.getDouble(arguments, key: "amount") else {
+            return ToolHelpers.errorResponse("amount is required")
+        }
+        guard let date = ToolHelpers.getString(arguments, key: "date") else {
+            return ToolHelpers.errorResponse("date is required")
+        }
+
+        let result = try securities.createSecurityIncome(
+            accountId: accountId,
+            symbol: ToolHelpers.getString(arguments, key: "symbol"),
+            id: ToolHelpers.getInt(arguments, key: "id"),
+            amount: amount,
+            date: date,
+            title: ToolHelpers.getString(arguments, key: "title"),
+            memo: ToolHelpers.getString(arguments, key: "memo"),
+            offsetCategoryId: ToolHelpers.getInt(arguments, key: "offset_category_id"),
+            incomeType: ToolHelpers.getString(arguments, key: "income_type") ?? "dividend"
+        )
+        return try ToolHelpers.jsonResponse(result)
+    }
+
     // get_security_income
     registry.register(
         name: "get_security_income",

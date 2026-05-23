@@ -76,6 +76,7 @@ Always redirect stderr with `2>/dev/null` — CoreData prints harmless warnings 
 | `get_security_holdings` | `--symbol AAPL --account_id N` | Current positions with shares, cost basis, market value |
 | `get_security_trades` | `--symbol AAPL --account_id N --start_date --end_date --limit N` | Trade history (buys, sells, transfers) |
 | `get_security_income` | `--symbol AAPL --account_id N --start_date --end_date` | Dividends, interest, capital gains distributions |
+| `create_security_income` | `--account_id N --symbol AAPL --amount 12.34 --date YYYY-MM-DD --offset_category_id N` | Create native dividend income |
 | `create_share_adjustment` | `--account_id N --symbol SYM --shares=-10 --date YYYY-MM-DD` | Share adjustment (charges, splits); `--amount` for cash |
 | `import_security_prices` | `--file_path /path/to/csv --symbol AAPL` | Supports Yahoo Finance, OHLCV, or Date/Close CSV |
 | `delete_security_prices` | `--symbol AAPL --start_date --end_date` | Delete prices; date range optional |

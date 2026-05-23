@@ -846,6 +846,28 @@ Get investment income history (dividends, interest, capital gains distributions)
 }
 ```
 
+### create_security_income
+Create native investment income for a security. Currently supports dividend
+income and writes the security-income line item that `get_security_income`
+reads.
+
+```json
+{
+  "properties": {
+    "account_id": { "type": "number", "description": "Investment account ID" },
+    "symbol": { "type": "string", "description": "Security ticker symbol" },
+    "id": { "type": "number", "description": "Security ID (alternative to symbol)" },
+    "amount": { "type": "number", "description": "Positive income amount" },
+    "date": { "type": "string", "description": "Income date in YYYY-MM-DD format" },
+    "title": { "type": "string", "description": "Transaction title" },
+    "memo": { "type": "string", "description": "Cash line memo" },
+    "offset_category_id": { "type": "number", "description": "Income/expense category ID for the balancing line" },
+    "income_type": { "type": "string", "description": "Income type. Currently only dividend is supported" }
+  },
+  "required": ["account_id", "amount", "date"]
+}
+```
+
 ### create_share_adjustment
 Create a share adjustment transaction (e.g. for charges that cancel units, stock splits, or manual position corrections). Use negative shares to reduce a position.
 

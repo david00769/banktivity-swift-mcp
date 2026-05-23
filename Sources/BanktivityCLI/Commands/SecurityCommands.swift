@@ -7,7 +7,7 @@ import Foundation
 struct Securities: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Security and price history operations",
-        subcommands: [List.self, Create.self, Prices.self, ImportPrices.self, DeletePrices.self, FixPrices.self, Holdings.self, Trades.self, Income.self, CreateTrade.self, Adjust.self, UpdateTrade.self]
+        subcommands: [List.self, Create.self, Prices.self, ImportPrices.self, DeletePrices.self, FixPrices.self, Holdings.self, Trades.self, Income.self, CreateTrade.self, CreateIncome.self, Adjust.self, UpdateTrade.self]
     )
 
     struct List: AsyncParsableCommand {
@@ -351,6 +351,64 @@ struct Securities: AsyncParsableCommand {
                 title: title,
                 memo: memo,
                 offsetCategoryId: offsetCategoryId
+            )
+            try outputJSON(result, format: parent.format)
+        }
+    }
+
+    struct CreateIncome: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "create-income",
+            abstract: "Create a native investment income transaction for a security"
+        )
+
+        @OptionGroup var parent: GlobalOptions
+
+        @Option(name: .long, help: "Investment account ID")
+        var accountId: Int
+
+        @Option(name: .long, help: "Security ticker symbol")
+        var symbol: String?
+
+        @Option(name: .long, help: "Security ID (alternative to --symbol)")
+        var id: Int?
+
+        @Option(name: .long, parsing: .unconditional, help: "Positive income amount")
+        var amount: Double
+
+        @Option(name: .long, help: "Income date (YYYY-MM-DD)")
+        var date: String
+
+        @Option(name: .long, help: "Transaction title")
+        var title: String?
+
+        @Option(name: .long, help: "Cash line memo")
+        var memo: String?
+
+        @Option(name: .long, help: "Income/expense category ID for the balancing line. Defaults to an unknown balancing line")
+        var offsetCategoryId: Int?
+
+        @Option(name: .long, help: "Income type. Currently only dividend is supported")
+        var incomeType: String = "dividend"
+
+        func run() async throws {
+            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
+            let container = try BanktivityCLI.createContainer(vaultPath: path)
+            let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
+            try await guardWrite(writeGuard)
+
+            let syncBlobUpdater = SyncBlobUpdater(container: container)
+            let securities = SecurityRepository(container: container, syncBlobUpdater: syncBlobUpdater)
+            let result = try securities.createSecurityIncome(
+                accountId: accountId,
+                symbol: symbol,
+                id: id,
+                amount: amount,
+                date: date,
+                title: title,
+                memo: memo,
+                offsetCategoryId: offsetCategoryId,
+                incomeType: incomeType
             )
             try outputJSON(result, format: parent.format)
         }
