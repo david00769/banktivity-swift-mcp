@@ -36,15 +36,17 @@ public final class SyncBlobUpdater: @unchecked Sendable {
     public struct SyncSecurityLineItem: Sendable {
         public let amount: Double
         public let commission: Double
+        public let income: Double?
         public let pricePerShare: Double
         public let priceMultiplier: Double
         public let securityUUID: String
         public let shares: Double
         public let hasDistributionType: Bool
 
-        public init(amount: Double, commission: Double, pricePerShare: Double, priceMultiplier: Double, securityUUID: String, shares: Double, hasDistributionType: Bool) {
+        public init(amount: Double, commission: Double, pricePerShare: Double, priceMultiplier: Double, securityUUID: String, shares: Double, hasDistributionType: Bool, income: Double? = nil) {
             self.amount = amount
             self.commission = commission
+            self.income = income
             self.pricePerShare = pricePerShare
             self.priceMultiplier = priceMultiplier
             self.securityUUID = securityUUID
@@ -208,7 +210,11 @@ public final class SyncBlobUpdater: @unchecked Sendable {
                 if sli.hasDistributionType {
                     xml += "<field enum=\"IGGCSyncAccountingSecurityLineItemDistrbutionType\" name=\"distributionType\">deposit</field>"
                 }
-                xml += "<field type=\"decimal\" name=\"income\" null=\"null\"/>"
+                if let income = sli.income {
+                    xml += "<field type=\"decimal\" name=\"income\">\(formatDecimal(income))</field>"
+                } else {
+                    xml += "<field type=\"decimal\" name=\"income\" null=\"null\"/>"
+                }
                 xml += "<collection type=\"array\" name=\"openingLots\" null=\"null\"/>"
                 xml += "<field type=\"date\" name=\"overrideDate\" null=\"null\"/>"
                 xml += "<field type=\"decimal\" name=\"pricePerShare\">\(formatDecimal(sli.pricePerShare))</field>"

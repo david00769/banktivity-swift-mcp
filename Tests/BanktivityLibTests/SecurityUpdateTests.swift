@@ -189,4 +189,96 @@ struct SecurityUpdateTests {
         #expect(xml.contains("<field type=\"decimal\" name=\"accountAmount\">-596.06</field>"))
         #expect(xml.contains("Account:\(BaseRepository.stringValue(category, "pUniqueID"))"))
     }
+
+    @Test("createSecurityIncome creates native dividend income")
+    func createSecurityIncomeDividend() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        _ = try TestVaultHelper.seedSyncedDocument(in: vault.container)
+        let account = try TestVaultHelper.seedInvestmentAccount(in: vault.container, currency: eur)
+        let security = try TestVaultHelper.seedSecurity(in: vault.container, currency: eur)
+
+        let ctx = vault.container.viewContext
+        let dividendType = NSEntityDescription.insertNewObject(forEntityName: "TransactionType", into: ctx)
+        dividendType.setValue(Int16(301), forKey: "pBaseType")
+        dividendType.setValue("Dividend", forKey: "pName")
+        dividendType.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+        dividendType.setValue(Date(), forKey: "pCreationTime")
+        dividendType.setValue(Date(), forKey: "pModificationDate")
+
+        let category = NSEntityDescription.insertNewObject(forEntityName: "PrimaryAccount", into: ctx)
+        category.setValue("Dividend Income", forKey: "pName")
+        category.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+        category.setValue(Int16(AccountClass.income), forKey: "pAccountClass")
+        category.setValue(false, forKey: "pHidden")
+        category.setValue(eur, forKey: "currency")
+        BaseRepository.setNow(category, "pCreationTime")
+        BaseRepository.setNow(category, "pModificationDate")
+        try ctx.save()
+
+        let updater = SyncBlobUpdater(container: vault.container)
+        let repo = SecurityRepository(container: vault.container, syncBlobUpdater: updater)
+        let accountPK = BaseRepository.extractPK(from: account.objectID)
+        let categoryPK = BaseRepository.extractPK(from: category.objectID)
+        let result = try repo.createSecurityIncome(
+            accountId: accountPK,
+            symbol: BaseRepository.stringValue(security, "pSymbol"),
+            amount: 93.07,
+            date: "2026-01-21",
+            title: "Qualified Dividend TEST",
+            memo: "provider dividend",
+            offsetCategoryId: categoryPK
+        )
+
+        #expect(result.type == "Dividend")
+        #expect(result.amount == 93.07)
+        #expect(result.symbol == BaseRepository.stringValue(security, "pSymbol"))
+
+        let lineItems = try LineItemRepository(container: vault.container).getForTransactionPK(result.id)
+        #expect(lineItems.count == 2)
+        let accountLine = try #require(lineItems.first { $0.accountId == accountPK })
+        let categoryLine = try #require(lineItems.first { $0.accountId == categoryPK })
+        #expect(abs(accountLine.amount - 93.07) < 0.000001)
+        #expect(abs(categoryLine.amount + 93.07) < 0.000001)
+        #expect(accountLine.memo == "provider dividend")
+
+        let incomeRows = try repo.getIncome(
+            accountId: accountPK,
+            symbol: BaseRepository.stringValue(security, "pSymbol"),
+            startDate: "2026-01-01",
+            endDate: "2026-01-31"
+        )
+        let incomeRow = try #require(incomeRows.first)
+        #expect(incomeRows.count == 1)
+        #expect(incomeRow.id == result.id)
+        #expect(incomeRow.type == "Dividend")
+        #expect(abs(incomeRow.amount - 93.07) < 0.000001)
+
+        let sliRequest = NSFetchRequest<NSManagedObject>(entityName: "SecurityLineItem")
+        let createdSLI = try #require(try ctx.fetch(sliRequest).first)
+        #expect(abs(BaseRepository.doubleValue(createdSLI, "pIncome") - 93.07) < 0.000001)
+        #expect(BaseRepository.doubleValue(createdSLI, "pShares") == 0.0)
+        #expect(BaseRepository.doubleValue(createdSLI, "pAmount") == 0.0)
+
+        let txRequest = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+        txRequest.predicate = NSPredicate(format: "pTitle == %@", "Qualified Dividend TEST")
+        let tx = try #require(try ctx.fetch(txRequest).first)
+        let txUUID = BaseRepository.stringValue(tx, "pUniqueID")
+        let syncRequest = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
+        syncRequest.predicate = NSPredicate(format: "pLocalID == %@", txUUID)
+        let record = try #require(try ctx.fetch(syncRequest).first)
+        let blobData = try #require(record.value(forKey: "pRemoteEntityData") as? Data)
+        let decompressed = try #require(SyncBlobUpdater.decompressGzip(blobData))
+        let xml = try #require(String(data: decompressed, encoding: .utf8))
+
+        #expect(xml.contains("<field enum=\"IGGCSyncAccountingTransactionBaseType\" name=\"baseType\">dividend</field>"))
+        #expect(xml.contains("<field enum=\"IGGCSyncAccountingSecurityLineItemDistrbutionType\" name=\"distributionType\">deposit</field>"))
+        #expect(xml.contains("<field type=\"decimal\" name=\"income\">93.07</field>"))
+        #expect(xml.contains("<field type=\"decimal\" name=\"accountAmount\">93.07</field>"))
+        #expect(xml.contains("<field type=\"decimal\" name=\"accountAmount\">-93.07</field>"))
+        #expect(xml.contains("Account:\(BaseRepository.stringValue(category, "pUniqueID"))"))
+    }
+
 }
