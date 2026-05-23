@@ -30,6 +30,10 @@ struct StatementRepositoryTests {
         try accounts.create(name: name, accountClass: AccountClass.creditCard, currencyCode: "USD")
     }
 
+    private func createCheckingAccount(named name: String, using accounts: AccountRepository) throws -> AccountDTO {
+        try accounts.create(name: name, accountClass: AccountClass.checking, currencyCode: "EUR")
+    }
+
     private func accountLineItemId(in transaction: TransactionDTO, accountId: Int) throws -> Int {
         try #require(transaction.lineItems.first { $0.accountId == accountId }?.id)
     }
@@ -120,6 +124,68 @@ struct StatementRepositoryTests {
         #expect(result.reconciledLineItemCount == 1)
         #expect(abs(result.reconciledBalance - -25.0) < 0.005)
         #expect(result.isBalanced)
+    }
+
+    @Test("Statement balances use account-currency line item amounts")
+    func statementBalancesUseAccountCurrencyLineItemAmounts() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let checking = try createCheckingAccount(named: "Multi Currency Checking", using: repos.accounts)
+        let base = BaseRepository(container: repos.vault.container)
+        let lineItemId: Int = try base.performWriteReturning { ctx in
+            guard let accountObject = try base.fetchByPK(entityName: "Account", pk: checking.id, in: ctx) else {
+                throw ToolError.notFound("Account not found: \(checking.id)")
+            }
+
+            let transaction = BaseRepository.createObject(entityName: "Transaction", in: ctx)
+            transaction.setValue("Converted deposit", forKey: "pTitle")
+            transaction.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            transaction.setValue(false, forKey: "pCleared")
+            transaction.setValue(false, forKey: "pVoid")
+            transaction.setValue(false, forKey: "pAdjustment")
+            transaction.setValue(BaseRepository.relatedObject(accountObject, "currency"), forKey: "pCurrency")
+            BaseRepository.setNow(transaction, "pCreationTime")
+            BaseRepository.setNow(transaction, "pModificationDate")
+            let transactionDateTs = try #require(DateConversion.fromISO("2026-04-10"))
+            transaction.setValue(DateConversion.toDate(transactionDateTs), forKey: "pDate")
+
+            let lineItem = BaseRepository.createObject(entityName: "LineItem", in: ctx)
+            lineItem.setValue(100.0 as NSNumber, forKey: "pTransactionAmount")
+            lineItem.setValue(1.5 as NSNumber, forKey: "pExchangeRate")
+            lineItem.setValue(150.0 as NSNumber, forKey: "pRunningBalance")
+            lineItem.setValue(false, forKey: "pCleared")
+            lineItem.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            BaseRepository.setNow(lineItem, "pCreationTime")
+            lineItem.setValue(accountObject, forKey: "pAccount")
+            lineItem.setValue(transaction, forKey: "pTransaction")
+            try ctx.obtainPermanentIDs(for: [lineItem])
+            return BaseRepository.extractPK(from: lineItem.objectID)
+        }
+
+        let statement = try repos.statements.create(
+            accountId: checking.id,
+            startDate: "2026-04-01",
+            endDate: "2026-04-30",
+            beginningBalance: 0,
+            endingBalance: 150.0,
+            name: "April checking statement"
+        )
+
+        _ = try repos.statements.reconcileLineItems(
+            statementId: statement.id,
+            lineItemIds: [lineItemId]
+        )
+
+        let result = try #require(try repos.statements.get(statementId: statement.id))
+        let lineItem = try #require(result.lineItems.first)
+        #expect(abs(lineItem.amount - 100.0) < 0.005)
+        #expect(abs(result.reconciledBalance - 150.0) < 0.005)
+        #expect(abs(result.difference) < 0.005)
+        #expect(result.isBalanced)
+
+        let summary = try #require(try repos.statements.list(accountId: checking.id).first { $0.id == statement.id })
+        #expect(summary.isBalanced)
     }
 
     @Test("Explicit reconciliation still rejects line items from another account")
