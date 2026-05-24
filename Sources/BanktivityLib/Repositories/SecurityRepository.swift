@@ -1631,6 +1631,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         case 201: return "Sell to Close"
         case 210: return "Move Shares In"
         case 211: return "Move Shares Out"
+        case 212: return "Transfer Shares"
         case 300: return "Income"
         case 301: return "Dividend"
         case 302: return "Interest"
