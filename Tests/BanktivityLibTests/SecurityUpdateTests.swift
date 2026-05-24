@@ -7,6 +7,68 @@ import Testing
 
 @Suite("Security updates", .serialized)
 struct SecurityUpdateTests {
+
+    @Test("getTrades maps transfer shares transaction type")
+    func getTradesMapsTransferSharesTransactionType() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        let account = try TestVaultHelper.seedInvestmentAccount(in: vault.container, currency: eur)
+        let security = try TestVaultHelper.seedSecurity(in: vault.container, currency: eur)
+
+        let ctx = vault.container.viewContext
+        let transferSharesType = NSEntityDescription.insertNewObject(forEntityName: "TransactionType", into: ctx)
+        transferSharesType.setValue(Int16(212), forKey: "pBaseType")
+        transferSharesType.setValue("Transfer Shares", forKey: "pName")
+        transferSharesType.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+        BaseRepository.setNow(transferSharesType, "pCreationTime")
+        BaseRepository.setNow(transferSharesType, "pModificationDate")
+
+        let tx = NSEntityDescription.insertNewObject(forEntityName: "Transaction", into: ctx)
+        tx.setValue("Opening DELL lot", forKey: "pTitle")
+        tx.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+        tx.setValue(false, forKey: "pCleared")
+        tx.setValue(false, forKey: "pVoid")
+        tx.setValue(false, forKey: "pAdjustment")
+        tx.setValue(transferSharesType, forKey: "pTransactionType")
+        tx.setValue(eur, forKey: "pCurrency")
+        BaseRepository.setDate(tx, "pDate", isoString: "2025-01-02")
+        BaseRepository.setNow(tx, "pCreationTime")
+        BaseRepository.setNow(tx, "pModificationDate")
+
+        let lineItem = NSEntityDescription.insertNewObject(forEntityName: "LineItem", into: ctx)
+        lineItem.setValue(0.0 as NSNumber, forKey: "pTransactionAmount")
+        lineItem.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+        lineItem.setValue(1.0 as NSNumber, forKey: "pExchangeRate")
+        lineItem.setValue(0.0 as NSNumber, forKey: "pRunningBalance")
+        lineItem.setValue(false, forKey: "pCleared")
+        lineItem.setValue(account, forKey: "pAccount")
+        lineItem.setValue(tx, forKey: "pTransaction")
+        BaseRepository.setNow(lineItem, "pCreationTime")
+
+        let securityLineItem = NSEntityDescription.insertNewObject(forEntityName: "SecurityLineItem", into: ctx)
+        securityLineItem.setValue(10.0 as NSNumber, forKey: "pShares")
+        securityLineItem.setValue(50.0 as NSNumber, forKey: "pPricePerShare")
+        securityLineItem.setValue(500.0 as NSNumber, forKey: "pAmount")
+        securityLineItem.setValue(0.0 as NSNumber, forKey: "pCommission")
+        securityLineItem.setValue(security, forKey: "pSecurity")
+        securityLineItem.setValue(lineItem, forKey: "pLineItem")
+        try ctx.save()
+
+        let repo = SecurityRepository(container: vault.container)
+        let trades = try repo.getTrades(
+            accountId: BaseRepository.extractPK(from: account.objectID),
+            symbol: BaseRepository.stringValue(security, "pSymbol")
+        )
+        let trade = try #require(trades.first)
+
+        #expect(trades.count == 1)
+        #expect(trade.type == "Transfer Shares")
+        #expect(trade.shares == 10.0)
+        #expect(trade.amount == 500.0)
+    }
+
     @Test("createSecurityTrade creates sell with category offset and sync blob")
     func createSecurityTradeSellWithCategoryOffset() throws {
         let vault = try TestVaultHelper.createFreshVault()

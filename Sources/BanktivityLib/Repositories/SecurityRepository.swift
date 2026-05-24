@@ -1613,8 +1613,6 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
-    // MARK: - Transaction Type Mapping
-
 
     // MARK: - CSV Parsing
 
