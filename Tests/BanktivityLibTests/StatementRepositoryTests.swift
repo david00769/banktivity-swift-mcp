@@ -34,6 +34,10 @@ struct StatementRepositoryTests {
         try accounts.create(name: name, accountClass: AccountClass.checking, currencyCode: "EUR")
     }
 
+    private func createInvestmentAccount(named name: String, using accounts: AccountRepository) throws -> AccountDTO {
+        try accounts.create(name: name, accountClass: AccountClass.investment, currencyCode: "USD")
+    }
+
     private func accountLineItemId(in transaction: TransactionDTO, accountId: Int) throws -> Int {
         try #require(transaction.lineItems.first { $0.accountId == accountId }?.id)
     }
@@ -186,6 +190,112 @@ struct StatementRepositoryTests {
 
         let summary = try #require(try repos.statements.list(accountId: checking.id).first { $0.id == statement.id })
         #expect(summary.isBalanced)
+    }
+
+    @Test("Statement JSON qualifies balance status instead of emitting raw isBalanced")
+    func statementJSONUsesQualifiedBalanceFields() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let checking = try createCheckingAccount(named: "Qualified Balance Checking", using: repos.accounts)
+        let statement = try repos.statements.create(
+            accountId: checking.id,
+            startDate: "2026-04-01",
+            endDate: "2026-04-30",
+            beginningBalance: 0,
+            endingBalance: 0,
+            name: "April checking statement"
+        )
+
+        let encoded = try JSONEncoder().encode(statement)
+        let json = try #require(String(data: encoded, encoding: .utf8))
+        #expect(json.contains("\"cashLineBalanced\""))
+        #expect(json.contains("\"isBalancedAdvisory\""))
+        #expect(json.contains("\"uiVerificationRequired\""))
+        #expect(!json.contains("\"isBalanced\""))
+    }
+
+    @Test("Investment statement reads require UI verification and warnings")
+    func investmentStatementReadsEmitWarnings() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let investment = try createInvestmentAccount(named: "Advisory Brokerage", using: repos.accounts)
+        let statement = try repos.statements.create(
+            accountId: investment.id,
+            startDate: "2026-04-01",
+            endDate: "2026-04-30",
+            beginningBalance: 0,
+            endingBalance: 0,
+            name: "April investment statement"
+        )
+
+        let result = try #require(try repos.statements.get(statementId: statement.id))
+        #expect(result.accountClass == AccountClass.investment)
+        #expect(result.uiVerificationRequired)
+        #expect(result.cashLineBalanced)
+        #expect(result.isBalancedAdvisory)
+        #expect(result.warnings.contains { $0.contains("UI verification is required") })
+
+        let summary = try #require(try repos.statements.list(accountId: investment.id).first { $0.id == statement.id })
+        #expect(summary.uiVerificationRequired)
+        #expect(summary.warnings.contains { $0.contains("advisory cash-line checks") })
+
+        let accountWarnings = try repos.statements.warningsForStatementReads(accountId: investment.id)
+        #expect(accountWarnings.count == 1)
+    }
+
+    @Test("Visible row correction plan uses only operator-entered UI values")
+    func visibleRowCorrectionPlanUsesOperatorEnteredValues() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let plan = repos.statements.visibleRowCorrectionPlan(
+            statementId: 735,
+            uiStart: 100,
+            uiEnd: 125,
+            uiMissing: -5,
+            correctedStart: 200
+        )
+
+        #expect(plan.inputSource == "operator_entered_ui_values")
+        #expect(plan.uiCompatibleRowDelta == 30)
+        #expect(plan.correctedEndingBalance == 230)
+        #expect(plan.backupRequiredBeforeWrite)
+        #expect(plan.postUIVerificationRequired)
+        #expect(plan.warnings.contains { $0.contains("did not discover or verify UI state") })
+    }
+
+    @Test("Statement write tools reject unnamed internal investment rows")
+    func writesRejectInternalInvestmentStatementRows() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let investment = try createInvestmentAccount(named: "Internal Row Brokerage", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10",
+            title: "Investment cash row",
+            lineItems: [(accountId: investment.id, amount: 10.0, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: investment.id)
+        let internalStatement = try repos.statements.create(
+            accountId: investment.id,
+            startDate: "2026-04-01",
+            endDate: "2026-04-30",
+            beginningBalance: 0,
+            endingBalance: 10
+        )
+
+        #expect(throws: (any Error).self) {
+            try repos.statements.reconcileLineItems(
+                statementId: internalStatement.id,
+                lineItemIds: [lineItemId]
+            )
+        }
+
+        #expect(throws: (any Error).self) {
+            try repos.statements.update(statementId: internalStatement.id, endingBalance: 10)
+        }
     }
 
     @Test("Explicit reconciliation still rejects line items from another account")

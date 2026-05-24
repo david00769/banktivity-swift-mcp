@@ -30,6 +30,15 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
+    public func warningsForStatementReads(accountId: Int) throws -> [String] {
+        try performRead { [self] ctx in
+            guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
+                throw ToolError.notFound("Account not found: \(accountId)")
+            }
+            return Self.statementReadWarnings(accountClass: Self.intValue(account, "pAccountClass"))
+        }
+    }
+
     public func get(statementId: Int) throws -> StatementDTO? {
         try performRead { [self] ctx in
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
@@ -37,6 +46,16 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             }
             return self.mapToDTO(statement)
         }
+    }
+
+    public func visibleRowCorrectionPlan(statementId: Int? = nil, uiStart: Double, uiEnd: Double, uiMissing: Double, correctedStart: Double? = nil) -> VisibleRowCorrectionPlanDTO {
+        VisibleRowCorrectionPlanDTO(
+            statementId: statementId,
+            uiStart: uiStart,
+            uiEnd: uiEnd,
+            uiMissing: uiMissing,
+            correctedStart: correctedStart
+        )
     }
 
     public func getAccountReconciliationStatus(accountId: Int) throws -> AccountReconciliationStatusDTO {
@@ -132,6 +151,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         }
         let preRead: PreReadData? = try performRead { [self] ctx in
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else { return nil }
+            try validateVisibleStatement(statement, statementId: statementId)
             let statementUUID = Self.stringValue(statement, "pUniqueID")
             var txLineItems: [String: [String]] = [:]
             let lineItems = Self.relatedSet(statement, "pLineItems")
@@ -196,6 +216,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
                 throw ToolError.notFound("Statement not found: \(statementId)")
             }
+            try validateVisibleStatement(statement, statementId: statementId)
             guard let account = Self.relatedObject(statement, "pAccount") else {
                 throw ToolError.invalidInput("Statement has no associated account")
             }
@@ -288,7 +309,11 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
 
     public func unreconcileLineItems(statementId: Int, lineItemIds: [Int]) throws -> StatementDTO? {
         let exists: Bool = try performRead { [self] ctx in
-            try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) != nil
+            guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
+                return false
+            }
+            try validateVisibleStatement(statement, statementId: statementId)
+            return true
         }
         guard exists else {
             throw ToolError.notFound("Statement not found: \(statementId)")
@@ -341,6 +366,22 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         }
 
         return try get(statementId: statementId)
+    }
+
+    public func update(statementId: Int, endingBalance: Double) throws -> StatementDTO {
+        try performWrite { [self] ctx in
+            guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
+                throw ToolError.notFound("Statement not found: \(statementId)")
+            }
+            try validateVisibleStatement(statement, statementId: statementId)
+            statement.setValue(endingBalance as NSNumber, forKey: "pEndingBalance")
+            Self.setNow(statement, "pModificationDate")
+        }
+
+        guard let result = try get(statementId: statementId) else {
+            throw ToolError.notFound("Statement not found after update: \(statementId)")
+        }
+        return result
     }
 
     public func getUnreconciledLineItems(accountId: Int, startDate: String? = nil, endDate: String? = nil) throws -> [LineItemDTO] {
@@ -414,6 +455,12 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
+    private func validateVisibleStatement(_ statement: NSManagedObject, statementId: Int) throws {
+        if Self.isInternalInvestmentStatement(statement) {
+            throw ToolError.invalidInput("Statement \(statementId) appears to be an internal investment statement row. Write tools only accept visible statement ids; use read diagnostics and the Banktivity UI to identify the intended visible row.")
+        }
+    }
+
     // MARK: - DTO Mapping
 
     private func mapToDTO(_ object: NSManagedObject) -> StatementDTO {
@@ -421,12 +468,18 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
 
         let accountId: Int
         let accountName: String
+        let accountClass: Int
+        let accountType: String
         if let account = Self.relatedObject(object, "pAccount") {
             accountId = Self.extractPK(from: account.objectID)
             accountName = Self.stringValue(account, "pName")
+            accountClass = Self.intValue(account, "pAccountClass")
+            accountType = getAccountTypeName(accountClass)
         } else {
             accountId = 0
             accountName = "Unknown"
+            accountClass = 0
+            accountType = "Unknown"
         }
 
         let beginningBalance = Self.doubleValue(object, "pBeginningBalance")
@@ -487,6 +540,8 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             id: pk,
             accountId: accountId,
             accountName: accountName,
+            accountClass: accountClass,
+            accountType: accountType,
             name: Self.string(object, "pName"),
             note: Self.string(object, "pNote"),
             startDate: startDate,
@@ -496,7 +551,10 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             reconciledLineItemCount: lineItems.count,
             reconciledBalance: reconciledBalance,
             difference: difference,
-            isBalanced: abs(difference) < 0.005,
+            cashLineBalanced: abs(difference) < 0.005,
+            isBalancedAdvisory: abs(difference) < 0.005,
+            uiVerificationRequired: Self.isInvestmentAccountClass(accountClass),
+            warnings: Self.statementReadWarnings(accountClass: accountClass),
             lineItems: lineItemDTOs,
             createdAt: createdAt,
             modifiedAt: modifiedAt
@@ -505,6 +563,12 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
 
     private func mapToSummaryDTO(_ object: NSManagedObject) -> StatementSummaryDTO {
         let pk = Self.extractPK(from: object.objectID)
+        let accountClass: Int
+        if let account = Self.relatedObject(object, "pAccount") {
+            accountClass = Self.intValue(account, "pAccountClass")
+        } else {
+            accountClass = 0
+        }
         let beginningBalance = Self.doubleValue(object, "pBeginningBalance")
         let endingBalance = Self.doubleValue(object, "pEndingBalance")
 
@@ -537,7 +601,10 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             beginningBalance: beginningBalance,
             endingBalance: endingBalance,
             reconciledLineItemCount: lineItems.count,
-            isBalanced: abs(difference) < 0.005
+            cashLineBalanced: abs(difference) < 0.005,
+            isBalancedAdvisory: abs(difference) < 0.005,
+            uiVerificationRequired: Self.isInvestmentAccountClass(accountClass),
+            warnings: Self.statementReadWarnings(accountClass: accountClass)
         )
     }
 
@@ -547,5 +614,28 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             amount += doubleValue(securityLineItem, "pAmount")
         }
         return amount
+    }
+
+    private static func isInvestmentAccountClass(_ accountClass: Int) -> Bool {
+        accountClass == AccountClass.investment ||
+            accountClass == AccountClass.retirement ||
+            accountClass == AccountClass.education
+    }
+
+    private static func statementReadWarnings(accountClass: Int) -> [String] {
+        guard isInvestmentAccountClass(accountClass) else { return [] }
+        return [
+            "Investment statement balance fields are advisory cash-line checks only; Banktivity Statements UI verification is required before marking the statement complete."
+        ]
+    }
+
+    private static func isInternalInvestmentStatement(_ statement: NSManagedObject) -> Bool {
+        guard let account = relatedObject(statement, "pAccount"),
+              isInvestmentAccountClass(intValue(account, "pAccountClass")) else {
+            return false
+        }
+        let name = string(statement, "pName")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let note = string(statement, "pNote")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return name.isEmpty && note.isEmpty
     }
 }

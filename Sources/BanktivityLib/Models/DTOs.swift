@@ -329,6 +329,8 @@ public struct StatementDTO: Codable, Sendable {
     public let id: Int
     public let accountId: Int
     public let accountName: String
+    public let accountClass: Int
+    public let accountType: String
     public let name: String?
     public let note: String?
     public let startDate: String
@@ -338,17 +340,27 @@ public struct StatementDTO: Codable, Sendable {
     public let reconciledLineItemCount: Int
     public let reconciledBalance: Double
     public let difference: Double
-    public let isBalanced: Bool
+    public let cashLineBalanced: Bool
+    public let isBalancedAdvisory: Bool
+    public let uiVerificationRequired: Bool
+    public let warnings: [String]
     public let lineItems: [LineItemDTO]
     public let createdAt: String?
     public let modifiedAt: String?
 
-    public init(id: Int, accountId: Int, accountName: String, name: String?, note: String?, startDate: String, endDate: String, beginningBalance: Double, endingBalance: Double, reconciledLineItemCount: Int, reconciledBalance: Double, difference: Double, isBalanced: Bool, lineItems: [LineItemDTO], createdAt: String?, modifiedAt: String?) {
+    public var isBalanced: Bool { isBalancedAdvisory }
+
+    public init(id: Int, accountId: Int, accountName: String, accountClass: Int, accountType: String, name: String?, note: String?, startDate: String, endDate: String, beginningBalance: Double, endingBalance: Double, reconciledLineItemCount: Int, reconciledBalance: Double, difference: Double, cashLineBalanced: Bool, isBalancedAdvisory: Bool, uiVerificationRequired: Bool, warnings: [String], lineItems: [LineItemDTO], createdAt: String?, modifiedAt: String?) {
         self.id = id; self.accountId = accountId; self.accountName = accountName
+        self.accountClass = accountClass; self.accountType = accountType
         self.name = name; self.note = note; self.startDate = startDate; self.endDate = endDate
         self.beginningBalance = beginningBalance; self.endingBalance = endingBalance
         self.reconciledLineItemCount = reconciledLineItemCount; self.reconciledBalance = reconciledBalance
-        self.difference = difference; self.isBalanced = isBalanced
+        self.difference = difference
+        self.cashLineBalanced = cashLineBalanced
+        self.isBalancedAdvisory = isBalancedAdvisory
+        self.uiVerificationRequired = uiVerificationRequired
+        self.warnings = warnings
         self.lineItems = lineItems
         self.createdAt = createdAt; self.modifiedAt = modifiedAt
     }
@@ -488,11 +500,75 @@ public struct StatementSummaryDTO: Codable, Sendable {
     public let beginningBalance: Double
     public let endingBalance: Double
     public let reconciledLineItemCount: Int
-    public let isBalanced: Bool
+    public let cashLineBalanced: Bool
+    public let isBalancedAdvisory: Bool
+    public let uiVerificationRequired: Bool
+    public let warnings: [String]
 
-    public init(id: Int, name: String?, startDate: String, endDate: String, beginningBalance: Double, endingBalance: Double, reconciledLineItemCount: Int, isBalanced: Bool) {
+    public var isBalanced: Bool { isBalancedAdvisory }
+
+    public init(id: Int, name: String?, startDate: String, endDate: String, beginningBalance: Double, endingBalance: Double, reconciledLineItemCount: Int, cashLineBalanced: Bool, isBalancedAdvisory: Bool, uiVerificationRequired: Bool, warnings: [String]) {
         self.id = id; self.name = name; self.startDate = startDate; self.endDate = endDate
         self.beginningBalance = beginningBalance; self.endingBalance = endingBalance
-        self.reconciledLineItemCount = reconciledLineItemCount; self.isBalanced = isBalanced
+        self.reconciledLineItemCount = reconciledLineItemCount
+        self.cashLineBalanced = cashLineBalanced
+        self.isBalancedAdvisory = isBalancedAdvisory
+        self.uiVerificationRequired = uiVerificationRequired
+        self.warnings = warnings
+    }
+
+    public init(id: Int, name: String?, startDate: String, endDate: String, beginningBalance: Double, endingBalance: Double, reconciledLineItemCount: Int, isBalanced: Bool) {
+        self.init(
+            id: id,
+            name: name,
+            startDate: startDate,
+            endDate: endDate,
+            beginningBalance: beginningBalance,
+            endingBalance: endingBalance,
+            reconciledLineItemCount: reconciledLineItemCount,
+            cashLineBalanced: isBalanced,
+            isBalancedAdvisory: isBalanced,
+            uiVerificationRequired: false,
+            warnings: []
+        )
+    }
+}
+
+public struct VisibleRowCorrectionPlanDTO: Codable, Sendable {
+    public let statementId: Int?
+    public let inputSource: String
+    public let uiStart: Double
+    public let uiEnd: Double
+    public let uiMissing: Double
+    public let correctedStart: Double
+    public let uiCompatibleRowDelta: Double
+    public let correctedEndingBalance: Double
+    public let formula: String
+    public let writeTarget: String
+    public let backupRequiredBeforeWrite: Bool
+    public let postUIVerificationRequired: Bool
+    public let uiVerificationRequired: Bool
+    public let warnings: [String]
+
+    public init(statementId: Int?, uiStart: Double, uiEnd: Double, uiMissing: Double, correctedStart: Double? = nil) {
+        let effectiveStart = correctedStart ?? uiStart
+        let rowDelta = uiEnd - uiStart - uiMissing
+        self.statementId = statementId
+        self.inputSource = "operator_entered_ui_values"
+        self.uiStart = uiStart
+        self.uiEnd = uiEnd
+        self.uiMissing = uiMissing
+        self.correctedStart = effectiveStart
+        self.uiCompatibleRowDelta = rowDelta
+        self.correctedEndingBalance = effectiveStart + rowDelta
+        self.formula = "correctedEndingBalance = correctedStart + (uiEnd - uiStart - uiMissing)"
+        self.writeTarget = statementId.map { "visible statement id \($0)" } ?? "operator-selected visible statement id"
+        self.backupRequiredBeforeWrite = true
+        self.postUIVerificationRequired = true
+        self.uiVerificationRequired = true
+        self.warnings = [
+            "This plan uses only operator-entered Banktivity UI START/END/MISSING values; it did not discover or verify UI state.",
+            "Apply only to the intended visible statement row after a fresh backup, then reopen Banktivity and verify the Statements tab."
+        ]
     }
 }
