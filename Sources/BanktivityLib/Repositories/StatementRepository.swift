@@ -617,9 +617,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
     }
 
     private static func isInvestmentAccountClass(_ accountClass: Int) -> Bool {
-        accountClass == AccountClass.investment ||
-            accountClass == AccountClass.retirement ||
-            accountClass == AccountClass.education
+        (2000...2010).contains(accountClass)
     }
 
     private static func statementReadWarnings(accountClass: Int) -> [String] {
