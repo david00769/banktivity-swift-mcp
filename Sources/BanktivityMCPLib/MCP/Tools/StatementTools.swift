@@ -23,10 +23,14 @@ func registerStatementTools(
         inputSchema: ToolHelpers.schema(properties: [
             "account_id": ToolHelpers.property(type: "number", description: "The account ID"),
             "account_name": ToolHelpers.property(type: "string", description: "The account name (alternative to account_id)"),
+            "include_internal": ToolHelpers.property(type: "boolean", description: "Include unnamed/internal investment statement diagnostics"),
         ])
     ) { arguments in
         let accountId = try resolveAccountId(accounts: accounts, arguments: arguments)
-        let results = try statements.list(accountId: accountId)
+        let results = try statements.list(
+            accountId: accountId,
+            includeInternal: ToolHelpers.getBool(arguments, key: "include_internal")
+        )
         let warnings = try statements.warningsForStatementReads(accountId: accountId)
         return try ToolHelpers.jsonResponse(StatementListResponse(warnings: warnings, statements: results))
     }

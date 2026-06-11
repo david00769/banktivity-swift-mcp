@@ -15,7 +15,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
 
     // MARK: - Read Operations
 
-    public func list(accountId: Int) throws -> [StatementSummaryDTO] {
+    public func list(accountId: Int, includeInternal: Bool = false) throws -> [StatementSummaryDTO] {
         try performRead { [self] ctx in
             guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
                 throw ToolError.notFound("Account not found: \(accountId)")
@@ -26,7 +26,9 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             request.sortDescriptors = [NSSortDescriptor(key: "pStartDate", ascending: true)]
 
             let statements = try ctx.fetch(request)
-            return statements.map { self.mapToSummaryDTO($0) }
+            return statements
+                .filter { includeInternal || !Self.isInternalInvestmentStatement($0) }
+                .map { self.mapToSummaryDTO($0) }
         }
     }
 
@@ -570,6 +572,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 return Self.extractPK(from: lhs.objectID) < Self.extractPK(from: rhs.objectID)
             }
             .map { lineItemRepo.mapToDTO($0) }
+        let rowClassification = Self.statementRowClassification(object)
 
         return StatementDTO(
             id: pk,
@@ -577,6 +580,11 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             accountName: accountName,
             accountClass: accountClass,
             accountType: accountType,
+            rowKind: rowClassification.kind,
+            isVisibleNamedRow: rowClassification.isVisibleNamedRow,
+            isUnnamedInvestmentRow: rowClassification.isUnnamedInvestmentRow,
+            isInternalRowCandidate: rowClassification.isInternalRowCandidate,
+            operatorConfirmedVisibleRequired: rowClassification.operatorConfirmedVisibleRequired,
             name: Self.string(object, "pName"),
             note: Self.string(object, "pNote"),
             startDate: startDate,
@@ -628,9 +636,16 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             endDate = ""
         }
 
+        let rowClassification = Self.statementRowClassification(object)
+
         return StatementSummaryDTO(
             id: pk,
             name: Self.string(object, "pName"),
+            rowKind: rowClassification.kind,
+            isVisibleNamedRow: rowClassification.isVisibleNamedRow,
+            isUnnamedInvestmentRow: rowClassification.isUnnamedInvestmentRow,
+            isInternalRowCandidate: rowClassification.isInternalRowCandidate,
+            operatorConfirmedVisibleRequired: rowClassification.operatorConfirmedVisibleRequired,
             startDate: startDate,
             endDate: endDate,
             beginningBalance: beginningBalance,
@@ -662,13 +677,50 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         ]
     }
 
-    private static func isInternalInvestmentStatement(_ statement: NSManagedObject) -> Bool {
-        guard let account = relatedObject(statement, "pAccount"),
-              isInvestmentAccountClass(intValue(account, "pAccountClass")) else {
-            return false
+    private struct StatementRowClassification {
+        let kind: String
+        let isVisibleNamedRow: Bool
+        let isUnnamedInvestmentRow: Bool
+        let isInternalRowCandidate: Bool
+        let operatorConfirmedVisibleRequired: Bool
+    }
+
+    private static func statementRowClassification(_ statement: NSManagedObject) -> StatementRowClassification {
+        let isInvestment = relatedObject(statement, "pAccount")
+            .map { isInvestmentAccountClass(intValue($0, "pAccountClass")) } ?? false
+        let hasDisplayName = !(string(statement, "pName")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+            || !(string(statement, "pNote")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+
+        guard isInvestment else {
+            return StatementRowClassification(
+                kind: hasDisplayName ? "visible_named" : "visible_unnamed",
+                isVisibleNamedRow: hasDisplayName,
+                isUnnamedInvestmentRow: false,
+                isInternalRowCandidate: false,
+                operatorConfirmedVisibleRequired: false
+            )
         }
-        let name = string(statement, "pName")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let note = string(statement, "pNote")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return name.isEmpty && note.isEmpty
+
+        guard !hasDisplayName else {
+            return StatementRowClassification(
+                kind: "visible_named_investment",
+                isVisibleNamedRow: true,
+                isUnnamedInvestmentRow: false,
+                isInternalRowCandidate: false,
+                operatorConfirmedVisibleRequired: false
+            )
+        }
+
+        return StatementRowClassification(
+            kind: "unnamed_investment_requires_operator_confirmation",
+            isVisibleNamedRow: false,
+            isUnnamedInvestmentRow: true,
+            isInternalRowCandidate: true,
+            operatorConfirmedVisibleRequired: true
+        )
+    }
+
+    private static func isInternalInvestmentStatement(_ statement: NSManagedObject) -> Bool {
+        statementRowClassification(statement).isInternalRowCandidate
     }
 }

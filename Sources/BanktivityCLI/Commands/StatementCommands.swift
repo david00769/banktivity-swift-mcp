@@ -21,6 +21,9 @@ struct Statements: AsyncParsableCommand {
         @Option(name: .long, help: "Account name (alternative to --account-id)")
         var accountName: String?
 
+        @Flag(name: .long, help: "Include unnamed/internal investment statement diagnostics")
+        var includeInternal: Bool = false
+
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
@@ -30,7 +33,7 @@ struct Statements: AsyncParsableCommand {
 
             let resolvedId = try accountRepo.resolveAccountId(id: accountId, name: accountName)
             try emitStatementReadWarnings(try statements.warningsForStatementReads(accountId: resolvedId))
-            let results = try statements.list(accountId: resolvedId)
+            let results = try statements.list(accountId: resolvedId, includeInternal: includeInternal)
             try outputJSON(results, format: parent.format)
         }
     }

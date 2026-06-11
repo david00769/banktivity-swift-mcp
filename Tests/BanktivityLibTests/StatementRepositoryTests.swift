@@ -235,10 +235,15 @@ struct StatementRepositoryTests {
         #expect(result.uiVerificationRequired)
         #expect(result.cashLineBalanced)
         #expect(result.isBalancedAdvisory)
+        #expect(result.rowKind == "visible_named_investment")
+        #expect(result.isVisibleNamedRow)
+        #expect(!result.isUnnamedInvestmentRow)
+        #expect(!result.operatorConfirmedVisibleRequired)
         #expect(result.warnings.contains { $0.contains("UI verification is required") })
 
         let summary = try #require(try repos.statements.list(accountId: investment.id).first { $0.id == statement.id })
         #expect(summary.uiVerificationRequired)
+        #expect(summary.rowKind == "visible_named_investment")
         #expect(summary.warnings.contains { $0.contains("advisory cash-line checks") })
 
         let accountWarnings = try repos.statements.warningsForStatementReads(accountId: investment.id)
@@ -266,8 +271,8 @@ struct StatementRepositoryTests {
         #expect(plan.warnings.contains { $0.contains("did not discover or verify UI state") })
     }
 
-    @Test("Unnamed investment statement membership writes require explicit visible-row confirmation")
-    func unnamedInvestmentStatementMembershipWritesRequireVisibleConfirmation() throws {
+    @Test("Unnamed investment statement rows are diagnostics unless operator confirms visible UI match")
+    func unnamedInvestmentStatementRowsRequireVisibleConfirmation() throws {
         let repos = try makeRepositories()
         defer { TestVaultHelper.cleanup(repos.vault) }
 
@@ -285,6 +290,21 @@ struct StatementRepositoryTests {
             beginningBalance: 0,
             endingBalance: 10
         )
+
+        #expect(try repos.statements.list(accountId: investment.id).isEmpty)
+        let diagnosticRow = try #require(try repos.statements.list(
+            accountId: investment.id,
+            includeInternal: true
+        ).first { $0.id == internalStatement.id })
+        #expect(diagnosticRow.rowKind == "unnamed_investment_requires_operator_confirmation")
+        #expect(diagnosticRow.isUnnamedInvestmentRow)
+        #expect(diagnosticRow.isInternalRowCandidate)
+        #expect(diagnosticRow.operatorConfirmedVisibleRequired)
+
+        let readback = try #require(try repos.statements.get(statementId: internalStatement.id))
+        #expect(readback.rowKind == "unnamed_investment_requires_operator_confirmation")
+        #expect(readback.isUnnamedInvestmentRow)
+        #expect(readback.isInternalRowCandidate)
 
         #expect(throws: (any Error).self) {
             try repos.statements.reconcileLineItems(
