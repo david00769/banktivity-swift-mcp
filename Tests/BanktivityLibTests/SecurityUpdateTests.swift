@@ -152,6 +152,79 @@ struct SecurityUpdateTests {
         #expect(xml.contains("Account:\(BaseRepository.stringValue(category, "pUniqueID"))"))
     }
 
+    @Test("createSecurityTrade creates buy with negative cash line and readback identifiers")
+    func createSecurityTradeBuyWithNegativeCashLine() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        _ = try TestVaultHelper.seedTransactionTypes(in: vault.container)
+        _ = try TestVaultHelper.seedSyncedDocument(in: vault.container)
+        let account = try TestVaultHelper.seedInvestmentAccount(in: vault.container, currency: eur)
+        let security = try TestVaultHelper.seedSecurity(in: vault.container, symbol: "OGVXX", currency: eur)
+
+        let updater = SyncBlobUpdater(container: vault.container)
+        let repo = SecurityRepository(container: vault.container, syncBlobUpdater: updater)
+        let accountPK = BaseRepository.extractPK(from: account.objectID)
+        let result = try repo.createSecurityTrade(
+            accountId: accountPK,
+            symbol: "OGVXX",
+            shares: 250000,
+            pricePerShare: 1,
+            amount: 250000,
+            cashLineItemAmount: -250000,
+            date: "2026-05-29",
+            title: "BUY OGVXX",
+            memo: "provider sweep purchase"
+        )
+
+        #expect(result.id > 0)
+        #expect(result.type == "Buy")
+        #expect(result.symbol == "OGVXX")
+        #expect(result.securityName == BaseRepository.stringValue(security, "pName"))
+        #expect(abs(result.shares - 250000) < 0.000001)
+        #expect(abs(result.pricePerShare - 1) < 0.000001)
+        #expect(abs(result.amount - 250000) < 0.000001)
+
+        let lineItems = try LineItemRepository(container: vault.container).getForTransactionPK(result.id)
+        #expect(lineItems.count == 2)
+        let accountLine = try #require(lineItems.first { $0.accountId == accountPK })
+        let balancingLine = try #require(lineItems.first { $0.accountId == 0 })
+        #expect(abs(accountLine.amount + 250000) < 0.000001)
+        #expect(abs(balancingLine.amount - 250000) < 0.000001)
+        #expect(accountLine.memo == "provider sweep purchase")
+
+        let trades = try repo.getTrades(
+            accountId: accountPK,
+            symbol: "OGVXX",
+            startDate: "2026-05-01",
+            endDate: "2026-05-31"
+        )
+        let trade = try #require(trades.first { $0.id == result.id })
+        #expect(trade.type == "Buy")
+        #expect(abs(trade.shares - 250000) < 0.000001)
+        #expect(abs(trade.amount - 250000) < 0.000001)
+
+        let ctx = vault.container.viewContext
+        let txRequest = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+        txRequest.predicate = NSPredicate(format: "pTitle == %@", "BUY OGVXX")
+        let tx = try #require(try ctx.fetch(txRequest).first)
+        let txUUID = BaseRepository.stringValue(tx, "pUniqueID")
+        let syncRequest = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
+        syncRequest.predicate = NSPredicate(format: "pLocalID == %@", txUUID)
+        let record = try #require(try ctx.fetch(syncRequest).first)
+        let blobData = try #require(record.value(forKey: "pRemoteEntityData") as? Data)
+        let decompressed = try #require(SyncBlobUpdater.decompressGzip(blobData))
+        let xml = try #require(String(data: decompressed, encoding: .utf8))
+
+        #expect(xml.contains("<field enum=\"IGGCSyncAccountingTransactionBaseType\" name=\"baseType\">buy</field>"))
+        #expect(xml.contains("<field type=\"decimal\" name=\"shares\">250000</field>"))
+        #expect(xml.contains("<field type=\"decimal\" name=\"pricePerShare\">1</field>"))
+        #expect(xml.contains("<field type=\"decimal\" name=\"cost\">250000</field>"))
+        #expect(xml.contains("<field type=\"decimal\" name=\"accountAmount\">-250000</field>"))
+        #expect(xml.contains("<field type=\"decimal\" name=\"accountAmount\">250000</field>"))
+    }
+
     @Test("createSecurityIncome creates native dividend income")
     func createSecurityIncomeDividend() throws {
         let vault = try TestVaultHelper.createFreshVault()
