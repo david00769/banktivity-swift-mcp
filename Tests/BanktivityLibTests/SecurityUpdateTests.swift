@@ -106,4 +106,72 @@ struct SecurityUpdateTests {
         #expect(xml.contains("name=\"commission\""))
         #expect(xml.contains("<field type=\"decimal\" name=\"commission\">0</field>"))
     }
+    @Test("basis-only transfer update requires zero cash line")
+    func basisOnlyTransferUpdateRequiresZeroCashLine() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        let (buyType, _) = try TestVaultHelper.seedTransactionTypes(in: vault.container)
+        let account = try TestVaultHelper.seedInvestmentAccount(in: vault.container, currency: eur)
+        let security = try TestVaultHelper.seedSecurity(in: vault.container, currency: eur)
+
+        let ctx = vault.container.viewContext
+        let tx = NSEntityDescription.insertNewObject(forEntityName: "Transaction", into: ctx)
+        tx.setValue(UUID().uuidString, forKey: "pUniqueID")
+        tx.setValue(Date(), forKey: "pDate")
+        tx.setValue("Transfer in RBLX", forKey: "pTitle")
+        tx.setValue("SECURITY ADJUSTMENT", forKey: "pNote")
+        tx.setValue(eur, forKey: "pCurrency")
+        tx.setValue(buyType, forKey: "pTransactionType")
+        tx.setValue(Date(), forKey: "pCreationTime")
+        tx.setValue(Date(), forKey: "pModificationDate")
+
+        let lineItem = NSEntityDescription.insertNewObject(forEntityName: "LineItem", into: ctx)
+        lineItem.setValue(UUID().uuidString, forKey: "pUniqueID")
+        lineItem.setValue(account, forKey: "pAccount")
+        lineItem.setValue(tx, forKey: "pTransaction")
+        lineItem.setValue(0.0 as NSNumber, forKey: "pTransactionAmount")
+        lineItem.setValue(1.0 as NSNumber, forKey: "pExchangeRate")
+        lineItem.setValue(Date(), forKey: "pCreationTime")
+
+        let securityLineItem = NSEntityDescription.insertNewObject(forEntityName: "SecurityLineItem", into: ctx)
+        securityLineItem.setValue(security, forKey: "pSecurity")
+        securityLineItem.setValue(lineItem, forKey: "pLineItem")
+        securityLineItem.setValue(20.0 as NSNumber, forKey: "pShares")
+        securityLineItem.setValue(0.0 as NSNumber, forKey: "pAmount")
+        securityLineItem.setValue(0.0 as NSNumber, forKey: "pPricePerShare")
+        securityLineItem.setValue(0.0 as NSNumber, forKey: "pCommission")
+        securityLineItem.setValue(0.0 as NSNumber, forKey: "pIncome")
+        securityLineItem.setValue(1.0 as NSNumber, forKey: "pPriceMultiplier")
+        try ctx.obtainPermanentIDs(for: [tx, lineItem, securityLineItem])
+        try ctx.save()
+
+        let repo = SecurityRepository(container: vault.container)
+        let txPK = BaseRepository.extractPK(from: tx.objectID)
+        let updated = try repo.updateSecurityLineItem(
+            transactionId: txPK,
+            pricePerShare: 99.3295,
+            amount: -1986.59,
+            basisOnlyTransfer: true
+        )
+        #expect(abs(updated.pricePerShare - 99.3295) < 0.000001)
+        #expect(abs(updated.amount - -1986.59) < 0.000001)
+
+        let lineItemRepo = LineItemRepository(container: vault.container)
+        let lineItems = try lineItemRepo.getForTransactionPK(txPK)
+        let accountLine = try #require(lineItems.first { $0.accountId == BaseRepository.extractPK(from: account.objectID) })
+        #expect(abs(accountLine.amount) < 0.005)
+
+        lineItem.setValue(1.0 as NSNumber, forKey: "pTransactionAmount")
+        try ctx.save()
+
+        #expect(throws: (any Error).self) {
+            try repo.updateSecurityLineItem(
+                transactionId: txPK,
+                amount: -2000,
+                basisOnlyTransfer: true
+            )
+        }
+    }
 }

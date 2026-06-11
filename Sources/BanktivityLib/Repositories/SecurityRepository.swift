@@ -320,8 +320,18 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         commission: Double? = nil,
         securitySymbol: String? = nil,
         securityId: Int? = nil,
-        cashLineItemAmount: Double? = nil
+        cashLineItemAmount: Double? = nil,
+        basisOnlyTransfer: Bool = false
     ) throws -> SecurityTradeDTO {
+        if basisOnlyTransfer {
+            guard cashLineItemAmount == nil else {
+                throw ToolError.invalidInput("basis-only transfer repair cannot also set a cash line amount")
+            }
+            guard amount != nil || pricePerShare != nil else {
+                throw ToolError.invalidInput("basis-only transfer repair requires amount and/or price_per_share")
+            }
+        }
+
         // Resolve new security if specified
         struct NewSecInfo: Sendable {
             let objectID: NSManagedObjectID
@@ -397,6 +407,17 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
 
             guard let li = targetLI else {
                 throw ToolError.notFound("No line items found for transaction \(transactionId)")
+            }
+
+            if basisOnlyTransfer {
+                let cashAmount = Self.doubleValue(li, "pTransactionAmount") * Self.doubleValue(li, "pExchangeRate")
+                guard abs(cashAmount) < 0.005 else {
+                    throw ToolError.invalidInput("basis-only transfer repair requires the investment account cash line amount to be zero")
+                }
+                let note = Self.stringValue(tx, "pNote")
+                guard note.localizedCaseInsensitiveContains("SECURITY ADJUSTMENT") else {
+                    throw ToolError.invalidInput("basis-only transfer repair requires a SECURITY ADJUSTMENT transaction")
+                }
             }
 
             let sli: NSManagedObject
