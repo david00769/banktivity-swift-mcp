@@ -62,6 +62,14 @@ public final class ToolRegistry: @unchecked Sendable {
     /// Register the built-in diagnostic tool for dumping the Core Data model schema
     func registerDiagnosticTools() {
         register(
+            name: "get_capabilities",
+            description: "Return stable JSON metadata for CLI commands and MCP tools, including read/write classification and safety requirements.",
+            inputSchema: ToolHelpers.schema(properties: [:])
+        ) { _ in
+            try ToolHelpers.jsonResponse(CapabilityRegistry.report())
+        }
+
+        register(
             name: "dump_schema",
             description:
                 "Dump the Core Data model schema showing all entity names, attributes, and relationships. Use this to discover property names for querying.",
