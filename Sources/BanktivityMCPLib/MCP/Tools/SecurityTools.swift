@@ -202,16 +202,17 @@ func registerSecurityTools(
     // update_security_trade
     registry.register(
         name: "update_security_trade",
-        description: "Update security trade fields on an existing transaction, including shares, price per share, amount, commission, and security.",
+        description: "Update security trade fields on an existing transaction, including shares, price per share, security cost/principal amount, commission, and security.",
         inputSchema: ToolHelpers.schema(
             properties: [
                 "transaction_id": ToolHelpers.property(type: "number", description: "Transaction ID"),
                 "shares": ToolHelpers.property(type: "number", description: "Number of shares"),
                 "price_per_share": ToolHelpers.property(type: "number", description: "Price per share"),
-                "amount": ToolHelpers.property(type: "number", description: "Cash amount (negative for buy outflow)"),
+                "amount": ToolHelpers.property(type: "number", description: "Security cost/principal amount. This does not change investment-account cash line items."),
                 "commission": ToolHelpers.property(type: "number", description: "Commission or fee amount"),
                 "symbol": ToolHelpers.property(type: "string", description: "Security ticker symbol"),
                 "security_id": ToolHelpers.property(type: "number", description: "Security ID (alternative to symbol)"),
+                "basis_only_transfer": ToolHelpers.property(type: "boolean", description: "Validate a zero-cash transfer-in row and update security basis fields without changing cash line items"),
             ],
             required: ["transaction_id"]
         )
@@ -229,6 +230,7 @@ func registerSecurityTools(
         let commission = ToolHelpers.getDouble(arguments, key: "commission")
         let symbol = ToolHelpers.getString(arguments, key: "symbol")
         let securityId = ToolHelpers.getInt(arguments, key: "security_id")
+        let basisOnlyTransfer = ToolHelpers.getBool(arguments, key: "basis_only_transfer")
 
         let result = try securities.updateSecurityLineItem(
             transactionId: transactionId,
@@ -237,7 +239,8 @@ func registerSecurityTools(
             amount: amount,
             commission: commission,
             securitySymbol: symbol,
-            securityId: securityId
+            securityId: securityId,
+            basisOnlyTransfer: basisOnlyTransfer
         )
         return try ToolHelpers.jsonResponse(result)
     }
