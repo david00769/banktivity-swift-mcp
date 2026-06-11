@@ -92,9 +92,9 @@ public enum CapabilityRegistry {
             writeCLI("uncategorized recategorize"),
             writeCLI("uncategorized bulk-recategorize", supportsDryRun: true),
             readCLI("line-items get"),
-            highRiskCLI("line-items add", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
-            highRiskCLI("line-items update", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
-            highRiskCLI("line-items delete", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
+            verifiedWriteCLI("line-items add", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
+            verifiedWriteCLI("line-items update", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
+            verifiedWriteCLI("line-items delete", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
             readCLI("templates list"),
             readCLI("templates get"),
             writeCLI("templates create"),
@@ -128,7 +128,7 @@ public enum CapabilityRegistry {
             readCLI("securities trades"),
             readCLI("securities income"),
             writeCLI("securities adjust"),
-            highRiskCLI("securities update-trade", note: "Security trade writes should be verified against provider trade evidence. Use --basis-only-transfer for zero-cash transfer-in basis repairs."),
+            verifiedWriteCLI("securities update-trade", note: "Security trade writes should be verified against provider trade evidence. Use --basis-only-transfer for zero-cash transfer-in basis repairs."),
             readCLI("schema"),
             readCLI("export turtle"),
             readCLI("capabilities"),
@@ -166,9 +166,9 @@ public enum CapabilityRegistry {
             writeMCP("recategorize_transaction"),
             writeMCP("bulk_recategorize", supportsDryRun: true),
             readMCP("get_line_item"),
-            highRiskMCP("add_line_item", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
-            highRiskMCP("update_line_item", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
-            highRiskMCP("delete_line_item", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
+            verifiedWriteMCP("add_line_item", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
+            verifiedWriteMCP("update_line_item", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
+            verifiedWriteMCP("delete_line_item", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
             readMCP("list_statements", uiVerificationRequired: true),
             readMCP("get_statement", uiVerificationRequired: true),
             writeMCP("create_statement", confirmations: ["backup_confirmed", "post_ui_verification_required"], uiVerificationRequired: true),
@@ -185,7 +185,7 @@ public enum CapabilityRegistry {
             readMCP("get_security_holdings", note: "Aggregate cost basis is best-effort and not lot-aware."),
             readMCP("get_security_trades"),
             readMCP("get_security_income"),
-            highRiskMCP("update_security_trade", note: "Security trade writes should be verified against provider trade evidence. Use basis_only_transfer for zero-cash transfer-in basis repairs."),
+            verifiedWriteMCP("update_security_trade", note: "Security trade writes should be verified against provider trade evidence. Use basis_only_transfer for zero-cash transfer-in basis repairs."),
             writeMCP("delete_security_prices"),
             readMCP("dump_schema"),
             readMCP("export_turtle"),
@@ -207,7 +207,7 @@ public enum CapabilityRegistry {
         capability(name, surface: "cli", access: "write", confirmations: confirmations, supportsDryRun: supportsDryRun, uiVerificationRequired: uiVerificationRequired, note: note)
     }
 
-    private static func highRiskCLI(_ name: String, supportsDryRun: Bool = false, note: String) -> CommandCapabilityDTO {
+    private static func verifiedWriteCLI(_ name: String, supportsDryRun: Bool = false, note: String) -> CommandCapabilityDTO {
         writeCLI(name, confirmations: ["operator_reviewed_target", "post_ui_verification_required"], supportsDryRun: supportsDryRun, uiVerificationRequired: true, note: note)
     }
 
@@ -225,7 +225,7 @@ public enum CapabilityRegistry {
         capability(name, surface: "mcp", access: "write", confirmations: confirmations, supportsDryRun: supportsDryRun, uiVerificationRequired: uiVerificationRequired, note: note)
     }
 
-    private static func highRiskMCP(_ name: String, supportsDryRun: Bool = false, note: String) -> CommandCapabilityDTO {
+    private static func verifiedWriteMCP(_ name: String, supportsDryRun: Bool = false, note: String) -> CommandCapabilityDTO {
         writeMCP(name, confirmations: ["operator_reviewed_target", "post_ui_verification_required"], supportsDryRun: supportsDryRun, uiVerificationRequired: true, note: note)
     }
 
