@@ -331,6 +331,11 @@ public struct StatementDTO: Codable, Sendable {
     public let accountName: String
     public let accountClass: Int
     public let accountType: String
+    public let rowKind: String
+    public let isVisibleNamedRow: Bool
+    public let isUnnamedInvestmentRow: Bool
+    public let isInternalRowCandidate: Bool
+    public let operatorConfirmedVisibleRequired: Bool
     public let name: String?
     public let note: String?
     public let startDate: String
@@ -350,9 +355,14 @@ public struct StatementDTO: Codable, Sendable {
 
     public var isBalanced: Bool { isBalancedAdvisory }
 
-    public init(id: Int, accountId: Int, accountName: String, accountClass: Int, accountType: String, name: String?, note: String?, startDate: String, endDate: String, beginningBalance: Double, endingBalance: Double, reconciledLineItemCount: Int, reconciledBalance: Double, difference: Double, cashLineBalanced: Bool, isBalancedAdvisory: Bool, uiVerificationRequired: Bool, warnings: [String], lineItems: [LineItemDTO], createdAt: String?, modifiedAt: String?) {
+    public init(id: Int, accountId: Int, accountName: String, accountClass: Int, accountType: String, rowKind: String = "visible_named", isVisibleNamedRow: Bool = true, isUnnamedInvestmentRow: Bool = false, isInternalRowCandidate: Bool = false, operatorConfirmedVisibleRequired: Bool = false, name: String?, note: String?, startDate: String, endDate: String, beginningBalance: Double, endingBalance: Double, reconciledLineItemCount: Int, reconciledBalance: Double, difference: Double, cashLineBalanced: Bool, isBalancedAdvisory: Bool, uiVerificationRequired: Bool, warnings: [String], lineItems: [LineItemDTO], createdAt: String?, modifiedAt: String?) {
         self.id = id; self.accountId = accountId; self.accountName = accountName
         self.accountClass = accountClass; self.accountType = accountType
+        self.rowKind = rowKind
+        self.isVisibleNamedRow = isVisibleNamedRow
+        self.isUnnamedInvestmentRow = isUnnamedInvestmentRow
+        self.isInternalRowCandidate = isInternalRowCandidate
+        self.operatorConfirmedVisibleRequired = operatorConfirmedVisibleRequired
         self.name = name; self.note = note; self.startDate = startDate; self.endDate = endDate
         self.beginningBalance = beginningBalance; self.endingBalance = endingBalance
         self.reconciledLineItemCount = reconciledLineItemCount; self.reconciledBalance = reconciledBalance
@@ -495,6 +505,11 @@ public struct PriceImportResultDTO: Codable, Sendable {
 public struct StatementSummaryDTO: Codable, Sendable {
     public let id: Int
     public let name: String?
+    public let rowKind: String
+    public let isVisibleNamedRow: Bool
+    public let isUnnamedInvestmentRow: Bool
+    public let isInternalRowCandidate: Bool
+    public let operatorConfirmedVisibleRequired: Bool
     public let startDate: String
     public let endDate: String
     public let beginningBalance: Double
@@ -507,8 +522,14 @@ public struct StatementSummaryDTO: Codable, Sendable {
 
     public var isBalanced: Bool { isBalancedAdvisory }
 
-    public init(id: Int, name: String?, startDate: String, endDate: String, beginningBalance: Double, endingBalance: Double, reconciledLineItemCount: Int, cashLineBalanced: Bool, isBalancedAdvisory: Bool, uiVerificationRequired: Bool, warnings: [String]) {
-        self.id = id; self.name = name; self.startDate = startDate; self.endDate = endDate
+    public init(id: Int, name: String?, rowKind: String = "visible_named", isVisibleNamedRow: Bool = true, isUnnamedInvestmentRow: Bool = false, isInternalRowCandidate: Bool = false, operatorConfirmedVisibleRequired: Bool = false, startDate: String, endDate: String, beginningBalance: Double, endingBalance: Double, reconciledLineItemCount: Int, cashLineBalanced: Bool, isBalancedAdvisory: Bool, uiVerificationRequired: Bool, warnings: [String]) {
+        self.id = id; self.name = name
+        self.rowKind = rowKind
+        self.isVisibleNamedRow = isVisibleNamedRow
+        self.isUnnamedInvestmentRow = isUnnamedInvestmentRow
+        self.isInternalRowCandidate = isInternalRowCandidate
+        self.operatorConfirmedVisibleRequired = operatorConfirmedVisibleRequired
+        self.startDate = startDate; self.endDate = endDate
         self.beginningBalance = beginningBalance; self.endingBalance = endingBalance
         self.reconciledLineItemCount = reconciledLineItemCount
         self.cashLineBalanced = cashLineBalanced
