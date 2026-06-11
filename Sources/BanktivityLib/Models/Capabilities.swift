@@ -92,9 +92,9 @@ public enum CapabilityRegistry {
             writeCLI("uncategorized recategorize"),
             writeCLI("uncategorized bulk-recategorize", supportsDryRun: true),
             readCLI("line-items get"),
-            highRiskCLI("line-items add", note: "Line-item writes affect balances and statement membership; a follow-up safety PR should add explicit confirmation flags."),
-            highRiskCLI("line-items update", note: "Line-item writes affect balances and statement membership; a follow-up safety PR should add explicit confirmation flags."),
-            highRiskCLI("line-items delete", note: "Line-item writes affect balances and statement membership; a follow-up safety PR should add explicit confirmation flags."),
+            highRiskCLI("line-items add", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
+            highRiskCLI("line-items update", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
+            highRiskCLI("line-items delete", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
             readCLI("templates list"),
             readCLI("templates get"),
             writeCLI("templates create"),
@@ -166,9 +166,9 @@ public enum CapabilityRegistry {
             writeMCP("recategorize_transaction"),
             writeMCP("bulk_recategorize", supportsDryRun: true),
             readMCP("get_line_item"),
-            highRiskMCP("add_line_item", note: "Line-item writes affect balances and statement membership; a follow-up safety PR should add explicit confirmation arguments."),
-            highRiskMCP("update_line_item", note: "Line-item writes affect balances and statement membership; a follow-up safety PR should add explicit confirmation arguments."),
-            highRiskMCP("delete_line_item", note: "Line-item writes affect balances and statement membership; a follow-up safety PR should add explicit confirmation arguments."),
+            highRiskMCP("add_line_item", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
+            highRiskMCP("update_line_item", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
+            highRiskMCP("delete_line_item", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
             readMCP("list_statements", uiVerificationRequired: true),
             readMCP("get_statement", uiVerificationRequired: true),
             writeMCP("create_statement", confirmations: ["backup_confirmed", "post_ui_verification_required"], uiVerificationRequired: true),
@@ -206,8 +206,8 @@ public enum CapabilityRegistry {
         capability(name, surface: "cli", access: "write", confirmations: confirmations, supportsDryRun: supportsDryRun, uiVerificationRequired: uiVerificationRequired, note: note)
     }
 
-    private static func highRiskCLI(_ name: String, note: String) -> CommandCapabilityDTO {
-        writeCLI(name, confirmations: ["operator_reviewed_target"], uiVerificationRequired: true, note: note)
+    private static func highRiskCLI(_ name: String, supportsDryRun: Bool = false, note: String) -> CommandCapabilityDTO {
+        writeCLI(name, confirmations: ["operator_reviewed_target", "post_ui_verification_required"], supportsDryRun: supportsDryRun, uiVerificationRequired: true, note: note)
     }
 
     private static func readMCP(_ name: String, uiVerificationRequired: Bool = false, note: String? = nil) -> CommandCapabilityDTO {
@@ -224,8 +224,8 @@ public enum CapabilityRegistry {
         capability(name, surface: "mcp", access: "write", confirmations: confirmations, supportsDryRun: supportsDryRun, uiVerificationRequired: uiVerificationRequired, note: note)
     }
 
-    private static func highRiskMCP(_ name: String, note: String) -> CommandCapabilityDTO {
-        writeMCP(name, confirmations: ["operator_reviewed_target"], uiVerificationRequired: true, note: note)
+    private static func highRiskMCP(_ name: String, supportsDryRun: Bool = false, note: String) -> CommandCapabilityDTO {
+        writeMCP(name, confirmations: ["operator_reviewed_target", "post_ui_verification_required"], supportsDryRun: supportsDryRun, uiVerificationRequired: true, note: note)
     }
 
     private static func capability(
