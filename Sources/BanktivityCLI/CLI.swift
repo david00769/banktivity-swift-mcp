@@ -25,6 +25,7 @@ struct BanktivityCLI: AsyncParsableCommand {
             Securities.self,
             Schema.self,
             Export.self,
+            Capabilities.self,
         ]
     )
 
