@@ -192,6 +192,151 @@ struct StatementRepositoryTests {
         #expect(summary.isBalanced)
     }
 
+    @Test("Investment statement advisory ignores zero-cash transfer-in basis amounts")
+    func investmentStatementAdvisoryIgnoresZeroCashTransferInBasisAmounts() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let investment = try createInvestmentAccount(named: "Basis Transfer Brokerage", using: repos.accounts)
+        let base = BaseRepository(container: repos.vault.container)
+        let lineItemIds: [Int] = try base.performWriteReturning { ctx in
+            guard let accountObject = try base.fetchByPK(entityName: "Account", pk: investment.id, in: ctx) else {
+                throw ToolError.notFound("Account not found: \(investment.id)")
+            }
+            let currency = try #require(BaseRepository.relatedObject(accountObject, "currency"))
+
+            let security = BaseRepository.createObject(entityName: "Security", in: ctx)
+            security.setValue("RBLX", forKey: "pSymbol")
+            security.setValue("Roblox Corp", forKey: "pName")
+            security.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            security.setValue(currency, forKey: "pCurrency")
+            security.setValue(false, forKey: "pExcludeFromQuoteUpdates")
+            security.setValue(false, forKey: "pIsIndex")
+            security.setValue(false, forKey: "pTradesInPence")
+            security.setValue(Int16(0), forKey: "pType")
+            security.setValue(Int16(0), forKey: "pRiskType")
+            security.setValue(NSDecimalNumber.one, forKey: "pContractSize")
+            security.setValue(NSDecimalNumber.zero, forKey: "pParValue")
+            BaseRepository.setNow(security, "pCreationTime")
+            BaseRepository.setNow(security, "pModificationDate")
+
+            let transaction = BaseRepository.createObject(entityName: "Transaction", in: ctx)
+            transaction.setValue("TRANSFER IN RBLX", forKey: "pTitle")
+            transaction.setValue("SECURITY ADJUSTMENT", forKey: "pNote")
+            transaction.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            transaction.setValue(false, forKey: "pCleared")
+            transaction.setValue(false, forKey: "pVoid")
+            transaction.setValue(false, forKey: "pAdjustment")
+            transaction.setValue(currency, forKey: "pCurrency")
+            BaseRepository.setDate(transaction, "pDate", isoString: "2026-04-10")
+            BaseRepository.setNow(transaction, "pCreationTime")
+            BaseRepository.setNow(transaction, "pModificationDate")
+
+            let lineItem = BaseRepository.createObject(entityName: "LineItem", in: ctx)
+            lineItem.setValue(0.0 as NSNumber, forKey: "pTransactionAmount")
+            lineItem.setValue(1.0 as NSNumber, forKey: "pExchangeRate")
+            lineItem.setValue(0.0 as NSNumber, forKey: "pRunningBalance")
+            lineItem.setValue(false, forKey: "pCleared")
+            lineItem.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            BaseRepository.setNow(lineItem, "pCreationTime")
+            lineItem.setValue(accountObject, forKey: "pAccount")
+            lineItem.setValue(transaction, forKey: "pTransaction")
+
+            let securityLineItem = BaseRepository.createObject(entityName: "SecurityLineItem", in: ctx)
+            securityLineItem.setValue(security, forKey: "pSecurity")
+            securityLineItem.setValue(lineItem, forKey: "pLineItem")
+            securityLineItem.setValue(20.0 as NSNumber, forKey: "pShares")
+            securityLineItem.setValue(-1986.59 as NSNumber, forKey: "pAmount")
+            securityLineItem.setValue(99.3295 as NSNumber, forKey: "pPricePerShare")
+            securityLineItem.setValue(0.0 as NSNumber, forKey: "pCommission")
+            securityLineItem.setValue(0.0 as NSNumber, forKey: "pIncome")
+            securityLineItem.setValue(1.0 as NSNumber, forKey: "pPriceMultiplier")
+
+            let depositTransaction = BaseRepository.createObject(entityName: "Transaction", in: ctx)
+            depositTransaction.setValue("Cash deposit", forKey: "pTitle")
+            depositTransaction.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            depositTransaction.setValue(false, forKey: "pCleared")
+            depositTransaction.setValue(false, forKey: "pVoid")
+            depositTransaction.setValue(false, forKey: "pAdjustment")
+            depositTransaction.setValue(currency, forKey: "pCurrency")
+            BaseRepository.setDate(depositTransaction, "pDate", isoString: "2026-04-11")
+            BaseRepository.setNow(depositTransaction, "pCreationTime")
+            BaseRepository.setNow(depositTransaction, "pModificationDate")
+
+            let depositLineItem = BaseRepository.createObject(entityName: "LineItem", in: ctx)
+            depositLineItem.setValue(321.41 as NSNumber, forKey: "pTransactionAmount")
+            depositLineItem.setValue(1.0 as NSNumber, forKey: "pExchangeRate")
+            depositLineItem.setValue(321.41 as NSNumber, forKey: "pRunningBalance")
+            depositLineItem.setValue(false, forKey: "pCleared")
+            depositLineItem.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            BaseRepository.setNow(depositLineItem, "pCreationTime")
+            depositLineItem.setValue(accountObject, forKey: "pAccount")
+            depositLineItem.setValue(depositTransaction, forKey: "pTransaction")
+
+            let cashBearingTransaction = BaseRepository.createObject(entityName: "Transaction", in: ctx)
+            cashBearingTransaction.setValue("Provider sweep repair offset", forKey: "pTitle")
+            cashBearingTransaction.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            cashBearingTransaction.setValue(false, forKey: "pCleared")
+            cashBearingTransaction.setValue(false, forKey: "pVoid")
+            cashBearingTransaction.setValue(false, forKey: "pAdjustment")
+            cashBearingTransaction.setValue(currency, forKey: "pCurrency")
+            BaseRepository.setDate(cashBearingTransaction, "pDate", isoString: "2026-04-11")
+            BaseRepository.setNow(cashBearingTransaction, "pCreationTime")
+            BaseRepository.setNow(cashBearingTransaction, "pModificationDate")
+
+            let cashBearingLineItem = BaseRepository.createObject(entityName: "LineItem", in: ctx)
+            cashBearingLineItem.setValue(0.0 as NSNumber, forKey: "pTransactionAmount")
+            cashBearingLineItem.setValue(1.0 as NSNumber, forKey: "pExchangeRate")
+            cashBearingLineItem.setValue(0.0 as NSNumber, forKey: "pRunningBalance")
+            cashBearingLineItem.setValue(false, forKey: "pCleared")
+            cashBearingLineItem.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            BaseRepository.setNow(cashBearingLineItem, "pCreationTime")
+            cashBearingLineItem.setValue(accountObject, forKey: "pAccount")
+            cashBearingLineItem.setValue(cashBearingTransaction, forKey: "pTransaction")
+
+            let cashBearingSecurityLineItem = BaseRepository.createObject(entityName: "SecurityLineItem", in: ctx)
+            cashBearingSecurityLineItem.setValue(security, forKey: "pSecurity")
+            cashBearingSecurityLineItem.setValue(cashBearingLineItem, forKey: "pLineItem")
+            cashBearingSecurityLineItem.setValue(0.0 as NSNumber, forKey: "pShares")
+            cashBearingSecurityLineItem.setValue(-321.41 as NSNumber, forKey: "pAmount")
+            cashBearingSecurityLineItem.setValue(0.0 as NSNumber, forKey: "pPricePerShare")
+            cashBearingSecurityLineItem.setValue(0.0 as NSNumber, forKey: "pCommission")
+            cashBearingSecurityLineItem.setValue(0.0 as NSNumber, forKey: "pIncome")
+            cashBearingSecurityLineItem.setValue(1.0 as NSNumber, forKey: "pPriceMultiplier")
+
+            try ctx.obtainPermanentIDs(for: [
+                lineItem, securityLineItem, depositLineItem, cashBearingLineItem, cashBearingSecurityLineItem,
+            ])
+            return [
+                BaseRepository.extractPK(from: lineItem.objectID),
+                BaseRepository.extractPK(from: depositLineItem.objectID),
+                BaseRepository.extractPK(from: cashBearingLineItem.objectID),
+            ]
+        }
+
+        let statement = try repos.statements.create(
+            accountId: investment.id,
+            startDate: "2026-04-01",
+            endDate: "2026-04-30",
+            beginningBalance: 0,
+            endingBalance: 0,
+            name: "April investment statement"
+        )
+
+        let reconciled = try repos.statements.reconcileLineItems(
+            statementId: statement.id,
+            lineItemIds: lineItemIds
+        )
+        #expect(reconciled.cashLineBalanced)
+        #expect(reconciled.isBalancedAdvisory)
+        #expect(abs(reconciled.reconciledBalance) < 0.005)
+        #expect(abs(reconciled.difference) < 0.005)
+
+        let summary = try #require(try repos.statements.list(accountId: investment.id).first { $0.id == statement.id })
+        #expect(summary.cashLineBalanced)
+        #expect(summary.isBalancedAdvisory)
+    }
+
     @Test("Statement JSON qualifies balance status instead of emitting raw isBalanced")
     func statementJSONUsesQualifiedBalanceFields() throws {
         let repos = try makeRepositories()

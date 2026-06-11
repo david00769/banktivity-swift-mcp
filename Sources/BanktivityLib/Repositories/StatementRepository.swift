@@ -659,11 +659,16 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
     }
 
     private static func statementBalanceAmount(for lineItem: NSManagedObject) -> Double {
-        var amount = doubleValue(lineItem, "pTransactionAmount") * doubleValue(lineItem, "pExchangeRate")
+        let cashAmount = doubleValue(lineItem, "pTransactionAmount") * doubleValue(lineItem, "pExchangeRate")
         if let securityLineItem = relatedObject(lineItem, "pSecurityLineItem") {
-            amount += doubleValue(securityLineItem, "pAmount")
+            if abs(cashAmount) < 0.005,
+               let transaction = relatedObject(lineItem, "pTransaction"),
+               stringValue(transaction, "pNote").localizedCaseInsensitiveContains("SECURITY ADJUSTMENT") {
+                return cashAmount
+            }
+            return cashAmount + doubleValue(securityLineItem, "pAmount")
         }
-        return amount
+        return cashAmount
     }
 
     private static func isInvestmentAccountClass(_ accountClass: Int) -> Bool {
