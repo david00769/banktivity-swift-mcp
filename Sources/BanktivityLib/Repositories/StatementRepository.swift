@@ -207,7 +207,11 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         return true
     }
 
-    public func reconcileLineItems(statementId: Int, lineItemIds: [Int]) throws -> StatementDTO {
+    public func reconcileLineItems(
+        statementId: Int,
+        lineItemIds: [Int],
+        operatorConfirmedVisible: Bool = false
+    ) throws -> StatementDTO {
         struct StatementInfo: Sendable {
             let accountId: Int
             let uuid: String
@@ -216,7 +220,11 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
                 throw ToolError.notFound("Statement not found: \(statementId)")
             }
-            try validateVisibleStatement(statement, statementId: statementId)
+            try validateVisibleStatement(
+                statement,
+                statementId: statementId,
+                operatorConfirmedVisible: operatorConfirmedVisible
+            )
             guard let account = Self.relatedObject(statement, "pAccount") else {
                 throw ToolError.invalidInput("Statement has no associated account")
             }
@@ -307,12 +315,20 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         return result
     }
 
-    public func unreconcileLineItems(statementId: Int, lineItemIds: [Int]) throws -> StatementDTO? {
+    public func unreconcileLineItems(
+        statementId: Int,
+        lineItemIds: [Int],
+        operatorConfirmedVisible: Bool = false
+    ) throws -> StatementDTO? {
         let exists: Bool = try performRead { [self] ctx in
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
                 return false
             }
-            try validateVisibleStatement(statement, statementId: statementId)
+            try validateVisibleStatement(
+                statement,
+                statementId: statementId,
+                operatorConfirmedVisible: operatorConfirmedVisible
+            )
             return true
         }
         guard exists else {
@@ -368,12 +384,27 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         return try get(statementId: statementId)
     }
 
-    public func update(statementId: Int, endingBalance: Double) throws -> StatementDTO {
+    public func update(
+        statementId: Int,
+        endingBalance: Double,
+        beginningBalance: Double? = nil,
+        allowInternal: Bool = false,
+        operatorConfirmedVisible: Bool = false
+    ) throws -> StatementDTO {
         try performWrite { [self] ctx in
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
                 throw ToolError.notFound("Statement not found: \(statementId)")
             }
-            try validateVisibleStatement(statement, statementId: statementId)
+            if !allowInternal {
+                try validateVisibleStatement(
+                    statement,
+                    statementId: statementId,
+                    operatorConfirmedVisible: operatorConfirmedVisible
+                )
+            }
+            if let beginningBalance {
+                statement.setValue(beginningBalance as NSNumber, forKey: "pBeginningBalance")
+            }
             statement.setValue(endingBalance as NSNumber, forKey: "pEndingBalance")
             Self.setNow(statement, "pModificationDate")
         }
@@ -455,9 +486,13 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
-    private func validateVisibleStatement(_ statement: NSManagedObject, statementId: Int) throws {
-        if Self.isInternalInvestmentStatement(statement) {
-            throw ToolError.invalidInput("Statement \(statementId) appears to be an internal investment statement row. Write tools only accept visible statement ids; use read diagnostics and the Banktivity UI to identify the intended visible row.")
+    private func validateVisibleStatement(
+        _ statement: NSManagedObject,
+        statementId: Int,
+        operatorConfirmedVisible: Bool = false
+    ) throws {
+        if Self.isInternalInvestmentStatement(statement) && !operatorConfirmedVisible {
+            throw ToolError.invalidInput("Statement \(statementId) is an unnamed investment statement row. Write tools require read diagnostics and Banktivity UI confirmation before mutating this row; rerun with operator-confirmed-visible only after matching it to the intended visible statement.")
         }
     }
 

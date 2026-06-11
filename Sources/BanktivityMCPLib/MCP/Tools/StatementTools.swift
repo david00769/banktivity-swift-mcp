@@ -158,13 +158,14 @@ func registerStatementTools(
     // update_statement
     registry.register(
         name: "update_statement",
-        description: "Update a visible statement row's ending balance after an operator-entered UI correction plan. Rejects internal investment statement rows and requires backup plus post-write Banktivity UI verification.",
+        description: "Update a visible statement row's ending balance after an operator-entered UI correction plan. Unnamed investment statement rows require operator_confirmed_visible=true after UI matching; requires backup plus post-write Banktivity UI verification.",
         inputSchema: ToolHelpers.schema(
             properties: [
                 "statement_id": ToolHelpers.property(type: "number", description: "The visible statement ID to update"),
                 "ending_balance": ToolHelpers.property(type: "number", description: "Corrected ending balance"),
                 "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Must be true after creating a fresh whole-vault backup"),
                 "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Must be true to acknowledge post-write Banktivity UI inspection is required"),
+                "operator_confirmed_visible": ToolHelpers.property(type: "boolean", description: "Set true only after matching an unnamed investment statement row to the intended visible Banktivity Statements UI row"),
             ],
             required: ["statement_id", "ending_balance", "backup_confirmed", "post_ui_verification_required"]
         )
@@ -182,7 +183,11 @@ func registerStatementTools(
             return ToolHelpers.errorResponse("ending_balance is required")
         }
 
-        let result = try statements.update(statementId: statementId, endingBalance: endingBalance)
+        let result = try statements.update(
+            statementId: statementId,
+            endingBalance: endingBalance,
+            operatorConfirmedVisible: ToolHelpers.getBool(arguments, key: "operator_confirmed_visible")
+        )
         return try ToolHelpers.jsonResponse(result)
     }
 
@@ -219,13 +224,14 @@ func registerStatementTools(
     // reconcile_line_items
     registry.register(
         name: "reconcile_line_items",
-        description: "Assign explicitly selected line items to a visible statement (sets pCleared=true). Rejects internal investment statement rows, validates account ownership and no double-assignment, and requires backup plus post-write Banktivity UI verification.",
+        description: "Assign explicitly selected line items to a visible statement (sets pCleared=true). Unnamed investment statement rows require operator_confirmed_visible=true after UI matching; validates account ownership and no double-assignment, and requires backup plus post-write Banktivity UI verification.",
         inputSchema: ToolHelpers.schema(
             properties: [
                 "statement_id": ToolHelpers.property(type: "number", description: "The statement ID"),
                 "line_item_ids": ToolHelpers.property(type: "array", description: "Array of line item IDs to reconcile"),
                 "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Must be true after creating a fresh whole-vault backup"),
                 "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Must be true to acknowledge post-write Banktivity UI inspection is required"),
+                "operator_confirmed_visible": ToolHelpers.property(type: "boolean", description: "Set true only after matching an unnamed investment statement row to the intended visible Banktivity Statements UI row"),
             ],
             required: ["statement_id", "line_item_ids", "backup_confirmed", "post_ui_verification_required"]
         )
@@ -248,20 +254,25 @@ func registerStatementTools(
             return nil
         }
 
-        let result = try statements.reconcileLineItems(statementId: statementId, lineItemIds: lineItemIds)
+        let result = try statements.reconcileLineItems(
+            statementId: statementId,
+            lineItemIds: lineItemIds,
+            operatorConfirmedVisible: ToolHelpers.getBool(arguments, key: "operator_confirmed_visible")
+        )
         return try ToolHelpers.jsonResponse(result)
     }
 
     // unreconcile_line_items
     registry.register(
         name: "unreconcile_line_items",
-        description: "Remove line items from a visible statement while preserving their cleared state. Rejects internal investment statement rows and requires backup plus post-write Banktivity UI verification.",
+        description: "Remove line items from a visible statement while preserving their cleared state. Unnamed investment statement rows require operator_confirmed_visible=true after UI matching and require backup plus post-write Banktivity UI verification.",
         inputSchema: ToolHelpers.schema(
             properties: [
                 "statement_id": ToolHelpers.property(type: "number", description: "The statement ID"),
                 "line_item_ids": ToolHelpers.property(type: "array", description: "Array of line item IDs to unreconcile"),
                 "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Must be true after creating a fresh whole-vault backup"),
                 "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Must be true to acknowledge post-write Banktivity UI inspection is required"),
+                "operator_confirmed_visible": ToolHelpers.property(type: "boolean", description: "Set true only after matching an unnamed investment statement row to the intended visible Banktivity Statements UI row"),
             ],
             required: ["statement_id", "line_item_ids", "backup_confirmed", "post_ui_verification_required"]
         )
@@ -284,7 +295,11 @@ func registerStatementTools(
             return nil
         }
 
-        guard let result = try statements.unreconcileLineItems(statementId: statementId, lineItemIds: lineItemIds) else {
+        guard let result = try statements.unreconcileLineItems(
+            statementId: statementId,
+            lineItemIds: lineItemIds,
+            operatorConfirmedVisible: ToolHelpers.getBool(arguments, key: "operator_confirmed_visible")
+        ) else {
             return ToolHelpers.errorResponse("Statement not found: \(statementId)")
         }
         return try ToolHelpers.jsonResponse(result)

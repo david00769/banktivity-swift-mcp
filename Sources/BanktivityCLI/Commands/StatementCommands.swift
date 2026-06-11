@@ -151,6 +151,9 @@ struct Statements: AsyncParsableCommand {
         @Flag(name: .long, help: "Confirm Banktivity UI inspection will be performed after this write")
         var postUIVerificationRequired: Bool = false
 
+        @Flag(name: .long, help: "Confirm the unnamed investment statement row was matched to the intended visible Banktivity Statements UI row")
+        var operatorConfirmedVisible: Bool = false
+
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
@@ -187,11 +190,20 @@ struct Statements: AsyncParsableCommand {
         @Option(name: .long, parsing: .unconditional, help: "Corrected ending balance")
         var endingBalance: Double
 
+        @Option(name: .long, parsing: .unconditional, help: "Corrected beginning balance for an explicit internal-row repair")
+        var beginningBalance: Double?
+
         @Flag(name: .long, help: "Confirm a fresh whole-vault backup exists for this write session")
         var backupConfirmed: Bool = false
 
         @Flag(name: .long, help: "Confirm Banktivity UI inspection will be performed after this write")
         var postUIVerificationRequired: Bool = false
+
+        @Flag(name: .long, help: "Deliberately allow ending-balance update on an internal investment statement row")
+        var allowInternal: Bool = false
+
+        @Flag(name: .long, help: "Set only after matching an unnamed investment statement row to the intended visible Banktivity Statements UI row")
+        var operatorConfirmedVisible: Bool = false
 
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
@@ -202,7 +214,13 @@ struct Statements: AsyncParsableCommand {
 
             let lineItemRepo = LineItemRepository(container: container)
             let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
-            let result = try statements.update(statementId: statementId, endingBalance: endingBalance)
+            let result = try statements.update(
+                statementId: statementId,
+                endingBalance: endingBalance,
+                beginningBalance: beginningBalance,
+                allowInternal: allowInternal,
+                operatorConfirmedVisible: operatorConfirmedVisible
+            )
             try outputJSON(result, format: parent.format)
         }
     }
@@ -220,6 +238,9 @@ struct Statements: AsyncParsableCommand {
 
         @Flag(name: .long, help: "Confirm Banktivity UI inspection will be performed after this write")
         var postUIVerificationRequired: Bool = false
+
+        @Flag(name: .long, help: "Confirm the unnamed investment statement row was matched to the intended visible Banktivity Statements UI row")
+        var operatorConfirmedVisible: Bool = false
 
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
@@ -258,6 +279,9 @@ struct Statements: AsyncParsableCommand {
         @Flag(name: .long, help: "Confirm Banktivity UI inspection will be performed after this write")
         var postUIVerificationRequired: Bool = false
 
+        @Flag(name: .long, help: "Confirm the unnamed investment statement row was matched to the intended visible Banktivity Statements UI row")
+        var operatorConfirmedVisible: Bool = false
+
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
@@ -274,7 +298,11 @@ struct Statements: AsyncParsableCommand {
                 throw ToolError.invalidInput("No valid line item IDs provided")
             }
 
-            let result = try statements.reconcileLineItems(statementId: statementId, lineItemIds: ids)
+            let result = try statements.reconcileLineItems(
+                statementId: statementId,
+                lineItemIds: ids,
+                operatorConfirmedVisible: operatorConfirmedVisible
+            )
             try outputJSON(result, format: parent.format)
         }
     }
@@ -296,6 +324,9 @@ struct Statements: AsyncParsableCommand {
         @Flag(name: .long, help: "Confirm Banktivity UI inspection will be performed after this write")
         var postUIVerificationRequired: Bool = false
 
+        @Flag(name: .long, help: "Confirm the unnamed investment statement row was matched to the intended visible Banktivity Statements UI row")
+        var operatorConfirmedVisible: Bool = false
+
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
@@ -312,7 +343,11 @@ struct Statements: AsyncParsableCommand {
                 throw ToolError.invalidInput("No valid line item IDs provided")
             }
 
-            guard let result = try statements.unreconcileLineItems(statementId: statementId, lineItemIds: ids) else {
+            guard let result = try statements.unreconcileLineItems(
+                statementId: statementId,
+                lineItemIds: ids,
+                operatorConfirmedVisible: operatorConfirmedVisible
+            ) else {
                 throw ToolError.notFound("Statement not found: \(statementId)")
             }
             try outputJSON(result, format: parent.format)

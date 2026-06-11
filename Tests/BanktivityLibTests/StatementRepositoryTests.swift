@@ -266,12 +266,12 @@ struct StatementRepositoryTests {
         #expect(plan.warnings.contains { $0.contains("did not discover or verify UI state") })
     }
 
-    @Test("Statement write tools reject unnamed internal investment rows")
-    func writesRejectInternalInvestmentStatementRows() throws {
+    @Test("Unnamed investment statement membership writes require explicit visible-row confirmation")
+    func unnamedInvestmentStatementMembershipWritesRequireVisibleConfirmation() throws {
         let repos = try makeRepositories()
         defer { TestVaultHelper.cleanup(repos.vault) }
 
-        let investment = try createInvestmentAccount(named: "Internal Row Brokerage", using: repos.accounts)
+        let investment = try createInvestmentAccount(named: "Unnamed Row Brokerage", using: repos.accounts)
         let transaction = try repos.transactions.create(
             date: "2026-04-10",
             title: "Investment cash row",
@@ -293,9 +293,39 @@ struct StatementRepositoryTests {
             )
         }
 
+        let reconciled = try repos.statements.reconcileLineItems(
+            statementId: internalStatement.id,
+            lineItemIds: [lineItemId],
+            operatorConfirmedVisible: true
+        )
+        #expect(reconciled.reconciledLineItemCount == 1)
+
+        let unreconciled = try #require(try repos.statements.unreconcileLineItems(
+            statementId: internalStatement.id,
+            lineItemIds: [lineItemId],
+            operatorConfirmedVisible: true
+        ))
+        #expect(unreconciled.reconciledLineItemCount == 0)
+
         #expect(throws: (any Error).self) {
             try repos.statements.update(statementId: internalStatement.id, endingBalance: 10)
         }
+
+        let visibleUpdated = try repos.statements.update(
+            statementId: internalStatement.id,
+            endingBalance: 5,
+            operatorConfirmedVisible: true
+        )
+        #expect(visibleUpdated.endingBalance == 5)
+
+        let updated = try repos.statements.update(
+            statementId: internalStatement.id,
+            endingBalance: 0,
+            beginningBalance: 0,
+            allowInternal: true
+        )
+        #expect(updated.beginningBalance == 0)
+        #expect(updated.endingBalance == 0)
     }
 
     @Test("Explicit reconciliation still rejects line items from another account")
