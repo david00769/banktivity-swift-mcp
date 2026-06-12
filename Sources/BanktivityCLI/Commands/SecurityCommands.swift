@@ -312,7 +312,7 @@ struct Securities: AsyncParsableCommand {
         @Option(name: .long, parsing: .unconditional, help: "Security trade amount/cost")
         var amount: Double
 
-        @Option(name: .long, help: "Commission or fee amount")
+        @Option(name: .long, parsing: .unconditional, help: "Commission or fee amount")
         var commission: Double = 0
 
         @Option(name: .long, parsing: .unconditional, help: "Investment account cash line amount. Positive for sell inflow, negative for buy outflow")
@@ -476,7 +476,7 @@ struct Securities: AsyncParsableCommand {
         @Option(name: .long, parsing: .unconditional, help: "Security cost/principal amount. This does not change investment-account cash line items unless --cash-line-amount is also supplied")
         var amount: Double?
 
-        @Option(name: .long, help: "Commission or fee amount")
+        @Option(name: .long, parsing: .unconditional, help: "Commission or fee amount")
         var commission: Double?
 
         @Option(name: .long, help: "Security ticker symbol")

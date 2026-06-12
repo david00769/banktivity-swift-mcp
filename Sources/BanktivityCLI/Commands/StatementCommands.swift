@@ -276,6 +276,9 @@ struct Statements: AsyncParsableCommand {
         @Option(name: .long, help: "Comma-separated line item IDs")
         var lineItemIds: String
 
+        @Flag(name: .long, help: "Preview advisory reconciliation result without writing")
+        var dryRun: Bool = false
+
         @Flag(name: .long, help: "Confirm a fresh whole-vault backup exists for this write session")
         var backupConfirmed: Bool = false
 
@@ -288,9 +291,6 @@ struct Statements: AsyncParsableCommand {
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
-            let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
-            try await guardWrite(writeGuard)
-            try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
 
             let syncBlobUpdater = SyncBlobUpdater(container: container)
             let lineItemRepo = LineItemRepository(container: container)
@@ -300,6 +300,20 @@ struct Statements: AsyncParsableCommand {
             guard !ids.isEmpty else {
                 throw ToolError.invalidInput("No valid line item IDs provided")
             }
+
+            if dryRun {
+                let result = try statements.previewReconcileLineItems(
+                    statementId: statementId,
+                    lineItemIds: ids,
+                    operatorConfirmedVisible: operatorConfirmedVisible
+                )
+                try outputJSON(result, format: parent.format)
+                return
+            }
+
+            let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
+            try await guardWrite(writeGuard)
+            try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
 
             let result = try statements.reconcileLineItems(
                 statementId: statementId,

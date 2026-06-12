@@ -351,7 +351,11 @@ struct Transactions: AsyncParsableCommand {
             if !deleted {
                 throw ToolError.notFound("Transaction not found: \(id)")
             }
-            try outputJSON(["message": "Transaction \(id) deleted"] as [String: Any], format: parent.format)
+            try outputJSON([
+                "transactionId": id,
+                "deleted": true,
+                "message": "Transaction \(id) deleted",
+            ] as [String: Any], format: parent.format)
         }
     }
 

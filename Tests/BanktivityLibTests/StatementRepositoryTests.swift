@@ -74,6 +74,42 @@ struct StatementRepositoryTests {
         #expect(result.isBalanced)
     }
 
+    @Test("Explicit reconciliation preview computes advisory balance without writing")
+    func previewReconcileComputesAdvisoryBalanceWithoutWriting() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let card = try createCreditCard(named: "Synthetic Preview Account", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10",
+            title: "Preview Merchant",
+            lineItems: [(accountId: card.id, amount: -42.0, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: card.id)
+
+        let statement = try repos.statements.create(
+            accountId: card.id,
+            startDate: "2026-04-01",
+            endDate: "2026-04-30",
+            beginningBalance: 0,
+            endingBalance: -42.0,
+            name: "April preview statement"
+        )
+
+        let preview = try repos.statements.previewReconcileLineItems(
+            statementId: statement.id,
+            lineItemIds: [lineItemId]
+        )
+        let unchanged = try #require(try repos.statements.get(statementId: statement.id))
+
+        #expect(preview.statementId == statement.id)
+        #expect(preview.reconciledLineItemCount == 1)
+        #expect(abs(preview.reconciledBalance - -42.0) < 0.005)
+        #expect(preview.isBalancedAdvisory)
+        #expect(unchanged.reconciledLineItemCount == 0)
+        #expect(abs(unchanged.reconciledBalance) < 0.005)
+    }
+
     @Test("Explicit reconciliation accepts line items on visible statement end date")
     func reconcileAllowsVisibleEndDateLineItems() throws {
         let repos = try makeRepositories()
@@ -354,6 +390,7 @@ struct StatementRepositoryTests {
 
         let encoded = try JSONEncoder().encode(statement)
         let json = try #require(String(data: encoded, encoding: .utf8))
+        #expect(json.contains("\"statementId\""))
         #expect(json.contains("\"cashLineBalanced\""))
         #expect(json.contains("\"isBalancedAdvisory\""))
         #expect(json.contains("\"uiVerificationRequired\""))

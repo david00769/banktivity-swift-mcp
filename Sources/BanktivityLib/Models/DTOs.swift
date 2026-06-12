@@ -346,6 +346,7 @@ public struct ReviewedTransactionDTO: Codable, Sendable {
 
 public struct StatementDTO: Codable, Sendable {
     public let id: Int
+    public let statementId: Int
     public let accountId: Int
     public let accountName: String
     public let accountClass: Int
@@ -376,6 +377,7 @@ public struct StatementDTO: Codable, Sendable {
 
     public init(id: Int, accountId: Int, accountName: String, accountClass: Int, accountType: String, rowKind: String = "visible_named", isVisibleNamedRow: Bool = true, isUnnamedInvestmentRow: Bool = false, isInternalRowCandidate: Bool = false, operatorConfirmedVisibleRequired: Bool = false, name: String?, note: String?, startDate: String, endDate: String, beginningBalance: Double, endingBalance: Double, reconciledLineItemCount: Int, reconciledBalance: Double, difference: Double, cashLineBalanced: Bool, isBalancedAdvisory: Bool, uiVerificationRequired: Bool, warnings: [String], lineItems: [LineItemDTO], createdAt: String?, modifiedAt: String?) {
         self.id = id; self.accountId = accountId; self.accountName = accountName
+        self.statementId = id
         self.accountClass = accountClass; self.accountType = accountType
         self.rowKind = rowKind
         self.isVisibleNamedRow = isVisibleNamedRow

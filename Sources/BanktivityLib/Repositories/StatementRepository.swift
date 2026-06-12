@@ -317,6 +317,54 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         return result
     }
 
+    public func previewReconcileLineItems(
+        statementId: Int,
+        lineItemIds: [Int],
+        operatorConfirmedVisible: Bool = false
+    ) throws -> StatementDTO {
+        try performRead { [self] ctx in
+            guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
+                throw ToolError.notFound("Statement not found: \(statementId)")
+            }
+            try validateVisibleStatement(
+                statement,
+                statementId: statementId,
+                operatorConfirmedVisible: operatorConfirmedVisible
+            )
+            guard let account = Self.relatedObject(statement, "pAccount") else {
+                throw ToolError.invalidInput("Statement has no associated account")
+            }
+            let statementAccountId = Self.extractPK(from: account.objectID)
+            var previewLineItems = Array(Self.relatedSet(statement, "pLineItems"))
+            var seen = Set(previewLineItems.map { Self.extractPK(from: $0.objectID) })
+
+            for liId in lineItemIds {
+                guard let li = try fetchByPK(entityName: "LineItem", pk: liId, in: ctx) else {
+                    throw ToolError.notFound("Line item not found: \(liId)")
+                }
+                guard let liAccount = Self.relatedObject(li, "pAccount") else {
+                    throw ToolError.invalidInput("Line item \(liId) has no account")
+                }
+                let liAccountId = Self.extractPK(from: liAccount.objectID)
+                guard liAccountId == statementAccountId else {
+                    throw ToolError.invalidInput("Line item \(liId) belongs to account \(liAccountId), not statement's account \(statementAccountId)")
+                }
+                if let existingStatement = Self.relatedObject(li, "pStatement") {
+                    let existingId = Self.extractPK(from: existingStatement.objectID)
+                    guard existingId == statementId else {
+                        throw ToolError.invalidInput("Line item \(liId) is already assigned to statement \(existingId)")
+                    }
+                }
+                if !seen.contains(liId) {
+                    previewLineItems.append(li)
+                    seen.insert(liId)
+                }
+            }
+
+            return self.mapToDTO(statement, lineItemsOverride: previewLineItems)
+        }
+    }
+
     public func unreconcileLineItems(
         statementId: Int,
         lineItemIds: [Int],
@@ -500,7 +548,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
 
     // MARK: - DTO Mapping
 
-    private func mapToDTO(_ object: NSManagedObject) -> StatementDTO {
+    private func mapToDTO(_ object: NSManagedObject, lineItemsOverride: [NSManagedObject]? = nil) -> StatementDTO {
         let pk = Self.extractPK(from: object.objectID)
 
         let accountId: Int
@@ -522,7 +570,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         let beginningBalance = Self.doubleValue(object, "pBeginningBalance")
         let endingBalance = Self.doubleValue(object, "pEndingBalance")
 
-        let lineItems = Self.relatedSet(object, "pLineItems")
+        let lineItems = lineItemsOverride ?? Array(Self.relatedSet(object, "pLineItems"))
         let reconciledBalance = lineItems.reduce(0.0) { sum, li in
             sum + Self.statementBalanceAmount(for: li)
         }
