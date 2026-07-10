@@ -195,6 +195,7 @@ public enum CapabilityRegistry {
             readMCP("get_payee_category_summary"),
             writeMCP("recategorize_transaction"),
             readMCP("get_line_item"),
+            readMCP("get_line_item_source"),
             verifiedWriteMCP("add_line_item", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
             verifiedWriteMCP("update_line_item", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
             verifiedWriteMCP("delete_line_item", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),

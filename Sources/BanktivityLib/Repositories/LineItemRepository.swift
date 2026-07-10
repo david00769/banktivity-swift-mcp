@@ -30,6 +30,17 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
+    /// Get the raw imported bank details (e.g. Plaid/OFX) for a line item, if it came from an import.
+    /// Manually entered line items have no LineItemSource records and return an empty array.
+    public func getSources(lineItemId: Int) throws -> [LineItemSourceDTO] {
+        try performRead { [self] ctx in
+            guard let object = try fetchByPK(entityName: "LineItem", pk: lineItemId, in: ctx) else {
+                throw ToolError.notFound("Line item not found: \(lineItemId)")
+            }
+            return Self.relatedSet(object, "pSources").map { self.mapSourceToDTO($0) }
+        }
+    }
+
     /// Get a single line item by primary key
     public func get(lineItemId: Int) throws -> LineItemDTO? {
         try performRead { [self] ctx in
@@ -328,5 +339,20 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
             return cashAmount + doubleValue(securityLineItem, "pAmount")
         }
         return cashAmount
+    }
+
+    private func mapSourceToDTO(_ object: NSManagedObject) -> LineItemSourceDTO {
+        let sourceTime = Self.dateValue(object, "pSourceTime").map { DateConversion.toISODateTime($0) }
+        let date = Self.dateValue(object, "pDate").map { DateConversion.toISO($0) }
+
+        return LineItemSourceDTO(
+            details: Self.string(object, "pDetails"),
+            sourceType: Self.string(object, "pSourceType"),
+            sourceIdentifier: Self.string(object, "pSourceIdentifier"),
+            sourceTime: sourceTime,
+            matched: Self.boolValue(object, "pMatched"),
+            amount: Self.doubleValue(object, "pAmount"),
+            date: date
+        )
     }
 }

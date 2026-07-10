@@ -34,6 +34,26 @@ func registerLineItemTools(
         return try ToolHelpers.jsonResponse(lineItem)
     }
 
+    // get_line_item_source
+    registry.register(
+        name: "get_line_item_source",
+        access: .read,
+        description: "Get the raw imported bank transaction details (e.g. Plaid/OFX description) for a line item, as received before Banktivity applied any payee renaming or import rules. Returns an empty array for manually entered line items.",
+        inputSchema: ToolHelpers.schema(
+            properties: [
+                "line_item_id": ToolHelpers.property(type: "number", description: "The line item ID"),
+            ],
+            required: ["line_item_id"]
+        )
+    ) { arguments in
+        guard let lineItemId = ToolHelpers.getInt(arguments, key: "line_item_id") else {
+            return ToolHelpers.errorResponse("line_item_id is required")
+        }
+
+        let sources = try lineItems.getSources(lineItemId: lineItemId)
+        return try ToolHelpers.jsonResponse(sources)
+    }
+
     // add_line_item
     registry.register(
         name: "add_line_item",

@@ -69,6 +69,23 @@ public struct LineItemDTO: Codable, Sendable {
     }
 }
 
+/// The raw, pre-categorization data an import source (e.g. Plaid, OFX) sent for a line item,
+/// as seen in Banktivity's "Imported Transaction Details" popup.
+public struct LineItemSourceDTO: Codable, Sendable {
+    public let details: String?
+    public let sourceType: String?
+    public let sourceIdentifier: String?
+    public let sourceTime: String?
+    public let matched: Bool
+    public let amount: Double
+    public let date: String?
+
+    public init(details: String?, sourceType: String?, sourceIdentifier: String?, sourceTime: String?, matched: Bool = false, amount: Double, date: String?) {
+        self.details = details; self.sourceType = sourceType; self.sourceIdentifier = sourceIdentifier
+        self.sourceTime = sourceTime; self.matched = matched; self.amount = amount; self.date = date
+    }
+}
+
 public struct CategoryDTO: Codable, Sendable {
     public let id: Int
     public let name: String
