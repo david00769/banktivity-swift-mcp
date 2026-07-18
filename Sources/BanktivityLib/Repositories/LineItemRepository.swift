@@ -5,6 +5,16 @@ import Foundation
 
 /// Repository for line item operations using Core Data
 public final class LineItemRepository: BaseRepository, @unchecked Sendable {
+    private let syncBlobUpdater: SyncBlobUpdater?
+
+    public init(
+        container: NSPersistentContainer,
+        syncBlobUpdater: SyncBlobUpdater? = nil
+    ) {
+        self.syncBlobUpdater = syncBlobUpdater
+        super.init(container: container)
+    }
+
     public static let writeConfirmations = [
         "operator_reviewed_target",
         "post_ui_verification_required",
@@ -62,8 +72,10 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
             }
             var targetIds = ["lineItemId": lineItemId]
             if let accountId {
-                guard try fetchByPK(entityName: "Account", pk: accountId, in: ctx) != nil else {
-                    throw ToolError.notFound("Account not found: \(accountId)")
+                if accountId != 0 {
+                    guard try fetchByPK(entityName: "Account", pk: accountId, in: ctx) != nil else {
+                        throw ToolError.notFound("Account not found: \(accountId)")
+                    }
                 }
                 targetIds["accountId"] = accountId
             }
@@ -110,9 +122,21 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
-    /// Update a line item's account, amount, or memo
-    public func update(lineItemId: Int, accountId: Int? = nil, amount: Double? = nil, memo: String? = nil) throws -> Set<Int> {
-        try performWriteReturning { [self] ctx in
+    /// Update a line item's account, amount, memo, or cleared state.
+    public func update(
+        lineItemId: Int,
+        accountId: Int? = nil,
+        amount: Double? = nil,
+        memo: String? = nil,
+        cleared: Bool? = nil
+    ) throws -> Set<Int> {
+        struct UpdateOutcome: Sendable {
+            let affectedAccountIds: Set<Int>
+            let transactionUUID: String?
+            let lineItemUUID: String
+        }
+
+        let outcome: UpdateOutcome = try performWriteReturning { [self] ctx in
             guard let li = try fetchByPK(entityName: "LineItem", pk: lineItemId, in: ctx) else {
                 throw ToolError.notFound("Line item not found: \(lineItemId)")
             }
@@ -125,11 +149,15 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
             }
 
             if let accountId = accountId {
-                guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
-                    throw ToolError.notFound("Account not found: \(accountId)")
+                if accountId == 0 {
+                    li.setValue(nil, forKey: "pAccount")
+                } else {
+                    guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
+                        throw ToolError.notFound("Account not found: \(accountId)")
+                    }
+                    li.setValue(account, forKey: "pAccount")
+                    affectedAccountIds.insert(accountId)
                 }
-                li.setValue(account, forKey: "pAccount")
-                affectedAccountIds.insert(accountId)
             }
 
             if let amount = amount {
@@ -140,8 +168,38 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
                 li.setValue(memo, forKey: "pMemo")
             }
 
-            return affectedAccountIds
+            if let cleared = cleared {
+                li.setValue(cleared, forKey: "pCleared")
+            }
+
+            let transaction = Self.relatedObject(li, "pTransaction")
+            if accountId != nil || amount != nil || memo != nil || cleared != nil,
+               let transaction {
+                Self.setNow(transaction, "pModificationDate")
+            }
+
+            return UpdateOutcome(
+                affectedAccountIds: affectedAccountIds,
+                transactionUUID: transaction.map { Self.stringValue($0, "pUniqueID") },
+                lineItemUUID: Self.stringValue(li, "pUniqueID")
+            )
         }
+
+        if let cleared,
+           let transactionUUID = outcome.transactionUUID,
+           !transactionUUID.isEmpty,
+           !outcome.lineItemUUID.isEmpty,
+           let updater = syncBlobUpdater {
+            updater.updateTransactionBlob(transactionUUID: transactionUUID) { xml in
+                updater.patchCleared(
+                    xml: xml,
+                    lineItemUUID: outcome.lineItemUUID,
+                    cleared: cleared
+                )
+            }
+        }
+
+        return outcome.affectedAccountIds
     }
 
     /// Delete a line item
@@ -201,8 +259,20 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
         return try getForTransactionPK(transactionId)
     }
 
-    public func updateWithRecalculation(lineItemId: Int, accountId: Int? = nil, amount: Double? = nil, memo: String? = nil) throws -> LineItemDTO? {
-        let affectedAccounts = try update(lineItemId: lineItemId, accountId: accountId, amount: amount, memo: memo)
+    public func updateWithRecalculation(
+        lineItemId: Int,
+        accountId: Int? = nil,
+        amount: Double? = nil,
+        memo: String? = nil,
+        cleared: Bool? = nil
+    ) throws -> LineItemDTO? {
+        let affectedAccounts = try update(
+            lineItemId: lineItemId,
+            accountId: accountId,
+            amount: amount,
+            memo: memo,
+            cleared: cleared
+        )
         for acctId in affectedAccounts {
             try recalculateRunningBalances(accountId: acctId)
         }
@@ -267,6 +337,7 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
             accountId: accountId,
             accountName: accountName,
             amount: Self.doubleValue(object, "pTransactionAmount"),
+            statementBalanceAmount: Self.statementBalanceAmount(for: object),
             exchangeRate: Self.doubleValue(object, "pExchangeRate"),
             memo: Self.string(object, "pMemo"),
             runningBalance: Self.doubleValue(object, "pRunningBalance"),
@@ -274,5 +345,21 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
             statementId: statementId,
             tags: tags
         )
+    }
+
+    private static func statementBalanceAmount(for lineItem: NSManagedObject) -> Double {
+        let cashAmount = doubleValue(lineItem, "pTransactionAmount") * doubleValue(lineItem, "pExchangeRate")
+        if let securityLineItem = relatedObject(lineItem, "pSecurityLineItem") {
+            if abs(cashAmount) >= 0.005 {
+                return cashAmount
+            }
+            if abs(cashAmount) < 0.005,
+               let transaction = relatedObject(lineItem, "pTransaction"),
+               stringValue(transaction, "pNote").localizedCaseInsensitiveContains("SECURITY ADJUSTMENT") {
+                return cashAmount
+            }
+            return cashAmount + doubleValue(securityLineItem, "pAmount")
+        }
+        return cashAmount
     }
 }

@@ -196,6 +196,12 @@ struct Statements: AsyncParsableCommand {
         @Option(name: .long, parsing: .unconditional, help: "Corrected beginning balance for an explicit internal-row repair")
         var beginningBalance: Double?
 
+        @Option(name: .long, help: "Corrected statement start date, YYYY-MM-DD")
+        var startDate: String?
+
+        @Option(name: .long, help: "Corrected statement end date, YYYY-MM-DD")
+        var endDate: String?
+
         @Flag(name: .long, help: "Confirm a fresh whole-vault backup exists for this write session")
         var backupConfirmed: Bool = false
 
@@ -221,6 +227,8 @@ struct Statements: AsyncParsableCommand {
                 statementId: statementId,
                 endingBalance: endingBalance,
                 beginningBalance: beginningBalance,
+                startDate: startDate,
+                endDate: endDate,
                 allowInternal: allowInternal,
                 operatorConfirmedVisible: operatorConfirmedVisible
             )
@@ -245,6 +253,9 @@ struct Statements: AsyncParsableCommand {
         @Flag(name: .long, help: "Confirm the unnamed investment statement row was matched to the intended visible Banktivity Statements UI row")
         var operatorConfirmedVisible: Bool = false
 
+        @Flag(name: .long, help: "Deliberately allow deleting an internal investment statement row after a diagnostic repair plan")
+        var allowInternal: Bool = false
+
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
@@ -256,7 +267,7 @@ struct Statements: AsyncParsableCommand {
             let lineItemRepo = LineItemRepository(container: container)
             let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: syncBlobUpdater)
 
-            let deleted = try statements.delete(statementId: statementId)
+            let deleted = try statements.delete(statementId: statementId, allowInternal: allowInternal)
             if deleted {
                 try outputJSON(["message": "Statement \(statementId) deleted, line items unreconciled"] as [String: Any], format: parent.format)
             } else {

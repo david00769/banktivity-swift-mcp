@@ -109,7 +109,10 @@ public final class ToolRegistry: @unchecked Sendable {
 
         // Create sync blob updater and repositories
         let syncBlobUpdater = SyncBlobUpdater(container: container)
-        let lineItemRepo = LineItemRepository(container: container)
+        let lineItemRepo = LineItemRepository(
+            container: container,
+            syncBlobUpdater: syncBlobUpdater
+        )
         let accountRepo = AccountRepository(container: container)
         let transactionRepo = TransactionRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: syncBlobUpdater)
         let tagRepo = TagRepository(container: container, syncBlobUpdater: syncBlobUpdater)

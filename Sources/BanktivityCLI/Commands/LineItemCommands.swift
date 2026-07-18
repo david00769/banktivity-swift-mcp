@@ -112,6 +112,12 @@ struct LineItems: AsyncParsableCommand {
         @Option(name: .long, help: "New memo")
         var memo: String?
 
+        @Flag(name: .long, help: "Mark this line item as cleared")
+        var cleared: Bool = false
+
+        @Flag(name: .long, help: "Mark this line item as uncleared")
+        var uncleared: Bool = false
+
         @Flag(name: .long, help: "Validate and return the planned mutation without writing")
         var dryRun: Bool = false
 
@@ -122,18 +128,27 @@ struct LineItems: AsyncParsableCommand {
         var postUIVerificationRequired: Bool = false
 
         func run() async throws {
+            guard !(cleared && uncleared) else {
+                throw ToolError.invalidInput("--cleared and --uncleared are mutually exclusive")
+            }
+            let clearedValue: Bool? = cleared ? true : (uncleared ? false : nil)
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
 
             let accounts = AccountRepository(container: container)
             let resolvedAccountId: Int?
-            if accountId != nil || accountName != nil {
+            if accountId == 0 {
+                resolvedAccountId = 0
+            } else if accountId != nil || accountName != nil {
                 resolvedAccountId = try accounts.resolveAccountId(id: accountId, name: accountName)
             } else {
                 resolvedAccountId = nil
             }
 
-            let lineItems = LineItemRepository(container: container)
+            let lineItems = LineItemRepository(
+                container: container,
+                syncBlobUpdater: SyncBlobUpdater(container: container)
+            )
             if dryRun {
                 try outputJSON(try lineItems.validateUpdate(
                     lineItemId: id,
@@ -152,7 +167,8 @@ struct LineItems: AsyncParsableCommand {
                 lineItemId: id,
                 accountId: resolvedAccountId,
                 amount: amount,
-                memo: memo
+                memo: memo,
+                cleared: clearedValue
             ) else {
                 throw ToolError.notFound("Line item not found after update")
             }

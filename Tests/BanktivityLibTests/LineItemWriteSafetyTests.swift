@@ -76,6 +76,54 @@ struct LineItemWriteSafetyTests {
         }
     }
 
+    @Test("line item update can relink a balancing line to Unknown")
+    func lineItemUpdateCanRelinkBalancingLineToUnknown() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let account = try repos.accounts.create(name: "Investment Account", accountClass: AccountClass.investment, currencyCode: "USD")
+        let transaction = try repos.transactions.create(
+            date: "2026-03-19",
+            title: "Sweep purchase",
+            lineItems: [(accountId: account.id, amount: 63880, memo: nil)]
+        )
+        let lineItemId = try #require(transaction.lineItems.first?.id)
+        let originalAmount = try #require(transaction.lineItems.first?.amount)
+
+        let validation = try repos.lineItems.validateUpdate(lineItemId: lineItemId, accountId: 0)
+        #expect(validation.targetIds["accountId"] == 0)
+
+        _ = try repos.lineItems.update(lineItemId: lineItemId, accountId: 0)
+        let updated = try #require(try repos.lineItems.get(lineItemId: lineItemId))
+        #expect(updated.accountId == 0)
+        #expect(updated.accountName == "Unknown")
+        #expect(updated.amount == originalAmount)
+    }
+
+    @Test("line item update restores the exact cleared state")
+    func lineItemUpdateRestoresExactClearedState() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let account = try repos.accounts.create(
+            name: "Investment Account",
+            accountClass: AccountClass.investment,
+            currencyCode: "USD"
+        )
+        let transaction = try repos.transactions.create(
+            date: "2026-03-02",
+            title: "Statement membership row",
+            lineItems: [(accountId: account.id, amount: -1000, memo: nil)]
+        )
+        let lineItemId = try #require(transaction.lineItems.first?.id)
+
+        _ = try repos.lineItems.update(lineItemId: lineItemId, cleared: true)
+        #expect(try repos.lineItems.get(lineItemId: lineItemId)?.cleared == true)
+
+        _ = try repos.lineItems.update(lineItemId: lineItemId, cleared: false)
+        #expect(try repos.lineItems.get(lineItemId: lineItemId)?.cleared == false)
+    }
+
     @Test("capabilities mark line-item writes as dry-run capable")
     func capabilitiesMarkLineItemWritesAsDryRunCapable() throws {
         let report = CapabilityRegistry.report()

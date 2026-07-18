@@ -144,7 +144,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         return result
     }
 
-    public func delete(statementId: Int) throws -> Bool {
+    public func delete(statementId: Int, allowInternal: Bool = false) throws -> Bool {
         // Gather UUID and blob-patch info on the context's thread
         struct PreReadData: Sendable {
             let statementUUID: String
@@ -153,7 +153,9 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         }
         let preRead: PreReadData? = try performRead { [self] ctx in
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else { return nil }
-            try validateVisibleStatement(statement, statementId: statementId)
+            if !allowInternal {
+                try validateVisibleStatement(statement, statementId: statementId)
+            }
             let statementUUID = Self.stringValue(statement, "pUniqueID")
             var txLineItems: [String: [String]] = [:]
             let lineItems = Self.relatedSet(statement, "pLineItems")
@@ -438,6 +440,8 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         statementId: Int,
         endingBalance: Double,
         beginningBalance: Double? = nil,
+        startDate: String? = nil,
+        endDate: String? = nil,
         allowInternal: Bool = false,
         operatorConfirmedVisible: Bool = false
     ) throws -> StatementDTO {
@@ -454,6 +458,46 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             }
             if let beginningBalance {
                 statement.setValue(beginningBalance as NSNumber, forKey: "pBeginningBalance")
+            }
+            if startDate != nil || endDate != nil {
+                guard let account = Self.relatedObject(statement, "pAccount") else {
+                    throw ToolError.invalidInput("Statement \(statementId) is missing an account")
+                }
+                let accountId = Self.extractPK(from: account.objectID)
+                let currentStart = Self.dateValue(statement, "pStartDate")
+                let currentEnd = Self.dateValue(statement, "pEndDate")
+                let startTs: Double
+                if let startDate {
+                    guard let parsed = DateConversion.fromISO(startDate) else {
+                        throw ToolError.invalidInput("Invalid start date: \(startDate)")
+                    }
+                    startTs = parsed
+                } else if let currentStart {
+                    startTs = currentStart
+                } else {
+                    throw ToolError.invalidInput("Statement \(statementId) is missing a start date")
+                }
+                let endTs: Double
+                if let endDate {
+                    guard let parsed = DateConversion.fromISO(endDate) else {
+                        throw ToolError.invalidInput("Invalid end date: \(endDate)")
+                    }
+                    endTs = parsed
+                } else if let currentEnd {
+                    endTs = currentEnd
+                } else {
+                    throw ToolError.invalidInput("Statement \(statementId) is missing an end date")
+                }
+                guard endTs > startTs else {
+                    throw ToolError.invalidInput("End date must be after start date")
+                }
+                try validateNoOverlap(accountId: accountId, startTs: startTs, endTs: endTs, ignoringStatementId: statementId, in: ctx)
+                if startDate != nil {
+                    statement.setValue(DateConversion.toDate(startTs), forKey: "pStartDate")
+                }
+                if endDate != nil {
+                    statement.setValue(DateConversion.toDate(endTs), forKey: "pEndDate")
+                }
             }
             statement.setValue(endingBalance as NSNumber, forKey: "pEndingBalance")
             Self.setNow(statement, "pModificationDate")
@@ -516,7 +560,13 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
-    private func validateNoOverlap(accountId: Int, startTs: Double, endTs: Double, in ctx: NSManagedObjectContext) throws {
+    private func validateNoOverlap(
+        accountId: Int,
+        startTs: Double,
+        endTs: Double,
+        ignoringStatementId: Int? = nil,
+        in ctx: NSManagedObjectContext
+    ) throws {
         let request = NSFetchRequest<NSManagedObject>(entityName: "Statement")
         // Look up account using fetchByPK which handles entity inheritance
         guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
@@ -524,13 +574,19 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         }
 
         // Overlapping: existing.start < newEnd AND existing.end > newStart
-        request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+        var predicates: [NSPredicate] = [
             NSPredicate(format: "pAccount == %@", account),
             NSPredicate(format: "pStartDate < %@", DateConversion.toDate(endTs) as NSDate),
             NSPredicate(format: "pEndDate > %@", DateConversion.toDate(startTs) as NSDate),
-        ])
+        ]
+        request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
 
-        let count = try ctx.count(for: request)
+        let count: Int
+        if let ignoringStatementId {
+            count = try ctx.fetch(request).filter { Self.extractPK(from: $0.objectID) != ignoringStatementId }.count
+        } else {
+            count = try ctx.count(for: request)
+        }
         guard count == 0 else {
             throw ToolError.invalidInput("Date range overlaps with an existing statement for this account")
         }
@@ -709,6 +765,9 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
     private static func statementBalanceAmount(for lineItem: NSManagedObject) -> Double {
         let cashAmount = doubleValue(lineItem, "pTransactionAmount") * doubleValue(lineItem, "pExchangeRate")
         if let securityLineItem = relatedObject(lineItem, "pSecurityLineItem") {
+            if abs(cashAmount) >= 0.005 {
+                return cashAmount
+            }
             if abs(cashAmount) < 0.005,
                let transaction = relatedObject(lineItem, "pTransaction"),
                stringValue(transaction, "pNote").localizedCaseInsensitiveContains("SECURITY ADJUSTMENT") {

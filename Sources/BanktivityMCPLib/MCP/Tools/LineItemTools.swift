@@ -86,7 +86,7 @@ func registerLineItemTools(
     // update_line_item
     registry.register(
         name: "update_line_item",
-        description: "Update a line item's account, amount, or memo. Live writes require operator_reviewed_target and post_ui_verification_required. Use dry_run to validate without writing.",
+        description: "Update a line item's account, amount, memo, or cleared state. Live writes require operator_reviewed_target and post_ui_verification_required. Use dry_run to validate without writing.",
         inputSchema: ToolHelpers.schema(
             properties: [
                 "line_item_id": ToolHelpers.property(type: "number", description: "The line item ID to update"),
@@ -94,6 +94,7 @@ func registerLineItemTools(
                 "account_name": ToolHelpers.property(type: "string", description: "New account name (alternative to account_id)"),
                 "amount": ToolHelpers.property(type: "number", description: "New amount"),
                 "memo": ToolHelpers.property(type: "string", description: "New memo"),
+                "cleared": ToolHelpers.property(type: "boolean", description: "New cleared state for this exact line item"),
                 "dry_run": ToolHelpers.property(type: "boolean", description: "If true, validate and return the planned mutation without writing"),
                 "operator_reviewed_target": ToolHelpers.property(type: "boolean", description: "Must be true for live writes after reviewing the target line item"),
                 "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Must be true for live writes to acknowledge post-write Banktivity UI inspection"),
@@ -106,11 +107,16 @@ func registerLineItemTools(
         }
 
         var newAccountId: Int?
-        if ToolHelpers.getInt(arguments, key: "account_id") != nil || ToolHelpers.getString(arguments, key: "account_name") != nil {
+        if ToolHelpers.getInt(arguments, key: "account_id") == 0 {
+            newAccountId = 0
+        } else if ToolHelpers.getInt(arguments, key: "account_id") != nil || ToolHelpers.getString(arguments, key: "account_name") != nil {
             newAccountId = try resolveAccountId(accounts: accounts, arguments: arguments)
         }
         let amount = ToolHelpers.getDouble(arguments, key: "amount")
         let memo = ToolHelpers.getString(arguments, key: "memo")
+        let cleared = arguments?["cleared"] == nil
+            ? nil
+            : ToolHelpers.getBool(arguments, key: "cleared")
 
         if ToolHelpers.getBool(arguments, key: "dry_run") {
             return try ToolHelpers.jsonResponse(lineItems.validateUpdate(
@@ -129,7 +135,8 @@ func registerLineItemTools(
             lineItemId: lineItemId,
             accountId: newAccountId,
             amount: amount,
-            memo: memo
+            memo: memo,
+            cleared: cleared
         ) else {
             return ToolHelpers.errorResponse("Line item not found after update")
         }

@@ -220,6 +220,7 @@ struct StatementRepositoryTests {
         let result = try #require(try repos.statements.get(statementId: statement.id))
         let lineItem = try #require(result.lineItems.first)
         #expect(abs(lineItem.amount - 100.0) < 0.005)
+        #expect(abs((lineItem.statementBalanceAmount ?? 0) - 150.0) < 0.005)
         #expect(abs(result.reconciledBalance - 150.0) < 0.005)
         #expect(abs(result.difference) < 0.005)
         #expect(result.isBalanced)
@@ -367,6 +368,100 @@ struct StatementRepositoryTests {
         #expect(reconciled.isBalancedAdvisory)
         #expect(abs(reconciled.reconciledBalance) < 0.005)
         #expect(abs(reconciled.difference) < 0.005)
+        let statementBalanceAmounts = reconciled.lineItems
+            .map { $0.statementBalanceAmount ?? Double.nan }
+            .sorted()
+        #expect(statementBalanceAmounts.count == 3)
+        #expect(abs(statementBalanceAmounts[0] - -321.41) < 0.005)
+        #expect(abs(statementBalanceAmounts[1] - 0.0) < 0.005)
+        #expect(abs(statementBalanceAmounts[2] - 321.41) < 0.005)
+
+        let summary = try #require(try repos.statements.list(accountId: investment.id).first { $0.id == statement.id })
+        #expect(summary.cashLineBalanced)
+        #expect(summary.isBalancedAdvisory)
+    }
+
+    @Test("Investment statement advisory uses non-zero security cash line once")
+    func investmentStatementAdvisoryUsesNonZeroSecurityCashLineOnce() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let investment = try createInvestmentAccount(named: "Cash Buy Brokerage", using: repos.accounts)
+        let base = BaseRepository(container: repos.vault.container)
+        let lineItemId: Int = try base.performWriteReturning { ctx in
+            guard let accountObject = try base.fetchByPK(entityName: "Account", pk: investment.id, in: ctx) else {
+                throw ToolError.notFound("Account not found: \(investment.id)")
+            }
+            let currency = try #require(BaseRepository.relatedObject(accountObject, "currency"))
+
+            let security = BaseRepository.createObject(entityName: "Security", in: ctx)
+            security.setValue("LITE", forKey: "pSymbol")
+            security.setValue("Lumentum Holdings", forKey: "pName")
+            security.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            security.setValue(currency, forKey: "pCurrency")
+            security.setValue(false, forKey: "pExcludeFromQuoteUpdates")
+            security.setValue(false, forKey: "pIsIndex")
+            security.setValue(false, forKey: "pTradesInPence")
+            security.setValue(Int16(0), forKey: "pType")
+            security.setValue(Int16(0), forKey: "pRiskType")
+            security.setValue(NSDecimalNumber.one, forKey: "pContractSize")
+            security.setValue(NSDecimalNumber.zero, forKey: "pParValue")
+            BaseRepository.setNow(security, "pCreationTime")
+            BaseRepository.setNow(security, "pModificationDate")
+
+            let transaction = BaseRepository.createObject(entityName: "Transaction", in: ctx)
+            transaction.setValue("LITE buy", forKey: "pTitle")
+            transaction.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            transaction.setValue(false, forKey: "pCleared")
+            transaction.setValue(false, forKey: "pVoid")
+            transaction.setValue(false, forKey: "pAdjustment")
+            transaction.setValue(currency, forKey: "pCurrency")
+            BaseRepository.setDate(transaction, "pDate", isoString: "2026-06-05")
+            BaseRepository.setNow(transaction, "pCreationTime")
+            BaseRepository.setNow(transaction, "pModificationDate")
+
+            let lineItem = BaseRepository.createObject(entityName: "LineItem", in: ctx)
+            lineItem.setValue(-2700.0 as NSNumber, forKey: "pTransactionAmount")
+            lineItem.setValue(1.0 as NSNumber, forKey: "pExchangeRate")
+            lineItem.setValue(0.0 as NSNumber, forKey: "pRunningBalance")
+            lineItem.setValue(false, forKey: "pCleared")
+            lineItem.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            BaseRepository.setNow(lineItem, "pCreationTime")
+            lineItem.setValue(accountObject, forKey: "pAccount")
+            lineItem.setValue(transaction, forKey: "pTransaction")
+
+            let securityLineItem = BaseRepository.createObject(entityName: "SecurityLineItem", in: ctx)
+            securityLineItem.setValue(security, forKey: "pSecurity")
+            securityLineItem.setValue(lineItem, forKey: "pLineItem")
+            securityLineItem.setValue(3.0 as NSNumber, forKey: "pShares")
+            securityLineItem.setValue(-2700.0 as NSNumber, forKey: "pAmount")
+            securityLineItem.setValue(900.0 as NSNumber, forKey: "pPricePerShare")
+            securityLineItem.setValue(0.0 as NSNumber, forKey: "pCommission")
+            securityLineItem.setValue(0.0 as NSNumber, forKey: "pIncome")
+            securityLineItem.setValue(1.0 as NSNumber, forKey: "pPriceMultiplier")
+
+            try ctx.obtainPermanentIDs(for: [lineItem, securityLineItem])
+            return BaseRepository.extractPK(from: lineItem.objectID)
+        }
+
+        let statement = try repos.statements.create(
+            accountId: investment.id,
+            startDate: "2026-06-01",
+            endDate: "2026-06-30",
+            beginningBalance: 3129.74,
+            endingBalance: 429.74,
+            name: "June investment statement"
+        )
+
+        let reconciled = try repos.statements.reconcileLineItems(
+            statementId: statement.id,
+            lineItemIds: [lineItemId]
+        )
+        #expect(reconciled.cashLineBalanced)
+        #expect(reconciled.isBalancedAdvisory)
+        #expect(abs(reconciled.reconciledBalance - -2700.0) < 0.005)
+        let lineItem = try #require(reconciled.lineItems.first)
+        #expect(abs((lineItem.statementBalanceAmount ?? 0) - -2700.0) < 0.005)
 
         let summary = try #require(try repos.statements.list(accountId: investment.id).first { $0.id == statement.id })
         #expect(summary.cashLineBalanced)
@@ -524,10 +619,24 @@ struct StatementRepositoryTests {
             statementId: internalStatement.id,
             endingBalance: 0,
             beginningBalance: 0,
+            endDate: "2026-05-01",
             allowInternal: true
         )
         #expect(updated.beginningBalance == 0)
         #expect(updated.endingBalance == 0)
+        #expect(updated.endDate == "2026-05-01")
+
+        #expect(throws: (any Error).self) {
+            try repos.statements.delete(statementId: internalStatement.id)
+        }
+
+        #expect(try repos.statements.delete(statementId: internalStatement.id, allowInternal: true))
+        #expect(try repos.statements.get(statementId: internalStatement.id) == nil)
+        let detachedLineItem = try #require(
+            repos.statements.getUnreconciledLineItems(accountId: investment.id).first { $0.id == lineItemId }
+        )
+        #expect(detachedLineItem.statementId == nil)
+        #expect(detachedLineItem.cleared)
     }
 
     @Test("Explicit reconciliation still rejects line items from another account")

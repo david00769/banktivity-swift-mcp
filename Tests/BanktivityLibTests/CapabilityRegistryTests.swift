@@ -25,6 +25,11 @@ struct CapabilityRegistryTests {
         #expect(lineItemUpdate.uiVerificationRequired)
         #expect(lineItemUpdate.notes.contains { $0.contains("Line-item writes affect balances") })
 
+        let statementDelete = try #require(report.commands.first { $0.name == "statements delete" })
+        #expect(statementDelete.notes.contains { $0.contains("allow_internal") })
+        let deleteStatementTool = try #require(report.tools.first { $0.name == "delete_statement" })
+        #expect(deleteStatementTool.notes.contains { $0.contains("allow_internal") })
+
         let capabilitiesTool = try #require(report.tools.first { $0.name == "get_capabilities" })
         #expect(capabilitiesTool.access == "read")
         #expect(!capabilitiesTool.requiresWriteMode)

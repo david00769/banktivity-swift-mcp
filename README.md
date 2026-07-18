@@ -229,10 +229,16 @@ banktivity-cli transactions repair-forex \
 - `get_account_reconciliation_status` — Get statement count and latest statement end date for an account
 - `get_statement` — Get a statement with reconciliation progress
 - `create_statement` — Create a new statement with balance validation
-- `delete_statement` — Delete a statement and unreconcile its line items
+- `delete_statement` — Delete a statement and unreconcile its line items; internal/unnamed investment rows require explicit `allow_internal`
 - `reconcile_line_items` — Assign line items to a statement
 - `unreconcile_line_items` — Remove line items from a statement
 - `get_unreconciled_line_items` — List unreconciled line items for an account
+
+Statement line-item readback includes `statementBalanceAmount`, the exact
+per-line amount used by the statement balance engine. Investment-account
+reconciliation planners should use this field for visible statement metadata
+derivation instead of summing raw `amount` or `accountAmount`, because
+security-linked rows can carry separate security-line cash effects.
 
 ### Securities
 - `list_securities` — List all securities with name, symbol, and currency
@@ -275,10 +281,13 @@ banktivity-cli export turtle --output vault.ttl
 - `tags list`, `tags create`, `tags tag-transaction`, `tags get-by-tag`, `tags bulk-tag`
 - `uncategorized list`, `uncategorized suggest`, `uncategorized recategorize`, `uncategorized bulk-recategorize`, `uncategorized review`, `uncategorized payee-summary`
 - `line-items get`, `line-items add`, `line-items update`, `line-items delete`
+  - `line-items update <id> --account-id 0` deliberately clears the account relation and restores Banktivity's `Unknown` balancing-line state. This is supported for reviewed repair workflows; ordinary account IDs still must resolve to a real account.
+  - `line-items update <id> --cleared|--uncleared` changes the exact line-item clear state and patches its parent transaction sync record. Use this for exact statement-reconciliation rollback; transaction-level clear flags are not a substitute for investment line state.
 - `templates list`, `templates get`, `templates create`, `templates update`, `templates delete`
 - `import-rules list`, `import-rules get`, `import-rules match`, `import-rules create`, `import-rules update`, `import-rules delete`
 - `scheduled list`, `scheduled get`, `scheduled create`, `scheduled update`, `scheduled delete`
 - `statements list`, `statements status`, `statements get`, `statements create`, `statements delete`, `statements reconcile`, `statements unreconcile`, `statements unreconciled`
+  - `statements delete` rejects internal/unnamed investment rows unless the diagnostic plan explicitly supplies `--allow-internal`
 - `securities list`, `securities create`, `securities prices`, `securities holdings`, `securities trades`, `securities income`, `securities create-income`, `securities adjust`, `securities import-prices`, `securities delete-prices`
 - `export turtle`
 - `schema`
