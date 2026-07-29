@@ -5,8 +5,22 @@ import Foundation
 import Testing
 @testable import BanktivityLib
 
-@Suite("StatementRepository")
+@Suite("StatementRepository", .serialized)
 struct StatementRepositoryTests {
+    private struct SyncSnapshot: Equatable, Sendable {
+        let state: Int
+        let modificationDate: Date?
+        let remoteEntityData: Data?
+    }
+
+    private struct AtomicSyncFixture: Sendable {
+        let statements: StatementRepository
+        let transactionUUID: String
+        let statementUUID: String
+        let transactionBaseline: SyncSnapshot
+        let statementBaseline: SyncSnapshot
+    }
+
 
     private func makeRepositories() throws -> (
         vault: TestVaultHelper.TestVault,
@@ -40,6 +54,121 @@ struct StatementRepositoryTests {
 
     private func accountLineItemId(in transaction: TransactionDTO, accountId: Int) throws -> Int {
         try #require(transaction.lineItems.first { $0.accountId == accountId }?.id)
+    }
+
+    private func replacementMembershipHash(_ lineItemIds: [Int]) throws -> String {
+        try #require(StatementRepository.replacementMembershipPreimageHash(lineItemIds))
+    }
+
+    private func syncSnapshot(
+        entityUUID: String,
+        in container: NSPersistentContainer
+    ) throws -> SyncSnapshot {
+        let base = BaseRepository(container: container)
+        return try base.performRead { ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
+            request.predicate = NSPredicate(format: "pLocalID == %@", entityUUID)
+            request.fetchLimit = 1
+            let record = try #require(try ctx.fetch(request).first)
+            return SyncSnapshot(
+                state: (record.value(forKey: "pSyncedState") as? NSNumber)?.intValue ?? -1,
+                modificationDate: record.value(forKey: "pSyncedModificationDate") as? Date,
+                remoteEntityData: record.value(forKey: "pRemoteEntityData") as? Data
+            )
+        }
+    }
+
+    private func seedAtomicSyncFixture(
+        vault: TestVaultHelper.TestVault,
+        transactionId: Int,
+        lineItemId: Int,
+        statementId: Int
+    ) throws -> AtomicSyncFixture {
+        struct Identities: Sendable {
+            let transactionUUID: String
+            let lineItemUUID: String
+            let accountUUID: String
+            let statementUUID: String
+            let cleared: Bool
+        }
+
+        let base = BaseRepository(container: vault.container)
+        let identities = try base.performRead { ctx in
+            let transaction = try #require(try base.fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx))
+            let lineItem = try #require(try base.fetchByPK(entityName: "LineItem", pk: lineItemId, in: ctx))
+            let statement = try #require(try base.fetchByPK(entityName: "Statement", pk: statementId, in: ctx))
+            let account = try #require(BaseRepository.relatedObject(lineItem, "pAccount"))
+            return Identities(
+                transactionUUID: BaseRepository.stringValue(transaction, "pUniqueID"),
+                lineItemUUID: BaseRepository.stringValue(lineItem, "pUniqueID"),
+                accountUUID: BaseRepository.stringValue(account, "pUniqueID"),
+                statementUUID: BaseRepository.stringValue(statement, "pUniqueID"),
+                cleared: lineItem.value(forKey: "pCleared") as? Bool ?? false
+            )
+        }
+        #expect(!identities.transactionUUID.isEmpty)
+        #expect(!identities.lineItemUUID.isEmpty)
+        #expect(!identities.statementUUID.isEmpty)
+
+        _ = try TestVaultHelper.seedSyncedDocument(in: vault.container)
+        let updater = SyncBlobUpdater(container: vault.container)
+        updater.createTransactionSyncRecord(
+            transactionUUID: identities.transactionUUID,
+            currencyUUID: UUID().uuidString,
+            date: "2026-04-10",
+            title: "Internal membership",
+            note: nil,
+            adjustment: false,
+            lineItems: [
+                SyncBlobUpdater.SyncLineItem(
+                    accountUUID: identities.accountUUID,
+                    accountAmount: 10,
+                    cleared: identities.cleared,
+                    identifier: identities.lineItemUUID,
+                    memo: nil,
+                    securityLineItem: nil,
+                    transactionAmount: 10
+                )
+            ],
+            transactionTypeBaseType: "deposit",
+            transactionTypeUUID: UUID().uuidString
+        )
+        updater.updateTransactionBlob(transactionUUID: identities.transactionUUID) { xml in
+            updater.patchStatement(
+                xml: xml,
+                lineItemUUID: identities.lineItemUUID,
+                statementUUID: identities.statementUUID
+            )
+        }
+        try base.performWrite { ctx in
+            let record = NSEntityDescription.insertNewObject(
+                forEntityName: "SyncedHostedEntity",
+                into: ctx
+            )
+            record.setValue(identities.statementUUID, forKey: "pLocalID")
+            record.setValue(identities.statementUUID, forKey: "pRemoteID")
+            record.setValue("Statement", forKey: "pHostedEntityType")
+            record.setValue(Int16(0), forKey: "pSyncedState")
+            record.setValue(nil, forKey: "pSyncedModificationDate")
+        }
+
+        return AtomicSyncFixture(
+            statements: StatementRepository(
+                container: vault.container,
+                lineItemRepo: LineItemRepository(container: vault.container),
+                syncBlobUpdater: updater
+            ),
+            transactionUUID: identities.transactionUUID,
+            statementUUID: identities.statementUUID,
+            transactionBaseline: try syncSnapshot(
+                entityUUID: identities.transactionUUID,
+                in: vault.container
+            ),
+            statementBaseline: try syncSnapshot(
+                entityUUID: identities.statementUUID,
+                in: vault.container
+            )
+        )
     }
 
     @Test("Membership inspection is explicit for unaddressable references")
@@ -142,39 +271,64 @@ struct StatementRepositoryTests {
         let preimageHash = try #require(inspection.preimageSha256)
         let membershipHash = try #require(inspection.membershipPreimageSha256)
         let index = try #require(inspection.positionAnchors["statement_index"] ?? nil)
-        let replacement = try repos.statements.replaceInternalRowWithVisibleStatement(
+        let syncFixture = try seedAtomicSyncFixture(
+            vault: repos.vault,
+            transactionId: transaction.id,
+            lineItemId: lineItemId,
+            statementId: internalStatement.id
+        )
+        let replacement = try syncFixture.statements.replaceInternalRowWithVisibleStatement(
             sourceStatementId: internalStatement.id, accountId: investment.id,
             startDate: "2026-04-01", endDate: "2026-04-30", beginningBalance: 0,
             endingBalance: 10, name: "April 2026 provider statement", lineItemIds: [lineItemId],
             preimageSha256: preimageHash, membershipPreimageSha256: membershipHash,
+            replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
             positionIndex: index, beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
             afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
         )
         #expect(replacement.isVisibleNamedRow)
-        #expect(try repos.statements.get(statementId: internalStatement.id) == nil)
+        #expect(try syncFixture.statements.get(statementId: internalStatement.id) == nil)
+        #expect(
+            try syncSnapshot(entityUUID: syncFixture.statementUUID, in: repos.vault.container)
+                != syncFixture.statementBaseline
+        )
+        #expect(
+            try syncSnapshot(entityUUID: syncFixture.transactionUUID, in: repos.vault.container)
+                != syncFixture.transactionBaseline
+        )
 
         #expect(throws: (any Error).self) {
-            _ = try repos.statements.restoreInternalRowFromPreimage(
+            _ = try syncFixture.statements.restoreInternalRowFromPreimage(
                 replacementStatementId: replacement.id, accountId: investment.id, statementPreimage: preimage,
                 memberships: inspection.lineItemMemberships, preimageSha256: "wrong",
-                membershipPreimageSha256: membershipHash, positionIndex: index,
+                membershipPreimageSha256: membershipHash, replacementLineItemIds: [lineItemId],
+                replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]), positionIndex: index,
                 beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
                 afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
             )
         }
-        #expect(try repos.statements.get(statementId: replacement.id) != nil)
+        #expect(try syncFixture.statements.get(statementId: replacement.id) != nil)
 
-        let restored = try repos.statements.restoreInternalRowFromPreimage(
+        let restored = try syncFixture.statements.restoreInternalRowFromPreimage(
             replacementStatementId: replacement.id, accountId: investment.id, statementPreimage: preimage,
             memberships: inspection.lineItemMemberships, preimageSha256: preimageHash,
-            membershipPreimageSha256: membershipHash, positionIndex: index,
+            membershipPreimageSha256: membershipHash, replacementLineItemIds: [lineItemId],
+            replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]), positionIndex: index,
             beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
             afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
         )
         #expect(restored.isInternalRowCandidate)
         #expect(restored.uniqueId == preimage.uniqueId)
         #expect(restored.reconciledLineItemCount == 1)
-        #expect(try repos.statements.get(statementId: replacement.id) == nil)
+        #expect(try syncFixture.statements.get(statementId: replacement.id) == nil)
+        #expect(
+            try syncSnapshot(entityUUID: syncFixture.statementUUID, in: repos.vault.container)
+                == syncFixture.statementBaseline
+        )
+        #expect(
+            try syncSnapshot(entityUUID: syncFixture.transactionUUID, in: repos.vault.container)
+                == syncFixture.transactionBaseline
+        )
 
         // The allocator may give the restored row a different numeric ID, so
         // prove both baseline structure and a replay through that new ID.
@@ -183,32 +337,28 @@ struct StatementRepositoryTests {
         #expect(restored.endDate == preimage.endDate)
         #expect(restored.beginningBalance == preimage.beginningBalance)
         #expect(restored.endingBalance == preimage.endingBalance)
-        let replayInspection = try repos.statements.inspectMembership(lineItemId: lineItemId)
+        let replayInspection = try syncFixture.statements.inspectMembership(lineItemId: lineItemId)
         let replayPreimage = try #require(replayInspection.statementPreimage)
-        let replayReplacement = try repos.statements.replaceInternalRowWithVisibleStatement(
+        let replayReplacement = try syncFixture.statements.replaceInternalRowWithVisibleStatement(
             sourceStatementId: restored.id, accountId: investment.id,
             startDate: "2026-04-01", endDate: "2026-04-30", beginningBalance: 0,
             endingBalance: 10, name: "April 2026 provider statement", lineItemIds: [lineItemId],
             preimageSha256: try #require(replayInspection.preimageSha256),
             membershipPreimageSha256: try #require(replayInspection.membershipPreimageSha256),
+            replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
             positionIndex: try #require(replayInspection.positionAnchors["statement_index"] ?? nil),
             beforeStatementId: replayInspection.positionAnchors["before_statement_id"] ?? nil,
             afterStatementId: replayInspection.positionAnchors["after_statement_id"] ?? nil
         )
         #expect(replayPreimage.uniqueId == preimage.uniqueId)
         #expect(replayReplacement.isVisibleNamedRow)
-        #expect((try repos.statements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == replayReplacement.id)
+        #expect((try syncFixture.statements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == replayReplacement.id)
     }
 
     @Test("Typed restore rolls back the statement mutation when sync restoration fails")
     func typedInternalRestoreLeavesNoPartialStateWhenSyncFails() throws {
         let repos = try makeRepositories()
         defer { TestVaultHelper.cleanup(repos.vault) }
-        let strictStatements = StatementRepository(
-            container: repos.vault.container,
-            lineItemRepo: LineItemRepository(container: repos.vault.container),
-            syncBlobUpdater: SyncBlobUpdater(container: repos.vault.container)
-        )
         let investment = try createInvestmentAccount(named: "Atomic Sync Restore", using: repos.accounts)
         let transaction = try repos.transactions.create(
             date: "2026-04-10", title: "Atomic internal membership",
@@ -222,32 +372,49 @@ struct StatementRepositoryTests {
         _ = try repos.statements.reconcileLineItems(
             statementId: internalStatement.id, lineItemIds: [lineItemId], operatorConfirmedVisible: true
         )
-        let inspection = try strictStatements.inspectMembership(lineItemId: lineItemId)
-        let replacement = try repos.statements.replaceInternalRowWithVisibleStatement(
+        let inspection = try repos.statements.inspectMembership(lineItemId: lineItemId)
+        let syncFixture = try seedAtomicSyncFixture(
+            vault: repos.vault,
+            transactionId: transaction.id,
+            lineItemId: lineItemId,
+            statementId: internalStatement.id
+        )
+        let replacement = try syncFixture.statements.replaceInternalRowWithVisibleStatement(
             sourceStatementId: internalStatement.id, accountId: investment.id,
             startDate: "2026-04-01", endDate: "2026-04-30", beginningBalance: 0,
             endingBalance: 10, name: "April 2026 provider statement", lineItemIds: [lineItemId],
             preimageSha256: try #require(inspection.preimageSha256),
             membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
+            replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
             positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
             beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
             afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
         )
+        let base = BaseRepository(container: repos.vault.container)
+        try base.performWrite { ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
+            request.predicate = NSPredicate(format: "pLocalID == %@", syncFixture.statementUUID)
+            let record = try #require(try ctx.fetch(request).first)
+            record.setValue(Int16(0), forKey: "pSyncedState")
+            record.setValue(nil, forKey: "pSyncedModificationDate")
+        }
         #expect(throws: (any Error).self) {
-            _ = try strictStatements.restoreInternalRowFromPreimage(
+            _ = try syncFixture.statements.restoreInternalRowFromPreimage(
                 replacementStatementId: replacement.id, accountId: investment.id,
                 statementPreimage: try #require(inspection.statementPreimage),
                 memberships: inspection.lineItemMemberships,
                 preimageSha256: try #require(inspection.preimageSha256),
                 membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
+                replacementLineItemIds: [lineItemId],
+                replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
                 positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
                 beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
                 afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
             )
         }
-        #expect(try strictStatements.get(statementId: replacement.id) != nil)
-        #expect((try strictStatements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == replacement.id)
-        #expect(try strictStatements.get(statementId: internalStatement.id) == nil)
+        #expect(try syncFixture.statements.get(statementId: replacement.id) != nil)
+        #expect((try syncFixture.statements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == replacement.id)
+        #expect(try syncFixture.statements.get(statementId: internalStatement.id) == nil)
     }
 
     @Test("Typed replacement rolls back the statement mutation when sync preconditions fail")
@@ -288,6 +455,7 @@ struct StatementRepositoryTests {
                 lineItemIds: [lineItemId],
                 preimageSha256: try #require(inspection.preimageSha256),
                 membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
+                replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
                 positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
                 beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
                 afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
@@ -296,6 +464,126 @@ struct StatementRepositoryTests {
 
         #expect(try strictStatements.get(statementId: internalStatement.id) != nil)
         #expect((try strictStatements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == internalStatement.id)
+    }
+
+    @Test("Typed internal mutation fails closed without a sync updater")
+    func typedInternalMutationRequiresSyncUpdater() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+        let investment = try createInvestmentAccount(named: "Required Sync Updater", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10",
+            title: "Fail-closed replacement",
+            lineItems: [(accountId: investment.id, amount: 10, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: investment.id)
+        let internalStatement = try repos.statements.create(
+            accountId: investment.id,
+            startDate: "2026-04-01",
+            endDate: "2026-04-30",
+            beginningBalance: 0,
+            endingBalance: 10
+        )
+        _ = try repos.statements.reconcileLineItems(
+            statementId: internalStatement.id,
+            lineItemIds: [lineItemId],
+            operatorConfirmedVisible: true
+        )
+        let inspection = try repos.statements.inspectMembership(lineItemId: lineItemId)
+
+        #expect(throws: (any Error).self) {
+            _ = try repos.statements.replaceInternalRowWithVisibleStatement(
+                sourceStatementId: internalStatement.id,
+                accountId: investment.id,
+                startDate: "2026-04-01",
+                endDate: "2026-04-30",
+                beginningBalance: 0,
+                endingBalance: 10,
+                name: "April 2026 provider statement",
+                lineItemIds: [lineItemId],
+                preimageSha256: try #require(inspection.preimageSha256),
+                membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
+                replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
+                positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
+                beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+                afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+            )
+        }
+
+        #expect(try repos.statements.get(statementId: internalStatement.id) != nil)
+        #expect((try repos.statements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == internalStatement.id)
+    }
+
+    @Test("Typed restore rejects a selected member detached after forward")
+    func typedInternalRestoreRejectsDetachedSelectedMember() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+        let investment = try createInvestmentAccount(named: "Detached Selection Drift", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10",
+            title: "Detached selected member",
+            lineItems: [(accountId: investment.id, amount: 10, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: investment.id)
+        let internalStatement = try repos.statements.create(
+            accountId: investment.id,
+            startDate: "2026-04-01",
+            endDate: "2026-04-30",
+            beginningBalance: 0,
+            endingBalance: 10
+        )
+        _ = try repos.statements.reconcileLineItems(
+            statementId: internalStatement.id,
+            lineItemIds: [lineItemId],
+            operatorConfirmedVisible: true
+        )
+        let inspection = try repos.statements.inspectMembership(lineItemId: lineItemId)
+        let syncFixture = try seedAtomicSyncFixture(
+            vault: repos.vault,
+            transactionId: transaction.id,
+            lineItemId: lineItemId,
+            statementId: internalStatement.id
+        )
+        let replacement = try syncFixture.statements.replaceInternalRowWithVisibleStatement(
+            sourceStatementId: internalStatement.id,
+            accountId: investment.id,
+            startDate: "2026-04-01",
+            endDate: "2026-04-30",
+            beginningBalance: 0,
+            endingBalance: 10,
+            name: "April 2026 provider statement",
+            lineItemIds: [lineItemId],
+            preimageSha256: try #require(inspection.preimageSha256),
+            membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
+            replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
+            positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
+            beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+            afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+        )
+        let base = BaseRepository(container: repos.vault.container)
+        try base.performWrite { ctx in
+            let line = try #require(try base.fetchByPK(entityName: "LineItem", pk: lineItemId, in: ctx))
+            line.setValue(nil, forKey: "pStatement")
+        }
+
+        #expect(throws: (any Error).self) {
+            _ = try syncFixture.statements.restoreInternalRowFromPreimage(
+                replacementStatementId: replacement.id,
+                accountId: investment.id,
+                statementPreimage: try #require(inspection.statementPreimage),
+                memberships: inspection.lineItemMemberships,
+                preimageSha256: try #require(inspection.preimageSha256),
+                membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
+                replacementLineItemIds: [lineItemId],
+                replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
+                positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
+                beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+                afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+            )
+        }
+
+        #expect(try syncFixture.statements.get(statementId: replacement.id) != nil)
+        #expect((try syncFixture.statements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == nil)
     }
 
     @Test("Explicit reconciliation allows manually selected pre-start line items")
