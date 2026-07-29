@@ -356,7 +356,8 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         replacementStatementId: Int, accountId: Int, statementPreimage: StatementDTO,
         memberships: [StatementLineItemMembershipPreimageDTO], preimageSha256: String,
         membershipPreimageSha256: String, replacementLineItemIds: [Int],
-        replacementMembershipPreimageSha256: String, positionIndex: Int,
+        replacementMembershipPreimageSha256: String, replacementPreimageSha256: String,
+        positionIndex: Int,
         beforeStatementId: Int?, afterStatementId: Int?
     ) throws -> StatementDTO {
         guard let updater = syncBlobUpdater else {
@@ -378,6 +379,9 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                   let account = Self.relatedObject(replacement, "pAccount") else { throw ToolError.notFound("Replacement statement not found: \(replacementStatementId)") }
             guard Self.extractPK(from: account.objectID) == accountId,
                   statementPreimage.accountId == accountId else { throw ToolError.invalidInput("Restore account scope does not match") }
+            guard Self.statementPreimageHash(self.mapToDTO(replacement)) == replacementPreimageSha256 else {
+                throw ToolError.invalidInput("Replacement statement preimage has drifted from the exact forward state")
+            }
             let sortedMemberships = memberships.sorted { $0.lineItemId < $1.lineItemId }
             guard Self.membershipPreimageHash(sortedMemberships) == membershipPreimageSha256 else { throw ToolError.invalidInput("Restore membership preimage hash does not match") }
             // The replacement occupies the original position during inverse;

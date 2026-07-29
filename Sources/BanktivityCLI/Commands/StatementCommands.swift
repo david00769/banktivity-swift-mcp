@@ -157,6 +157,7 @@ struct Statements: AsyncParsableCommand {
         @Option(name: .long) var membershipPreimageSha256: String
         @Option(name: .long) var replacementLineItemIds: String
         @Option(name: .long) var replacementMembershipPreimageSha256: String
+        @Option(name: .long) var replacementPreimageSha256: String
         @Option(name: .long) var positionIndex: Int
         @Option(name: .long) var beforeStatementId: Int?
         @Option(name: .long) var afterStatementId: Int?
@@ -176,7 +177,7 @@ struct Statements: AsyncParsableCommand {
             let guarder = BanktivityCLI.createWriteGuard(vaultPath: path); try await guardWrite(guarder)
             try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
             let repo = StatementRepository(container: container, lineItemRepo: LineItemRepository(container: container), syncBlobUpdater: SyncBlobUpdater(container: container))
-            let result = try repo.restoreInternalRowFromPreimage(replacementStatementId: replacementStatementId, accountId: accountId, statementPreimage: preimage, memberships: memberships, preimageSha256: preimageSha256, membershipPreimageSha256: membershipPreimageSha256, replacementLineItemIds: replacementIds, replacementMembershipPreimageSha256: replacementMembershipPreimageSha256, positionIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId)
+            let result = try repo.restoreInternalRowFromPreimage(replacementStatementId: replacementStatementId, accountId: accountId, statementPreimage: preimage, memberships: memberships, preimageSha256: preimageSha256, membershipPreimageSha256: membershipPreimageSha256, replacementLineItemIds: replacementIds, replacementMembershipPreimageSha256: replacementMembershipPreimageSha256, replacementPreimageSha256: replacementPreimageSha256, positionIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId)
             try outputJSON(result, format: parent.format)
         }
     }

@@ -296,24 +296,51 @@ struct StatementRepositoryTests {
             try syncSnapshot(entityUUID: syncFixture.transactionUUID, in: repos.vault.container)
                 != syncFixture.transactionBaseline
         )
+        let replacementPreimageHash = try #require(
+            syncFixture.statements.inspectMembership(lineItemId: lineItemId).preimageSha256
+        )
 
         #expect(throws: (any Error).self) {
             _ = try syncFixture.statements.restoreInternalRowFromPreimage(
                 replacementStatementId: replacement.id, accountId: investment.id, statementPreimage: preimage,
                 memberships: inspection.lineItemMemberships, preimageSha256: "wrong",
                 membershipPreimageSha256: membershipHash, replacementLineItemIds: [lineItemId],
-                replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]), positionIndex: index,
+                replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
+                replacementPreimageSha256: replacementPreimageHash, positionIndex: index,
                 beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
                 afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
             )
         }
         #expect(try syncFixture.statements.get(statementId: replacement.id) != nil)
 
+        let base = BaseRepository(container: repos.vault.container)
+        try base.performWrite { ctx in
+            let row = try #require(try base.fetchByPK(entityName: "Statement", pk: replacement.id, in: ctx))
+            row.setValue("Drifted provider statement", forKey: "pName")
+        }
+        #expect(throws: (any Error).self) {
+            _ = try syncFixture.statements.restoreInternalRowFromPreimage(
+                replacementStatementId: replacement.id, accountId: investment.id, statementPreimage: preimage,
+                memberships: inspection.lineItemMemberships, preimageSha256: preimageHash,
+                membershipPreimageSha256: membershipHash, replacementLineItemIds: [lineItemId],
+                replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
+                replacementPreimageSha256: replacementPreimageHash, positionIndex: index,
+                beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+                afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+            )
+        }
+        #expect(try syncFixture.statements.get(statementId: replacement.id) != nil)
+        try base.performWrite { ctx in
+            let row = try #require(try base.fetchByPK(entityName: "Statement", pk: replacement.id, in: ctx))
+            row.setValue("April 2026 provider statement", forKey: "pName")
+        }
+
         let restored = try syncFixture.statements.restoreInternalRowFromPreimage(
             replacementStatementId: replacement.id, accountId: investment.id, statementPreimage: preimage,
             memberships: inspection.lineItemMemberships, preimageSha256: preimageHash,
             membershipPreimageSha256: membershipHash, replacementLineItemIds: [lineItemId],
-            replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]), positionIndex: index,
+            replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
+            replacementPreimageSha256: replacementPreimageHash, positionIndex: index,
             beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
             afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
         )
@@ -390,6 +417,9 @@ struct StatementRepositoryTests {
             beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
             afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
         )
+        let replacementPreimageHash = try #require(
+            syncFixture.statements.inspectMembership(lineItemId: lineItemId).preimageSha256
+        )
         let base = BaseRepository(container: repos.vault.container)
         try base.performWrite { ctx in
             let request = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
@@ -407,6 +437,7 @@ struct StatementRepositoryTests {
                 membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
                 replacementLineItemIds: [lineItemId],
                 replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
+                replacementPreimageSha256: replacementPreimageHash,
                 positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
                 beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
                 afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
@@ -560,6 +591,9 @@ struct StatementRepositoryTests {
             beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
             afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
         )
+        let replacementPreimageHash = try #require(
+            syncFixture.statements.inspectMembership(lineItemId: lineItemId).preimageSha256
+        )
         let base = BaseRepository(container: repos.vault.container)
         try base.performWrite { ctx in
             let line = try #require(try base.fetchByPK(entityName: "LineItem", pk: lineItemId, in: ctx))
@@ -576,6 +610,7 @@ struct StatementRepositoryTests {
                 membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
                 replacementLineItemIds: [lineItemId],
                 replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
+                replacementPreimageSha256: replacementPreimageHash,
                 positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
                 beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
                 afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
