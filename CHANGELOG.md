@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Preserve Banktivity date-only calendar days in the host time zone instead of
+  parsing and formatting them as UTC instants; full ISO 8601 timestamps remain UTC
+
 ## v0.13.0
 
 - Fix deletion sync: set `pSyncedState = 3` with current timestamp to signal deletion to CloudKit, instead of clearing blob and nulling modification date (which Banktivity ignored)
