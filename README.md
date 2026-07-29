@@ -286,8 +286,10 @@ banktivity-cli export turtle --output vault.ttl
 - `templates list`, `templates get`, `templates create`, `templates update`, `templates delete`
 - `import-rules list`, `import-rules get`, `import-rules match`, `import-rules create`, `import-rules update`, `import-rules delete`
 - `scheduled list`, `scheduled get`, `scheduled create`, `scheduled update`, `scheduled delete`
-- `statements list`, `statements status`, `statements get`, `statements create`, `statements delete`, `statements reconcile`, `statements unreconcile`, `statements unreconciled`
+- `statements list`, `statements status`, `statements get`, `statements inspect-membership`, `statements create`, `statements delete`, `statements reconcile`, `statements unreconcile`, `statements unreconciled`
   - `statements delete` rejects internal/unnamed investment rows unless the diagnostic plan explicitly supplies `--allow-internal`
+  - `statements inspect-membership --line-item-id <id>` is read-only. It reports the linked row's identity, balances, membership, chain anchors, preimage hashes, and addressable/reconcilable/restorable capabilities; an unaddressable reference is an explicit error, never an omitted row.
+  - `statements replace-internal-row-with-visible-statement` and `statements restore-internal-row-from-preimage` are the only typed internal-row replacement pair. Both require the exact account, period/position anchors, membership and cleared-state preimages, and their SHA-256 bindings. The restore returns its allocator-generated row ID for replay; these commands are not a generic `--allow-internal` mutation route.
 - `securities list`, `securities create`, `securities prices`, `securities holdings`, `securities trades`, `securities income`, `securities create-income`, `securities adjust`, `securities import-prices`, `securities delete-prices`
 - `export turtle`
 - `schema`

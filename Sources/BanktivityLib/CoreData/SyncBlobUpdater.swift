@@ -95,6 +95,79 @@ public final class SyncBlobUpdater: @unchecked Sendable {
         }
     }
 
+    /// Re-activate the exact pre-existing sync record after a hash-bound
+    /// statement-row restore.  This is deliberately not a general create API:
+    /// the typed restore path may only revive the record which its forward
+    /// operation marked deleted.
+    public func restoreDeletedSyncRecord(entityUUID: String) {
+        do {
+            try CoreDataWriteCoordinator.perform {
+                let bgContext = container.newBackgroundContext()
+                nonisolated(unsafe) var writeError: Error?
+                bgContext.performAndWait {
+                    do {
+                        try self.restoreDeletedSyncRecord(entityUUID: entityUUID, in: bgContext)
+                        try bgContext.save()
+                    } catch {
+                        writeError = error
+                    }
+                }
+                if let error = writeError { throw error }
+            }
+        } catch {
+            log("Failed to restore deleted sync record for \(entityUUID): \(error)")
+        }
+    }
+
+    /// Restore the exact deleted statement sync record in a caller-owned
+    /// transaction.  Typed statement restore uses this overload so a sync
+    /// failure aborts the Core Data statement/membership mutation instead of
+    /// leaving a partially restored row behind.
+    public func restoreDeletedSyncRecord(entityUUID: String, in context: NSManagedObjectContext) throws {
+        guard let record = try fetchSyncRecord(entityUUID: entityUUID, in: context) else {
+            throw ToolError.notFound("No sync record exists for hash-bound statement restore")
+        }
+        guard (record.value(forKey: "pSyncedState") as? NSNumber)?.intValue == 3 else {
+            throw ToolError.invalidInput("Statement sync record was not deleted by the forward operation")
+        }
+        record.setValue(Int16(0), forKey: "pSyncedState")
+        record.setValue(nil, forKey: "pSyncedModificationDate")
+        log("Restored deleted sync record for UUID \(entityUUID)")
+    }
+
+    /// Patch a required transaction sync blob in a caller-owned transaction.
+    /// Unlike the legacy best-effort updater, this is deliberately strict:
+    /// absence, malformed data, or a no-op patch rejects the enclosing typed
+    /// statement restore before its context can be saved.
+    public func patchRequiredTransactionBlob(
+        transactionUUID: String,
+        in context: NSManagedObjectContext,
+        using transform: @Sendable (String) -> String
+    ) throws {
+        guard let record = try fetchSyncRecord(entityUUID: transactionUUID, in: context) else {
+            throw ToolError.notFound("No sync record exists for hash-bound statement restore transaction")
+        }
+        guard let blobData = record.value(forKey: "pRemoteEntityData") as? Data,
+              let decompressed = Self.decompressGzip(blobData),
+              let xml = String(data: decompressed, encoding: .utf8) else {
+            throw ToolError.invalidInput("Transaction sync metadata is unreadable for hash-bound statement restore")
+        }
+        let patched = transform(xml)
+        guard patched != xml,
+              patched.hasPrefix("<entity") || patched.hasPrefix("<?xml"),
+              patched.hasSuffix("</entity>") || patched.hasSuffix("</entity>\n") else {
+            throw ToolError.invalidInput("Transaction sync metadata patch is incomplete for hash-bound statement restore")
+        }
+        let ratio = Double(patched.utf8.count) / Double(xml.utf8.count)
+        guard ratio > 0.5 && ratio < 1.5,
+              let patchedData = patched.data(using: .utf8),
+              let compressed = Self.compressGzip(patchedData) else {
+            throw ToolError.invalidInput("Transaction sync metadata patch is invalid for hash-bound statement restore")
+        }
+        record.setValue(compressed, forKey: "pRemoteEntityData")
+        record.setValue(nil, forKey: "pSyncedModificationDate")
+    }
+
     // MARK: - Sync Record Creation
 
     public func createTransactionSyncRecord(

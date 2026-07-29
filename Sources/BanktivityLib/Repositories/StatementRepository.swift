@@ -1,11 +1,19 @@
 // Copyright (c) 2026 Steve Flinter. MIT License.
 
 import CoreData
+import CryptoKit
 import Foundation
 
 public final class StatementRepository: BaseRepository, @unchecked Sendable {
     private let lineItemRepo: LineItemRepository
     private let syncBlobUpdater: SyncBlobUpdater?
+
+    private struct StatementMembershipSyncPatch: Sendable {
+        let transactionUUID: String
+        let lineItemUUID: String
+        let cleared: Bool
+        let selectedForReplacement: Bool
+    }
 
     public init(container: NSPersistentContainer, lineItemRepo: LineItemRepository, syncBlobUpdater: SyncBlobUpdater? = nil) {
         self.lineItemRepo = lineItemRepo
@@ -23,9 +31,33 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
 
             let request = NSFetchRequest<NSManagedObject>(entityName: "Statement")
             request.predicate = NSPredicate(format: "pAccount == %@", account)
-            request.sortDescriptors = [NSSortDescriptor(key: "pStartDate", ascending: true)]
+            request.sortDescriptors = [
+                NSSortDescriptor(key: "pStartDate", ascending: true),
+                NSSortDescriptor(key: "pEndDate", ascending: true),
+                NSSortDescriptor(key: "pUniqueID", ascending: true),
+            ]
 
             let statements = try ctx.fetch(request)
+            if includeInternal {
+                let listedIDs = Set(statements.map { Self.extractPK(from: $0.objectID) })
+                let lineRequest = NSFetchRequest<NSManagedObject>(entityName: "LineItem")
+                lineRequest.predicate = NSPredicate(format: "pAccount == %@ AND pStatement != nil", account)
+                let unaddressable = try ctx.fetch(lineRequest).compactMap { line -> String? in
+                    guard let referenced = Self.relatedObject(line, "pStatement") else { return nil }
+                    let referencedID = Self.extractPK(from: referenced.objectID)
+                    guard let referencedAccount = Self.relatedObject(referenced, "pAccount"),
+                          referencedAccount.objectID == account.objectID,
+                          listedIDs.contains(referencedID) else {
+                        return "lineItem=\(Self.extractPK(from: line.objectID)),statement=\(referencedID)"
+                    }
+                    return nil
+                }.sorted()
+                guard unaddressable.isEmpty else {
+                    throw ToolError.invalidInput(
+                        "unaddressable_statement_reference:\(unaddressable.joined(separator: ";"))"
+                    )
+                }
+            }
             return statements
                 .filter { includeInternal || !Self.isInternalInvestmentStatement($0) }
                 .map { self.mapToSummaryDTO($0) }
@@ -47,6 +79,89 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 return nil
             }
             return self.mapToDTO(statement)
+        }
+    }
+
+    /// Inspect a statement reference from the line-item side.  This is the
+    /// authoritative diagnostic for hidden investment rows: callers get an
+    /// explicit unaddressable record instead of silently losing the reference
+    /// in a visible-only statement list.
+    public func inspectMembership(lineItemId: Int) throws -> StatementMembershipInspectionDTO {
+        try performRead { [self] ctx in
+            guard let lineItem = try fetchByPK(entityName: "LineItem", pk: lineItemId, in: ctx) else {
+                throw ToolError.notFound("Line item not found: \(lineItemId)")
+            }
+            guard let statement = Self.relatedObject(lineItem, "pStatement") else {
+                return StatementMembershipInspectionDTO(
+                    lineItemId: lineItemId, referencedStatementId: nil, stableIdentity: nil,
+                    accountId: nil, accountName: nil, startDate: nil, endDate: nil,
+                    beginningBalance: nil, endingBalance: nil, membershipLineItemIds: [], membershipCount: 0,
+                    visibilityClassification: "unaddressable_reference", positionAnchors: [:],
+                    statementPreimage: nil, lineItemMemberships: [], preimageSha256: nil,
+                    membershipPreimageSha256: nil,
+                    capabilityFlags: ["addressable": false, "reconcilable": false, "restorable": false]
+                )
+            }
+            guard let account = Self.relatedObject(statement, "pAccount") else {
+                return StatementMembershipInspectionDTO(
+                    lineItemId: lineItemId, referencedStatementId: Self.extractPK(from: statement.objectID),
+                    stableIdentity: Self.stringValue(statement, "pUniqueID"), accountId: nil, accountName: nil,
+                    startDate: nil, endDate: nil, beginningBalance: nil, endingBalance: nil,
+                    membershipLineItemIds: [], membershipCount: 0,
+                    visibilityClassification: "unaddressable_reference", positionAnchors: [:],
+                    statementPreimage: nil, lineItemMemberships: [], preimageSha256: nil,
+                    membershipPreimageSha256: nil,
+                    capabilityFlags: ["addressable": false, "reconcilable": false, "restorable": false]
+                )
+            }
+            let statementId = Self.extractPK(from: statement.objectID)
+            let accountId = Self.extractPK(from: account.objectID)
+            let statementDTO = self.mapToDTO(statement)
+            let memberships = Self.relatedSet(statement, "pLineItems")
+                .map {
+                    StatementLineItemMembershipPreimageDTO(
+                        lineItemId: Self.extractPK(from: $0.objectID), statementId: statementId,
+                        cleared: $0.value(forKey: "pCleared") as? Bool ?? false
+                    )
+                }
+                .sorted { $0.lineItemId < $1.lineItemId }
+            let membershipIds = memberships.map(\.lineItemId)
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Statement")
+            request.predicate = NSPredicate(format: "pAccount == %@", account)
+            request.sortDescriptors = [
+                NSSortDescriptor(key: "pStartDate", ascending: true),
+                NSSortDescriptor(key: "pEndDate", ascending: true),
+                NSSortDescriptor(key: "pUniqueID", ascending: true),
+            ]
+            let ordered = try ctx.fetch(request)
+            guard let index = ordered.firstIndex(where: { Self.extractPK(from: $0.objectID) == statementId }) else {
+                throw ToolError.invalidInput("Statement \(statementId) is not addressable in its account chain")
+            }
+            let before = index > 0 ? Self.extractPK(from: ordered[index - 1].objectID) : nil
+            let after = index + 1 < ordered.count ? Self.extractPK(from: ordered[index + 1].objectID) : nil
+            let classification = Self.statementRowClassification(statement)
+            let hasRestorablePreimage = !Self.stringValue(statement, "pUniqueID").isEmpty
+                && !statementDTO.startDate.isEmpty && !statementDTO.endDate.isEmpty
+            return StatementMembershipInspectionDTO(
+                lineItemId: lineItemId, referencedStatementId: statementId,
+                stableIdentity: Self.stringValue(statement, "pUniqueID"), accountId: accountId,
+                accountName: Self.stringValue(account, "pName"), startDate: statementDTO.startDate,
+                endDate: statementDTO.endDate, beginningBalance: statementDTO.beginningBalance,
+                endingBalance: statementDTO.endingBalance, membershipLineItemIds: membershipIds,
+                membershipCount: membershipIds.count, visibilityClassification: classification.kind,
+                positionAnchors: ["statement_index": index, "before_statement_id": before, "after_statement_id": after],
+                statementPreimage: statementDTO, lineItemMemberships: memberships,
+                preimageSha256: Self.statementPreimageHash(statementDTO),
+                membershipPreimageSha256: Self.membershipPreimageHash(memberships),
+                capabilityFlags: [
+                    "addressable": true,
+                    // This means reconcilable by a typed, inspected route; it
+                    // does not grant the generic visible-row reconcile command
+                    // authority over an internal row.
+                    "reconcilable": classification.isVisibleNamedRow || classification.isInternalRowCandidate,
+                    "restorable": classification.isInternalRowCandidate && hasRestorablePreimage,
+                ]
+            )
         }
     }
 
@@ -91,6 +206,160 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 lastReconciledStatementEndDate: lastEndDate
             )
         }
+    }
+
+    /// Typed replacement for an inspected unnamed investment row.  It is
+    /// intentionally the only automatic route which changes such a row; the
+    /// generic --allow-internal flags are not part of this contract.
+    public func replaceInternalRowWithVisibleStatement(
+        sourceStatementId: Int, accountId: Int, startDate: String, endDate: String,
+        beginningBalance: Double, endingBalance: Double, name: String,
+        lineItemIds: [Int], preimageSha256: String, membershipPreimageSha256: String,
+        positionIndex: Int, beforeStatementId: Int?, afterStatementId: Int?
+    ) throws -> StatementDTO {
+        let selectedIds = Set(lineItemIds)
+        let preRead: (statementUUID: String, patches: [StatementMembershipSyncPatch]) = try performRead { [self] ctx in
+            guard let source = try fetchByPK(entityName: "Statement", pk: sourceStatementId, in: ctx) else {
+                throw ToolError.notFound("Internal statement not found: \(sourceStatementId)")
+            }
+            let patches = Self.relatedSet(source, "pLineItems").compactMap { line -> StatementMembershipSyncPatch? in
+                guard let transaction = Self.relatedObject(line, "pTransaction") else { return nil }
+                let transactionUUID = Self.stringValue(transaction, "pUniqueID")
+                let lineItemUUID = Self.stringValue(line, "pUniqueID")
+                guard !transactionUUID.isEmpty, !lineItemUUID.isEmpty else { return nil }
+                return StatementMembershipSyncPatch(
+                    transactionUUID: transactionUUID, lineItemUUID: lineItemUUID,
+                    cleared: line.value(forKey: "pCleared") as? Bool ?? false,
+                    selectedForReplacement: selectedIds.contains(Self.extractPK(from: line.objectID))
+                )
+            }
+            return (Self.stringValue(source, "pUniqueID"), patches)
+        }
+        let newId: Int = try performWriteReturning { [self] ctx in
+            guard let source = try fetchByPK(entityName: "Statement", pk: sourceStatementId, in: ctx),
+                  let account = Self.relatedObject(source, "pAccount") else {
+                throw ToolError.notFound("Internal statement not found: \(sourceStatementId)")
+            }
+            guard Self.extractPK(from: account.objectID) == accountId,
+                  Self.isInternalInvestmentStatement(source),
+                  Self.statementPreimageHash(self.mapToDTO(source)) == preimageSha256 else {
+                throw ToolError.invalidInput("Internal statement replacement preimage or account scope does not match")
+            }
+            try self.validateStatementPosition(source, account: account, expectedIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId, in: ctx)
+            let sourceLines = Self.relatedSet(source, "pLineItems")
+            let sourceIds = Set(sourceLines.map { Self.extractPK(from: $0.objectID) })
+            guard Set(lineItemIds).isSubset(of: sourceIds), !lineItemIds.isEmpty else {
+                throw ToolError.invalidInput("Replacement membership is not a non-empty subset of the inspected source row")
+            }
+            let actualMembership = sourceLines.map {
+                StatementLineItemMembershipPreimageDTO(
+                    lineItemId: Self.extractPK(from: $0.objectID), statementId: sourceStatementId,
+                    cleared: $0.value(forKey: "pCleared") as? Bool ?? false
+                )
+            }.sorted { $0.lineItemId < $1.lineItemId }
+            guard Self.membershipPreimageHash(actualMembership) == membershipPreimageSha256 else {
+                throw ToolError.invalidInput("Internal statement replacement membership preimage does not match")
+            }
+            for line in sourceLines { line.setValue(nil, forKey: "pStatement") }
+            let replacement = Self.createObject(entityName: "Statement", in: ctx)
+            replacement.setValue(account, forKey: "pAccount")
+            Self.setDate(replacement, "pStartDate", isoString: startDate); Self.setDate(replacement, "pEndDate", isoString: endDate)
+            replacement.setValue(beginningBalance as NSNumber, forKey: "pBeginningBalance"); replacement.setValue(endingBalance as NSNumber, forKey: "pEndingBalance")
+            replacement.setValue(name, forKey: "pName"); replacement.setValue(Self.generateUUID(), forKey: "pUniqueID")
+            Self.setNow(replacement, "pCreationTime"); Self.setNow(replacement, "pModificationDate")
+            for line in sourceLines where selectedIds.contains(Self.extractPK(from: line.objectID)) {
+                line.setValue(replacement, forKey: "pStatement"); line.setValue(true, forKey: "pCleared")
+            }
+            ctx.delete(source); try ctx.obtainPermanentIDs(for: [replacement])
+            return Self.extractPK(from: replacement.objectID)
+        }
+        guard let result = try get(statementId: newId) else { throw RepositoryError.unexpectedNilResult }
+        if let updater = syncBlobUpdater {
+            if !preRead.statementUUID.isEmpty { updater.deleteSyncRecord(entityUUID: preRead.statementUUID) }
+            for patch in preRead.patches {
+                updater.updateTransactionBlob(transactionUUID: patch.transactionUUID) { xml in
+                    let statementUUID = patch.selectedForReplacement ? result.uniqueId : nil
+                    return updater.patchCleared(
+                        xml: updater.patchStatement(xml: xml, lineItemUUID: patch.lineItemUUID, statementUUID: statementUUID),
+                        lineItemUUID: patch.lineItemUUID,
+                        cleared: patch.selectedForReplacement ? true : patch.cleared
+                    )
+                }
+            }
+        }
+        return result
+    }
+
+    public func restoreInternalRowFromPreimage(
+        replacementStatementId: Int, accountId: Int, statementPreimage: StatementDTO,
+        memberships: [StatementLineItemMembershipPreimageDTO], preimageSha256: String,
+        membershipPreimageSha256: String, positionIndex: Int, beforeStatementId: Int?, afterStatementId: Int?
+    ) throws -> StatementDTO {
+        guard Self.statementPreimageHash(statementPreimage) == preimageSha256 else {
+            throw ToolError.invalidInput("Internal statement restore preimage hash does not match the supplied preimage")
+        }
+        guard let restoredUniqueId = statementPreimage.uniqueId, !restoredUniqueId.isEmpty else {
+            throw ToolError.invalidInput("Internal statement restore requires the stable preimage identity")
+        }
+        let preReadPatches: [StatementMembershipSyncPatch] = try performRead { [self] ctx in
+            try memberships.map { membership in
+                guard let line = try fetchByPK(entityName: "LineItem", pk: membership.lineItemId, in: ctx),
+                      let transaction = Self.relatedObject(line, "pTransaction") else {
+                    throw ToolError.invalidInput("Restore line item is missing")
+                }
+                let transactionUUID = Self.stringValue(transaction, "pUniqueID")
+                let lineItemUUID = Self.stringValue(line, "pUniqueID")
+                guard !transactionUUID.isEmpty, !lineItemUUID.isEmpty else {
+                    throw ToolError.invalidInput("Restore line item sync identity is missing")
+                }
+                return StatementMembershipSyncPatch(
+                    transactionUUID: transactionUUID, lineItemUUID: lineItemUUID,
+                    cleared: membership.cleared, selectedForReplacement: true
+                )
+            }
+        }
+        let restoredId: Int = try performWriteReturning { [self] ctx in
+            guard let replacement = try fetchByPK(entityName: "Statement", pk: replacementStatementId, in: ctx),
+                  let account = Self.relatedObject(replacement, "pAccount") else { throw ToolError.notFound("Replacement statement not found: \(replacementStatementId)") }
+            guard Self.extractPK(from: account.objectID) == accountId,
+                  statementPreimage.accountId == accountId else { throw ToolError.invalidInput("Restore account scope does not match") }
+            let sortedMemberships = memberships.sorted { $0.lineItemId < $1.lineItemId }
+            guard Self.membershipPreimageHash(sortedMemberships) == membershipPreimageSha256 else { throw ToolError.invalidInput("Restore membership preimage hash does not match") }
+            // The replacement occupies the original position during inverse;
+            // anchors are checked before mutating so failed restores roll back.
+            try self.validateStatementPosition(replacement, account: account, expectedIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId, in: ctx)
+            let restored = Self.createObject(entityName: "Statement", in: ctx)
+            restored.setValue(account, forKey: "pAccount"); Self.setDate(restored, "pStartDate", isoString: statementPreimage.startDate); Self.setDate(restored, "pEndDate", isoString: statementPreimage.endDate)
+            restored.setValue(statementPreimage.beginningBalance as NSNumber, forKey: "pBeginningBalance"); restored.setValue(statementPreimage.endingBalance as NSNumber, forKey: "pEndingBalance")
+            restored.setValue(statementPreimage.name, forKey: "pName"); restored.setValue(statementPreimage.note, forKey: "pNote")
+            restored.setValue(restoredUniqueId, forKey: "pUniqueID")
+            if let createdAt = statementPreimage.createdAt { Self.setDate(restored, "pCreationTime", isoString: createdAt) } else { Self.setNow(restored, "pCreationTime") }
+            if let modifiedAt = statementPreimage.modifiedAt { Self.setDate(restored, "pModificationDate", isoString: modifiedAt) } else { Self.setNow(restored, "pModificationDate") }
+            for membership in memberships {
+                guard let line = try fetchByPK(entityName: "LineItem", pk: membership.lineItemId, in: ctx),
+                      let lineAccount = Self.relatedObject(line, "pAccount"), Self.extractPK(from: lineAccount.objectID) == accountId else { throw ToolError.invalidInput("Restore line item is missing or outside account scope") }
+                line.setValue(restored, forKey: "pStatement"); line.setValue(membership.cleared, forKey: "pCleared")
+            }
+            // Sync metadata is part of this reversible operation.  These
+            // strict context-local updates execute before the context save, so
+            // any failure rolls back the restored row, memberships, and
+            // replacement deletion together.
+            if let updater = syncBlobUpdater {
+                try updater.restoreDeletedSyncRecord(entityUUID: restoredUniqueId, in: ctx)
+                for patch in preReadPatches {
+                    try updater.patchRequiredTransactionBlob(transactionUUID: patch.transactionUUID, in: ctx) { xml in
+                        updater.patchCleared(
+                            xml: updater.patchStatement(xml: xml, lineItemUUID: patch.lineItemUUID, statementUUID: restoredUniqueId),
+                            lineItemUUID: patch.lineItemUUID,
+                            cleared: patch.cleared
+                        )
+                    }
+                }
+            }
+            ctx.delete(replacement); try ctx.obtainPermanentIDs(for: [restored]); return Self.extractPK(from: restored.objectID)
+        }
+        guard let result = try get(statementId: restoredId) else { throw RepositoryError.unexpectedNilResult }
+        return result
     }
 
     // MARK: - Write Operations
@@ -684,6 +953,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             accountName: accountName,
             accountClass: accountClass,
             accountType: accountType,
+            uniqueId: Self.stringValue(object, "pUniqueID"),
             rowKind: rowClassification.kind,
             isVisibleNamedRow: rowClassification.isVisibleNamedRow,
             isUnnamedInvestmentRow: rowClassification.isUnnamedInvestmentRow,
@@ -834,5 +1104,42 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
 
     private static func isInternalInvestmentStatement(_ statement: NSManagedObject) -> Bool {
         statementRowClassification(statement).isInternalRowCandidate
+    }
+
+    private static func statementPreimageHash(_ statement: StatementDTO) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(statement) else { return nil }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    // Internal for focused repository tests which prove a rejected restore
+    // leaves the replacement row intact.  It is not exposed through the CLI.
+    static func membershipPreimageHash(_ memberships: [StatementLineItemMembershipPreimageDTO]) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(memberships.sorted { $0.lineItemId < $1.lineItemId }) else { return nil }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func sha256JSONString(_ object: Any) -> String? {
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else { return nil }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func validateStatementPosition(_ statement: NSManagedObject, account: NSManagedObject, expectedIndex: Int, beforeStatementId: Int?, afterStatementId: Int?, in ctx: NSManagedObjectContext) throws {
+        let request = NSFetchRequest<NSManagedObject>(entityName: "Statement")
+        request.predicate = NSPredicate(format: "pAccount == %@", account)
+        request.sortDescriptors = [NSSortDescriptor(key: "pStartDate", ascending: true), NSSortDescriptor(key: "pEndDate", ascending: true)]
+        let rows = try ctx.fetch(request)
+        guard let index = rows.firstIndex(where: { $0.objectID == statement.objectID }), index == expectedIndex else {
+            throw ToolError.invalidInput("Statement position anchor index does not match")
+        }
+        let actualBefore = index > 0 ? Self.extractPK(from: rows[index - 1].objectID) : nil
+        let actualAfter = index + 1 < rows.count ? Self.extractPK(from: rows[index + 1].objectID) : nil
+        guard actualBefore == beforeStatementId && actualAfter == afterStatementId else {
+            throw ToolError.invalidInput("Statement position anchors do not match")
+        }
     }
 }
