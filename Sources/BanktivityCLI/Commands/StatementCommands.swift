@@ -7,7 +7,7 @@ import Foundation
 struct Statements: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Statement reconciliation operations",
-        subcommands: [List.self, Status.self, Get.self, CorrectionPlan.self, Create.self, Update.self, Delete.self, Reconcile.self, Unreconcile.self, Unreconciled.self]
+        subcommands: [List.self, Status.self, Get.self, InspectMembership.self, ReplaceInternalRow.self, RestoreInternalRow.self, CorrectionPlan.self, Create.self, Update.self, Delete.self, Reconcile.self, Unreconcile.self, Unreconciled.self]
     )
 
     struct List: AsyncParsableCommand {
@@ -33,8 +33,13 @@ struct Statements: AsyncParsableCommand {
 
             let resolvedId = try accountRepo.resolveAccountId(id: accountId, name: accountName)
             try emitStatementReadWarnings(try statements.warningsForStatementReads(accountId: resolvedId))
-            let results = try statements.list(accountId: resolvedId, includeInternal: includeInternal)
-            try outputJSON(results, format: parent.format)
+            if includeInternal {
+                let results = try statements.listWithInternalDiagnostics(accountId: resolvedId)
+                try outputJSON(results, format: parent.format)
+            } else {
+                let results = try statements.list(accountId: resolvedId)
+                try outputJSON(results, format: parent.format)
+            }
         }
     }
 
@@ -80,6 +85,90 @@ struct Statements: AsyncParsableCommand {
                 throw ToolError.notFound("Statement not found: \(statementId)")
             }
             try emitStatementReadWarnings(result.warnings)
+            try outputJSON(result, format: parent.format)
+        }
+    }
+
+    struct InspectMembership: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "inspect-membership",
+            abstract: "Read a line item's complete statement-reference capability diagnostic"
+        )
+
+        @OptionGroup var parent: GlobalOptions
+
+        @Option(name: .long, help: "Line item ID")
+        var lineItemId: Int
+
+        func run() async throws {
+            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
+            let container = try BanktivityCLI.createContainer(vaultPath: path)
+            let lineItemRepo = LineItemRepository(container: container)
+            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
+            let result = try statements.inspectMembership(lineItemId: lineItemId)
+            try outputJSON(result, format: parent.format)
+        }
+    }
+
+    struct ReplaceInternalRow: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(commandName: "replace-internal-row-with-visible-statement", abstract: "Atomically replace an inspected internal statement row with a visible provider-period row")
+        @OptionGroup var parent: GlobalOptions
+        @Option(name: .long) var sourceStatementId: Int
+        @Option(name: .long) var accountId: Int
+        @Option(name: .long) var startDate: String
+        @Option(name: .long) var endDate: String
+        @Option(name: .long) var beginningBalance: Double
+        @Option(name: .long) var endingBalance: Double
+        @Option(name: .long) var name: String
+        @Option(name: .long) var lineItemIds: String
+        @Option(name: .long) var preimageSha256: String
+        @Option(name: .long) var membershipPreimageSha256: String
+        @Option(name: .long) var positionIndex: Int
+        @Option(name: .long) var beforeStatementId: Int?
+        @Option(name: .long) var afterStatementId: Int?
+        @Flag(name: .long) var backupConfirmed = false
+        @Flag(name: .long) var postUIVerificationRequired = false
+
+        func run() async throws {
+            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
+            let container = try BanktivityCLI.createContainer(vaultPath: path)
+            let guarder = BanktivityCLI.createWriteGuard(vaultPath: path); try await guardWrite(guarder)
+            try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
+            let rawIds = lineItemIds.split(separator: ",", omittingEmptySubsequences: false)
+            let ids = rawIds.compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            guard !ids.isEmpty, ids.count == rawIds.count else {
+                throw ToolError.invalidInput("Replacement line-item IDs must be a comma-separated integer list")
+            }
+            let repo = StatementRepository(container: container, lineItemRepo: LineItemRepository(container: container), syncBlobUpdater: SyncBlobUpdater(container: container))
+            let result = try repo.replaceInternalRowWithVisibleStatement(sourceStatementId: sourceStatementId, accountId: accountId, startDate: startDate, endDate: endDate, beginningBalance: beginningBalance, endingBalance: endingBalance, name: name, lineItemIds: ids, preimageSha256: preimageSha256, membershipPreimageSha256: membershipPreimageSha256, positionIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId)
+            try outputJSON(result, format: parent.format)
+        }
+    }
+
+    struct RestoreInternalRow: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(commandName: "restore-internal-row-from-preimage", abstract: "Restore an internal statement row only from its exact hash-bound preimage")
+        @OptionGroup var parent: GlobalOptions
+        @Option(name: .long) var replacementStatementId: Int
+        @Option(name: .long) var accountId: Int
+        @Option(name: .long) var statementPreimageJson: String
+        @Option(name: .long) var lineItemMembershipsJson: String
+        @Option(name: .long) var preimageSha256: String
+        @Option(name: .long) var membershipPreimageSha256: String
+        @Option(name: .long) var positionIndex: Int
+        @Option(name: .long) var beforeStatementId: Int?
+        @Option(name: .long) var afterStatementId: Int?
+        @Flag(name: .long) var backupConfirmed = false
+        @Flag(name: .long) var postUIVerificationRequired = false
+
+        func run() async throws {
+            let preimage = try JSONDecoder().decode(StatementDTO.self, from: Data(statementPreimageJson.utf8))
+            let memberships = try JSONDecoder().decode([StatementLineItemMembershipPreimageDTO].self, from: Data(lineItemMembershipsJson.utf8))
+            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
+            let container = try BanktivityCLI.createContainer(vaultPath: path)
+            let guarder = BanktivityCLI.createWriteGuard(vaultPath: path); try await guardWrite(guarder)
+            try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
+            let repo = StatementRepository(container: container, lineItemRepo: LineItemRepository(container: container), syncBlobUpdater: SyncBlobUpdater(container: container))
+            let result = try repo.restoreInternalRowFromPreimage(replacementStatementId: replacementStatementId, accountId: accountId, statementPreimage: preimage, memberships: memberships, preimageSha256: preimageSha256, membershipPreimageSha256: membershipPreimageSha256, positionIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId)
             try outputJSON(result, format: parent.format)
         }
     }

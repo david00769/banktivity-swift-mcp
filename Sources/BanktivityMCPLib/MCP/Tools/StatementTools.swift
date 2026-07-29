@@ -7,6 +7,7 @@ import MCP
 private struct StatementListResponse: Codable {
     let warnings: [String]
     let statements: [StatementSummaryDTO]
+    let unaddressableReferences: [StatementUnaddressableReferenceDTO]
 }
 
 func registerStatementTools(
@@ -27,12 +28,19 @@ func registerStatementTools(
         ])
     ) { arguments in
         let accountId = try resolveAccountId(accounts: accounts, arguments: arguments)
-        let results = try statements.list(
-            accountId: accountId,
-            includeInternal: ToolHelpers.getBool(arguments, key: "include_internal")
-        )
+        let includeInternal = ToolHelpers.getBool(arguments, key: "include_internal")
+        let diagnostic = includeInternal
+            ? try statements.listWithInternalDiagnostics(accountId: accountId)
+            : StatementInternalListingDTO(
+                statements: try statements.list(accountId: accountId),
+                unaddressableReferences: []
+            )
         let warnings = try statements.warningsForStatementReads(accountId: accountId)
-        return try ToolHelpers.jsonResponse(StatementListResponse(warnings: warnings, statements: results))
+        return try ToolHelpers.jsonResponse(StatementListResponse(
+            warnings: warnings,
+            statements: diagnostic.statements,
+            unaddressableReferences: diagnostic.unaddressableReferences
+        ))
     }
 
     // get_account_reconciliation_status

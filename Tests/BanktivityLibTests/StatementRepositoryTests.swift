@@ -42,6 +42,262 @@ struct StatementRepositoryTests {
         try #require(transaction.lineItems.first { $0.accountId == accountId }?.id)
     }
 
+    @Test("Membership inspection is explicit for unaddressable references")
+    func inspectMembershipReturnsUnaddressableReference() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let card = try createCreditCard(named: "Unaddressable Membership", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10", title: "Unreconciled item",
+            lineItems: [(accountId: card.id, amount: -10, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: card.id)
+
+        let inspection = try repos.statements.inspectMembership(lineItemId: lineItemId)
+        #expect(inspection.referencedStatementId == nil)
+        #expect(inspection.visibilityClassification == "unaddressable_reference")
+        #expect(inspection.capabilityFlags == ["addressable": false, "reconcilable": false, "restorable": false])
+    }
+
+    @Test("Internal listing reports cross-account references without omission")
+    func internalListingReportsUnaddressableReferences() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let requested = try createInvestmentAccount(named: "Requested Internal Listing", using: repos.accounts)
+        let foreign = try createInvestmentAccount(named: "Foreign Internal Listing", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10", title: "Cross-account reference",
+            lineItems: [(accountId: requested.id, amount: 10, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: requested.id)
+        let foreignStatement = try repos.statements.create(
+            accountId: foreign.id, startDate: "2026-04-01", endDate: "2026-04-30",
+            beginningBalance: 0, endingBalance: 0
+        )
+
+        // Build an otherwise-corrupt historical reference directly in the
+        // disposable test vault. The read path must surface it, not hide it.
+        let base = BaseRepository(container: repos.vault.container)
+        try base.performWrite { ctx in
+            let fetchedLineItem = try base.fetchByPK(entityName: "LineItem", pk: lineItemId, in: ctx)
+            let fetchedStatement = try base.fetchByPK(entityName: "Statement", pk: foreignStatement.id, in: ctx)
+            let lineItem = try #require(fetchedLineItem)
+            let statement = try #require(fetchedStatement)
+            lineItem.setValue(statement, forKey: "pStatement")
+        }
+
+        let listing = try repos.statements.listWithInternalDiagnostics(accountId: requested.id)
+        #expect(listing.statements.isEmpty)
+        let diagnostic = try #require(listing.unaddressableReferences.first)
+        #expect(diagnostic.lineItemId == lineItemId)
+        #expect(diagnostic.referencedStatementId == foreignStatement.id)
+        #expect(diagnostic.requestedAccountId == requested.id)
+        #expect(diagnostic.reason == "referenced_statement_is_not_addressable_in_requested_account")
+        #expect(diagnostic.capabilityFlags == ["addressable": false, "reconcilable": false, "restorable": false])
+    }
+
+    @Test("Membership inspection proves visible statement references separately")
+    func inspectMembershipReturnsVisibleReference() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+        let card = try createCreditCard(named: "Visible Membership", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10", title: "Visible item", lineItems: [(accountId: card.id, amount: -10, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: card.id)
+        let statement = try repos.statements.create(
+            accountId: card.id, startDate: "2026-04-01", endDate: "2026-04-30",
+            beginningBalance: 0, endingBalance: -10, name: "April 2026"
+        )
+        _ = try repos.statements.reconcileLineItems(statementId: statement.id, lineItemIds: [lineItemId])
+        let inspection = try repos.statements.inspectMembership(lineItemId: lineItemId)
+        #expect(inspection.referencedStatementId == statement.id)
+        #expect(inspection.visibilityClassification == "visible_named")
+        #expect(inspection.capabilityFlags["addressable"] == true)
+        #expect(inspection.capabilityFlags["restorable"] == false)
+    }
+
+    @Test("Typed internal replacement restores its exact inspected preimage")
+    func typedInternalReplacementRoundTripsPreimage() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let investment = try createInvestmentAccount(named: "Typed Internal Restore", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10", title: "Internal membership",
+            lineItems: [(accountId: investment.id, amount: 10, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: investment.id)
+        let internalStatement = try repos.statements.create(
+            accountId: investment.id, startDate: "2026-04-01", endDate: "2026-04-30",
+            beginningBalance: 0, endingBalance: 10
+        )
+        _ = try repos.statements.reconcileLineItems(
+            statementId: internalStatement.id, lineItemIds: [lineItemId], operatorConfirmedVisible: true
+        )
+        let inspection = try repos.statements.inspectMembership(lineItemId: lineItemId)
+        let preimage = try #require(inspection.statementPreimage)
+        let preimageHash = try #require(inspection.preimageSha256)
+        let membershipHash = try #require(inspection.membershipPreimageSha256)
+        let index = try #require(inspection.positionAnchors["statement_index"] ?? nil)
+        let replacement = try repos.statements.replaceInternalRowWithVisibleStatement(
+            sourceStatementId: internalStatement.id, accountId: investment.id,
+            startDate: "2026-04-01", endDate: "2026-04-30", beginningBalance: 0,
+            endingBalance: 10, name: "April 2026 provider statement", lineItemIds: [lineItemId],
+            preimageSha256: preimageHash, membershipPreimageSha256: membershipHash,
+            positionIndex: index, beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+            afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+        )
+        #expect(replacement.isVisibleNamedRow)
+        #expect(try repos.statements.get(statementId: internalStatement.id) == nil)
+
+        #expect(throws: (any Error).self) {
+            _ = try repos.statements.restoreInternalRowFromPreimage(
+                replacementStatementId: replacement.id, accountId: investment.id, statementPreimage: preimage,
+                memberships: inspection.lineItemMemberships, preimageSha256: "wrong",
+                membershipPreimageSha256: membershipHash, positionIndex: index,
+                beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+                afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+            )
+        }
+        #expect(try repos.statements.get(statementId: replacement.id) != nil)
+
+        let restored = try repos.statements.restoreInternalRowFromPreimage(
+            replacementStatementId: replacement.id, accountId: investment.id, statementPreimage: preimage,
+            memberships: inspection.lineItemMemberships, preimageSha256: preimageHash,
+            membershipPreimageSha256: membershipHash, positionIndex: index,
+            beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+            afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+        )
+        #expect(restored.isInternalRowCandidate)
+        #expect(restored.uniqueId == preimage.uniqueId)
+        #expect(restored.reconciledLineItemCount == 1)
+        #expect(try repos.statements.get(statementId: replacement.id) == nil)
+
+        // The allocator may give the restored row a different numeric ID, so
+        // prove both baseline structure and a replay through that new ID.
+        #expect(restored.accountId == preimage.accountId)
+        #expect(restored.startDate == preimage.startDate)
+        #expect(restored.endDate == preimage.endDate)
+        #expect(restored.beginningBalance == preimage.beginningBalance)
+        #expect(restored.endingBalance == preimage.endingBalance)
+        let replayInspection = try repos.statements.inspectMembership(lineItemId: lineItemId)
+        let replayPreimage = try #require(replayInspection.statementPreimage)
+        let replayReplacement = try repos.statements.replaceInternalRowWithVisibleStatement(
+            sourceStatementId: restored.id, accountId: investment.id,
+            startDate: "2026-04-01", endDate: "2026-04-30", beginningBalance: 0,
+            endingBalance: 10, name: "April 2026 provider statement", lineItemIds: [lineItemId],
+            preimageSha256: try #require(replayInspection.preimageSha256),
+            membershipPreimageSha256: try #require(replayInspection.membershipPreimageSha256),
+            positionIndex: try #require(replayInspection.positionAnchors["statement_index"] ?? nil),
+            beforeStatementId: replayInspection.positionAnchors["before_statement_id"] ?? nil,
+            afterStatementId: replayInspection.positionAnchors["after_statement_id"] ?? nil
+        )
+        #expect(replayPreimage.uniqueId == preimage.uniqueId)
+        #expect(replayReplacement.isVisibleNamedRow)
+        #expect((try repos.statements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == replayReplacement.id)
+    }
+
+    @Test("Typed restore rolls back the statement mutation when sync restoration fails")
+    func typedInternalRestoreLeavesNoPartialStateWhenSyncFails() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+        let strictStatements = StatementRepository(
+            container: repos.vault.container,
+            lineItemRepo: LineItemRepository(container: repos.vault.container),
+            syncBlobUpdater: SyncBlobUpdater(container: repos.vault.container)
+        )
+        let investment = try createInvestmentAccount(named: "Atomic Sync Restore", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10", title: "Atomic internal membership",
+            lineItems: [(accountId: investment.id, amount: 10, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: investment.id)
+        let internalStatement = try repos.statements.create(
+            accountId: investment.id, startDate: "2026-04-01", endDate: "2026-04-30",
+            beginningBalance: 0, endingBalance: 10
+        )
+        _ = try repos.statements.reconcileLineItems(
+            statementId: internalStatement.id, lineItemIds: [lineItemId], operatorConfirmedVisible: true
+        )
+        let inspection = try strictStatements.inspectMembership(lineItemId: lineItemId)
+        let replacement = try repos.statements.replaceInternalRowWithVisibleStatement(
+            sourceStatementId: internalStatement.id, accountId: investment.id,
+            startDate: "2026-04-01", endDate: "2026-04-30", beginningBalance: 0,
+            endingBalance: 10, name: "April 2026 provider statement", lineItemIds: [lineItemId],
+            preimageSha256: try #require(inspection.preimageSha256),
+            membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
+            positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
+            beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+            afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+        )
+        #expect(throws: (any Error).self) {
+            _ = try strictStatements.restoreInternalRowFromPreimage(
+                replacementStatementId: replacement.id, accountId: investment.id,
+                statementPreimage: try #require(inspection.statementPreimage),
+                memberships: inspection.lineItemMemberships,
+                preimageSha256: try #require(inspection.preimageSha256),
+                membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
+                positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
+                beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+                afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+            )
+        }
+        #expect(try strictStatements.get(statementId: replacement.id) != nil)
+        #expect((try strictStatements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == replacement.id)
+        #expect(try strictStatements.get(statementId: internalStatement.id) == nil)
+    }
+
+    @Test("Typed replacement rolls back the statement mutation when sync preconditions fail")
+    func typedInternalReplacementLeavesNoPartialStateWhenSyncFails() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+        let strictStatements = StatementRepository(
+            container: repos.vault.container,
+            lineItemRepo: LineItemRepository(container: repos.vault.container),
+            syncBlobUpdater: SyncBlobUpdater(container: repos.vault.container)
+        )
+        let investment = try createInvestmentAccount(named: "Atomic Sync Replacement", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10", title: "Atomic internal replacement",
+            lineItems: [(accountId: investment.id, amount: 10, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: investment.id)
+        let internalStatement = try repos.statements.create(
+            accountId: investment.id, startDate: "2026-04-01", endDate: "2026-04-30",
+            beginningBalance: 0, endingBalance: 10
+        )
+        _ = try repos.statements.reconcileLineItems(
+            statementId: internalStatement.id,
+            lineItemIds: [lineItemId],
+            operatorConfirmedVisible: true
+        )
+        let inspection = try strictStatements.inspectMembership(lineItemId: lineItemId)
+
+        #expect(throws: (any Error).self) {
+            _ = try strictStatements.replaceInternalRowWithVisibleStatement(
+                sourceStatementId: internalStatement.id,
+                accountId: investment.id,
+                startDate: "2026-04-01",
+                endDate: "2026-04-30",
+                beginningBalance: 0,
+                endingBalance: 10,
+                name: "April 2026 provider statement",
+                lineItemIds: [lineItemId],
+                preimageSha256: try #require(inspection.preimageSha256),
+                membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
+                positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
+                beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+                afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+            )
+        }
+
+        #expect(try strictStatements.get(statementId: internalStatement.id) != nil)
+        #expect((try strictStatements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == internalStatement.id)
+    }
+
     @Test("Explicit reconciliation allows manually selected pre-start line items")
     func reconcileAllowsManualPreStartLineItems() throws {
         let repos = try makeRepositories()
@@ -464,6 +720,15 @@ struct StatementRepositoryTests {
             operatorConfirmedVisible: true
         )
         #expect(reconciled.reconciledLineItemCount == 1)
+
+        let membershipInspection = try repos.statements.inspectMembership(lineItemId: lineItemId)
+        #expect(membershipInspection.referencedStatementId == internalStatement.id)
+        #expect(membershipInspection.visibilityClassification == "unnamed_investment_requires_operator_confirmation")
+        #expect(membershipInspection.capabilityFlags["addressable"] == true)
+        #expect(membershipInspection.capabilityFlags["reconcilable"] == true)
+        #expect(membershipInspection.capabilityFlags["restorable"] == true)
+        #expect(membershipInspection.positionAnchors["statement_index"] == 0)
+        #expect(membershipInspection.preimageSha256 != nil)
 
         let unreconciled = try #require(try repos.statements.unreconcileLineItems(
             statementId: internalStatement.id,
