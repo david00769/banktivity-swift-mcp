@@ -244,8 +244,12 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         sourceStatementId: Int, accountId: Int, startDate: String, endDate: String,
         beginningBalance: Double, endingBalance: Double, name: String,
         lineItemIds: [Int], preimageSha256: String, membershipPreimageSha256: String,
+        replacementMembershipPreimageSha256: String,
         positionIndex: Int, beforeStatementId: Int?, afterStatementId: Int?
     ) throws -> StatementDTO {
+        guard let updater = syncBlobUpdater else {
+            throw ToolError.invalidInput("Internal statement replacement requires atomic sync metadata updates")
+        }
         guard let startTimestamp = DateConversion.fromISO(startDate),
               let endTimestamp = DateConversion.fromISO(endDate),
               endTimestamp > startTimestamp else {
@@ -259,6 +263,9 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         }
         guard Set(lineItemIds).count == lineItemIds.count else {
             throw ToolError.invalidInput("Replacement line-item IDs must be unique")
+        }
+        guard Self.replacementMembershipPreimageHash(lineItemIds) == replacementMembershipPreimageSha256 else {
+            throw ToolError.invalidInput("Replacement selection preimage hash does not match")
         }
         let selectedIds = Set(lineItemIds)
         let newId: Int = try performWriteReturning { [self] ctx in
@@ -317,27 +324,25 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             for line in sourceLines where selectedIds.contains(Self.extractPK(from: line.objectID)) {
                 line.setValue(replacement, forKey: "pStatement"); line.setValue(true, forKey: "pCleared")
             }
-            if let updater = syncBlobUpdater {
-                try updater.markRequiredSyncRecordDeleted(
-                    entityUUID: sourceStatementUUID,
+            try updater.markRequiredSyncRecordDeleted(
+                entityUUID: sourceStatementUUID,
+                in: ctx
+            )
+            for patch in syncPatches {
+                try updater.patchRequiredTransactionBlob(
+                    transactionUUID: patch.transactionUUID,
                     in: ctx
-                )
-                for patch in syncPatches {
-                    try updater.patchRequiredTransactionBlob(
-                        transactionUUID: patch.transactionUUID,
-                        in: ctx
-                    ) { xml in
-                        let statementUUID = patch.selectedForReplacement ? replacementUUID : nil
-                        return updater.patchCleared(
-                            xml: updater.patchStatement(
-                                xml: xml,
-                                lineItemUUID: patch.lineItemUUID,
-                                statementUUID: statementUUID
-                            ),
+                ) { xml in
+                    let statementUUID = patch.selectedForReplacement ? replacementUUID : nil
+                    return updater.patchCleared(
+                        xml: updater.patchStatement(
+                            xml: xml,
                             lineItemUUID: patch.lineItemUUID,
-                            cleared: patch.selectedForReplacement ? true : patch.cleared
-                        )
-                    }
+                            statementUUID: statementUUID
+                        ),
+                        lineItemUUID: patch.lineItemUUID,
+                        cleared: patch.selectedForReplacement ? true : patch.cleared
+                    )
                 }
             }
             ctx.delete(source); try ctx.obtainPermanentIDs(for: [replacement])
@@ -350,10 +355,20 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
     public func restoreInternalRowFromPreimage(
         replacementStatementId: Int, accountId: Int, statementPreimage: StatementDTO,
         memberships: [StatementLineItemMembershipPreimageDTO], preimageSha256: String,
-        membershipPreimageSha256: String, positionIndex: Int, beforeStatementId: Int?, afterStatementId: Int?
+        membershipPreimageSha256: String, replacementLineItemIds: [Int],
+        replacementMembershipPreimageSha256: String, positionIndex: Int,
+        beforeStatementId: Int?, afterStatementId: Int?
     ) throws -> StatementDTO {
+        guard let updater = syncBlobUpdater else {
+            throw ToolError.invalidInput("Internal statement restore requires atomic sync metadata updates")
+        }
         guard Self.statementPreimageHash(statementPreimage) == preimageSha256 else {
             throw ToolError.invalidInput("Internal statement restore preimage hash does not match the supplied preimage")
+        }
+        guard !replacementLineItemIds.isEmpty,
+              Set(replacementLineItemIds).count == replacementLineItemIds.count,
+              Self.replacementMembershipPreimageHash(replacementLineItemIds) == replacementMembershipPreimageSha256 else {
+            throw ToolError.invalidInput("Restore replacement selection preimage does not match")
         }
         guard let restoredUniqueId = statementPreimage.uniqueId, !restoredUniqueId.isEmpty else {
             throw ToolError.invalidInput("Internal statement restore requires the stable preimage identity")
@@ -369,11 +384,14 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             // anchors are checked before mutating so failed restores roll back.
             try self.validateStatementPosition(replacement, account: account, expectedIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId, in: ctx)
             let expectedMembershipIDs = Set(sortedMemberships.map(\.lineItemId))
+            let expectedReplacementMembershipIDs = Set(replacementLineItemIds)
+            guard expectedReplacementMembershipIDs.isSubset(of: expectedMembershipIDs) else {
+                throw ToolError.invalidInput("Restore replacement selection is outside the inspected inverse scope")
+            }
             let replacementMembershipIDs = Set(Self.relatedSet(replacement, "pLineItems").map {
                 Self.extractPK(from: $0.objectID)
             })
-            guard !replacementMembershipIDs.isEmpty,
-                  replacementMembershipIDs.isSubset(of: expectedMembershipIDs) else {
+            guard replacementMembershipIDs == expectedReplacementMembershipIDs else {
                 throw ToolError.invalidInput("Replacement statement membership has drifted from the inspected inverse scope")
             }
             let membershipLinesAndPatches = try sortedMemberships.map { membership -> (NSManagedObject, StatementMembershipSyncPatch) in
@@ -383,9 +401,16 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                       let transaction = Self.relatedObject(line, "pTransaction") else {
                     throw ToolError.invalidInput("Restore line item is missing or outside account scope")
                 }
-                if let currentStatement = Self.relatedObject(line, "pStatement"),
-                   currentStatement.objectID != replacement.objectID {
-                    throw ToolError.invalidInput("Restore line item membership has drifted to another statement")
+                let currentStatement = Self.relatedObject(line, "pStatement")
+                let currentCleared = line.value(forKey: "pCleared") as? Bool ?? false
+                if expectedReplacementMembershipIDs.contains(membership.lineItemId) {
+                    guard currentStatement?.objectID == replacement.objectID, currentCleared else {
+                        throw ToolError.invalidInput("Selected replacement membership has drifted from the exact forward state")
+                    }
+                } else {
+                    guard currentStatement == nil, currentCleared == membership.cleared else {
+                        throw ToolError.invalidInput("Unselected replacement membership has drifted from the exact forward state")
+                    }
                 }
                 let transactionUUID = Self.stringValue(transaction, "pUniqueID")
                 let lineItemUUID = Self.stringValue(line, "pUniqueID")
@@ -417,16 +442,14 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             // strict context-local updates execute before the context save, so
             // any failure rolls back the restored row, memberships, and
             // replacement deletion together.
-            if let updater = syncBlobUpdater {
-                try updater.restoreDeletedSyncRecord(entityUUID: restoredUniqueId, in: ctx)
-                for (_, patch) in membershipLinesAndPatches {
-                    try updater.patchRequiredTransactionBlob(transactionUUID: patch.transactionUUID, in: ctx) { xml in
-                        updater.patchCleared(
-                            xml: updater.patchStatement(xml: xml, lineItemUUID: patch.lineItemUUID, statementUUID: restoredUniqueId),
-                            lineItemUUID: patch.lineItemUUID,
-                            cleared: patch.cleared
-                        )
-                    }
+            try updater.restoreDeletedSyncRecord(entityUUID: restoredUniqueId, in: ctx)
+            for (_, patch) in membershipLinesAndPatches {
+                try updater.patchRequiredTransactionBlob(transactionUUID: patch.transactionUUID, in: ctx) { xml in
+                    updater.patchCleared(
+                        xml: updater.patchStatement(xml: xml, lineItemUUID: patch.lineItemUUID, statementUUID: restoredUniqueId),
+                        lineItemUUID: patch.lineItemUUID,
+                        cleared: patch.cleared
+                    )
                 }
             }
             ctx.delete(replacement); try ctx.obtainPermanentIDs(for: [restored]); return Self.extractPK(from: restored.objectID)
@@ -1192,6 +1215,15 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         guard let data = try? encoder.encode(memberships.sorted { $0.lineItemId < $1.lineItemId }) else { return nil }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Canonical hash used by both the forward operation and its inverse to
+    /// bind the exact subset moved onto the visible replacement statement.
+    static func replacementMembershipPreimageHash(_ lineItemIds: [Int]) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(lineItemIds.sorted()) else { return nil }
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 

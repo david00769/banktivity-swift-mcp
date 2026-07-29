@@ -3,7 +3,7 @@
 import Foundation
 import Testing
 
-@Suite("CLIStatementContract")
+@Suite("CLIStatementContract", .serialized)
 struct CLIStatementContractTests {
     private func cliURL() throws -> URL {
         let packageRoot = URL(fileURLWithPath: #filePath)
@@ -18,7 +18,10 @@ struct CLIStatementContractTests {
         ) else {
             throw NSError(domain: "CLIStatementContract", code: 1, userInfo: [NSLocalizedDescriptionKey: "Swift build output is unavailable"])
         }
-        for case let candidate as URL in enumerator where candidate.lastPathComponent == "banktivity-cli" {
+        for case let candidate as URL in enumerator
+        where candidate.lastPathComponent == "banktivity-cli"
+            && candidate.path.contains("/debug/")
+            && !candidate.path.contains(".dSYM/") {
             if (try? candidate.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
                 return candidate
             }
@@ -48,10 +51,13 @@ struct CLIStatementContractTests {
         #expect(replacement.status == 0)
         #expect(replacement.output.contains("--preimage-sha256"))
         #expect(replacement.output.contains("--membership-preimage-sha256"))
+        #expect(replacement.output.contains("--replacement-membership-preimage-sha256"))
 
         let restore = try runCLI(["statements", "restore-internal-row-from-preimage", "--help"])
         #expect(restore.status == 0)
         #expect(restore.output.contains("--statement-preimage-json"))
         #expect(restore.output.contains("--line-item-memberships-json"))
+        #expect(restore.output.contains("--replacement-line-item-ids"))
+        #expect(restore.output.contains("--replacement-membership-preimage-sha256"))
     }
 }

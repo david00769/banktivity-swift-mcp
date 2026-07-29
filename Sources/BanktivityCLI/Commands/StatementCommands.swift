@@ -123,6 +123,7 @@ struct Statements: AsyncParsableCommand {
         @Option(name: .long) var lineItemIds: String
         @Option(name: .long) var preimageSha256: String
         @Option(name: .long) var membershipPreimageSha256: String
+        @Option(name: .long) var replacementMembershipPreimageSha256: String
         @Option(name: .long) var positionIndex: Int
         @Option(name: .long) var beforeStatementId: Int?
         @Option(name: .long) var afterStatementId: Int?
@@ -140,7 +141,7 @@ struct Statements: AsyncParsableCommand {
                 throw ToolError.invalidInput("Replacement line-item IDs must be a comma-separated integer list")
             }
             let repo = StatementRepository(container: container, lineItemRepo: LineItemRepository(container: container), syncBlobUpdater: SyncBlobUpdater(container: container))
-            let result = try repo.replaceInternalRowWithVisibleStatement(sourceStatementId: sourceStatementId, accountId: accountId, startDate: startDate, endDate: endDate, beginningBalance: beginningBalance, endingBalance: endingBalance, name: name, lineItemIds: ids, preimageSha256: preimageSha256, membershipPreimageSha256: membershipPreimageSha256, positionIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId)
+            let result = try repo.replaceInternalRowWithVisibleStatement(sourceStatementId: sourceStatementId, accountId: accountId, startDate: startDate, endDate: endDate, beginningBalance: beginningBalance, endingBalance: endingBalance, name: name, lineItemIds: ids, preimageSha256: preimageSha256, membershipPreimageSha256: membershipPreimageSha256, replacementMembershipPreimageSha256: replacementMembershipPreimageSha256, positionIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId)
             try outputJSON(result, format: parent.format)
         }
     }
@@ -154,6 +155,8 @@ struct Statements: AsyncParsableCommand {
         @Option(name: .long) var lineItemMembershipsJson: String
         @Option(name: .long) var preimageSha256: String
         @Option(name: .long) var membershipPreimageSha256: String
+        @Option(name: .long) var replacementLineItemIds: String
+        @Option(name: .long) var replacementMembershipPreimageSha256: String
         @Option(name: .long) var positionIndex: Int
         @Option(name: .long) var beforeStatementId: Int?
         @Option(name: .long) var afterStatementId: Int?
@@ -163,12 +166,17 @@ struct Statements: AsyncParsableCommand {
         func run() async throws {
             let preimage = try JSONDecoder().decode(StatementDTO.self, from: Data(statementPreimageJson.utf8))
             let memberships = try JSONDecoder().decode([StatementLineItemMembershipPreimageDTO].self, from: Data(lineItemMembershipsJson.utf8))
+            let rawReplacementIds = replacementLineItemIds.split(separator: ",", omittingEmptySubsequences: false)
+            let replacementIds = rawReplacementIds.compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            guard !replacementIds.isEmpty, replacementIds.count == rawReplacementIds.count else {
+                throw ToolError.invalidInput("Restore replacement line-item IDs must be a comma-separated integer list")
+            }
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
             let guarder = BanktivityCLI.createWriteGuard(vaultPath: path); try await guardWrite(guarder)
             try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
             let repo = StatementRepository(container: container, lineItemRepo: LineItemRepository(container: container), syncBlobUpdater: SyncBlobUpdater(container: container))
-            let result = try repo.restoreInternalRowFromPreimage(replacementStatementId: replacementStatementId, accountId: accountId, statementPreimage: preimage, memberships: memberships, preimageSha256: preimageSha256, membershipPreimageSha256: membershipPreimageSha256, positionIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId)
+            let result = try repo.restoreInternalRowFromPreimage(replacementStatementId: replacementStatementId, accountId: accountId, statementPreimage: preimage, memberships: memberships, preimageSha256: preimageSha256, membershipPreimageSha256: membershipPreimageSha256, replacementLineItemIds: replacementIds, replacementMembershipPreimageSha256: replacementMembershipPreimageSha256, positionIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId)
             try outputJSON(result, format: parent.format)
         }
     }
