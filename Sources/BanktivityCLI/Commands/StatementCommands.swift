@@ -134,8 +134,11 @@ struct Statements: AsyncParsableCommand {
             let container = try BanktivityCLI.createContainer(vaultPath: path)
             let guarder = BanktivityCLI.createWriteGuard(vaultPath: path); try await guardWrite(guarder)
             try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
-            let ids = lineItemIds.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-            guard !ids.isEmpty else { throw ToolError.invalidInput("No replacement line-item IDs supplied") }
+            let rawIds = lineItemIds.split(separator: ",", omittingEmptySubsequences: false)
+            let ids = rawIds.compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            guard !ids.isEmpty, ids.count == rawIds.count else {
+                throw ToolError.invalidInput("Replacement line-item IDs must be a comma-separated integer list")
+            }
             let repo = StatementRepository(container: container, lineItemRepo: LineItemRepository(container: container), syncBlobUpdater: SyncBlobUpdater(container: container))
             let result = try repo.replaceInternalRowWithVisibleStatement(sourceStatementId: sourceStatementId, accountId: accountId, startDate: startDate, endDate: endDate, beginningBalance: beginningBalance, endingBalance: endingBalance, name: name, lineItemIds: ids, preimageSha256: preimageSha256, membershipPreimageSha256: membershipPreimageSha256, positionIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId)
             try outputJSON(result, format: parent.format)

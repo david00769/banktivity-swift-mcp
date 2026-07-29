@@ -246,24 +246,21 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         lineItemIds: [Int], preimageSha256: String, membershipPreimageSha256: String,
         positionIndex: Int, beforeStatementId: Int?, afterStatementId: Int?
     ) throws -> StatementDTO {
-        let selectedIds = Set(lineItemIds)
-        let preRead: (statementUUID: String, patches: [StatementMembershipSyncPatch]) = try performRead { [self] ctx in
-            guard let source = try fetchByPK(entityName: "Statement", pk: sourceStatementId, in: ctx) else {
-                throw ToolError.notFound("Internal statement not found: \(sourceStatementId)")
-            }
-            let patches = Self.relatedSet(source, "pLineItems").compactMap { line -> StatementMembershipSyncPatch? in
-                guard let transaction = Self.relatedObject(line, "pTransaction") else { return nil }
-                let transactionUUID = Self.stringValue(transaction, "pUniqueID")
-                let lineItemUUID = Self.stringValue(line, "pUniqueID")
-                guard !transactionUUID.isEmpty, !lineItemUUID.isEmpty else { return nil }
-                return StatementMembershipSyncPatch(
-                    transactionUUID: transactionUUID, lineItemUUID: lineItemUUID,
-                    cleared: line.value(forKey: "pCleared") as? Bool ?? false,
-                    selectedForReplacement: selectedIds.contains(Self.extractPK(from: line.objectID))
-                )
-            }
-            return (Self.stringValue(source, "pUniqueID"), patches)
+        guard let startTimestamp = DateConversion.fromISO(startDate),
+              let endTimestamp = DateConversion.fromISO(endDate),
+              endTimestamp > startTimestamp else {
+            throw ToolError.invalidInput("Replacement requires valid ordered statement dates")
         }
+        guard beginningBalance.isFinite, endingBalance.isFinite else {
+            throw ToolError.invalidInput("Replacement balances must be finite")
+        }
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ToolError.invalidInput("Replacement statement name must be non-empty")
+        }
+        guard Set(lineItemIds).count == lineItemIds.count else {
+            throw ToolError.invalidInput("Replacement line-item IDs must be unique")
+        }
+        let selectedIds = Set(lineItemIds)
         let newId: Int = try performWriteReturning { [self] ctx in
             guard let source = try fetchByPK(entityName: "Statement", pk: sourceStatementId, in: ctx),
                   let account = Self.relatedObject(source, "pAccount") else {
@@ -289,33 +286,64 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             guard Self.membershipPreimageHash(actualMembership) == membershipPreimageSha256 else {
                 throw ToolError.invalidInput("Internal statement replacement membership preimage does not match")
             }
-            for line in sourceLines { line.setValue(nil, forKey: "pStatement") }
+            let sourceStatementUUID = Self.stringValue(source, "pUniqueID")
+            guard !sourceStatementUUID.isEmpty else {
+                throw ToolError.invalidInput("Internal statement replacement requires the stable source identity")
+            }
+            let syncPatches = try sourceLines.map { line -> StatementMembershipSyncPatch in
+                guard let transaction = Self.relatedObject(line, "pTransaction") else {
+                    throw ToolError.invalidInput("Internal statement replacement line item has no transaction")
+                }
+                let transactionUUID = Self.stringValue(transaction, "pUniqueID")
+                let lineItemUUID = Self.stringValue(line, "pUniqueID")
+                guard !transactionUUID.isEmpty, !lineItemUUID.isEmpty else {
+                    throw ToolError.invalidInput("Internal statement replacement sync identity is missing")
+                }
+                return StatementMembershipSyncPatch(
+                    transactionUUID: transactionUUID,
+                    lineItemUUID: lineItemUUID,
+                    cleared: line.value(forKey: "pCleared") as? Bool ?? false,
+                    selectedForReplacement: selectedIds.contains(Self.extractPK(from: line.objectID))
+                )
+            }
             let replacement = Self.createObject(entityName: "Statement", in: ctx)
             replacement.setValue(account, forKey: "pAccount")
             Self.setDate(replacement, "pStartDate", isoString: startDate); Self.setDate(replacement, "pEndDate", isoString: endDate)
             replacement.setValue(beginningBalance as NSNumber, forKey: "pBeginningBalance"); replacement.setValue(endingBalance as NSNumber, forKey: "pEndingBalance")
-            replacement.setValue(name, forKey: "pName"); replacement.setValue(Self.generateUUID(), forKey: "pUniqueID")
+            let replacementUUID = Self.generateUUID()
+            replacement.setValue(name, forKey: "pName"); replacement.setValue(replacementUUID, forKey: "pUniqueID")
             Self.setNow(replacement, "pCreationTime"); Self.setNow(replacement, "pModificationDate")
+            for line in sourceLines { line.setValue(nil, forKey: "pStatement") }
             for line in sourceLines where selectedIds.contains(Self.extractPK(from: line.objectID)) {
                 line.setValue(replacement, forKey: "pStatement"); line.setValue(true, forKey: "pCleared")
+            }
+            if let updater = syncBlobUpdater {
+                try updater.markRequiredSyncRecordDeleted(
+                    entityUUID: sourceStatementUUID,
+                    in: ctx
+                )
+                for patch in syncPatches {
+                    try updater.patchRequiredTransactionBlob(
+                        transactionUUID: patch.transactionUUID,
+                        in: ctx
+                    ) { xml in
+                        let statementUUID = patch.selectedForReplacement ? replacementUUID : nil
+                        return updater.patchCleared(
+                            xml: updater.patchStatement(
+                                xml: xml,
+                                lineItemUUID: patch.lineItemUUID,
+                                statementUUID: statementUUID
+                            ),
+                            lineItemUUID: patch.lineItemUUID,
+                            cleared: patch.selectedForReplacement ? true : patch.cleared
+                        )
+                    }
+                }
             }
             ctx.delete(source); try ctx.obtainPermanentIDs(for: [replacement])
             return Self.extractPK(from: replacement.objectID)
         }
         guard let result = try get(statementId: newId) else { throw RepositoryError.unexpectedNilResult }
-        if let updater = syncBlobUpdater {
-            if !preRead.statementUUID.isEmpty { updater.deleteSyncRecord(entityUUID: preRead.statementUUID) }
-            for patch in preRead.patches {
-                updater.updateTransactionBlob(transactionUUID: patch.transactionUUID) { xml in
-                    let statementUUID = patch.selectedForReplacement ? result.uniqueId : nil
-                    return updater.patchCleared(
-                        xml: updater.patchStatement(xml: xml, lineItemUUID: patch.lineItemUUID, statementUUID: statementUUID),
-                        lineItemUUID: patch.lineItemUUID,
-                        cleared: patch.selectedForReplacement ? true : patch.cleared
-                    )
-                }
-            }
-        }
         return result
     }
 
@@ -330,23 +358,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         guard let restoredUniqueId = statementPreimage.uniqueId, !restoredUniqueId.isEmpty else {
             throw ToolError.invalidInput("Internal statement restore requires the stable preimage identity")
         }
-        let preReadPatches: [StatementMembershipSyncPatch] = try performRead { [self] ctx in
-            try memberships.map { membership in
-                guard let line = try fetchByPK(entityName: "LineItem", pk: membership.lineItemId, in: ctx),
-                      let transaction = Self.relatedObject(line, "pTransaction") else {
-                    throw ToolError.invalidInput("Restore line item is missing")
-                }
-                let transactionUUID = Self.stringValue(transaction, "pUniqueID")
-                let lineItemUUID = Self.stringValue(line, "pUniqueID")
-                guard !transactionUUID.isEmpty, !lineItemUUID.isEmpty else {
-                    throw ToolError.invalidInput("Restore line item sync identity is missing")
-                }
-                return StatementMembershipSyncPatch(
-                    transactionUUID: transactionUUID, lineItemUUID: lineItemUUID,
-                    cleared: membership.cleared, selectedForReplacement: true
-                )
-            }
-        }
         let restoredId: Int = try performWriteReturning { [self] ctx in
             guard let replacement = try fetchByPK(entityName: "Statement", pk: replacementStatementId, in: ctx),
                   let account = Self.relatedObject(replacement, "pAccount") else { throw ToolError.notFound("Replacement statement not found: \(replacementStatementId)") }
@@ -357,6 +368,40 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             // The replacement occupies the original position during inverse;
             // anchors are checked before mutating so failed restores roll back.
             try self.validateStatementPosition(replacement, account: account, expectedIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId, in: ctx)
+            let expectedMembershipIDs = Set(sortedMemberships.map(\.lineItemId))
+            let replacementMembershipIDs = Set(Self.relatedSet(replacement, "pLineItems").map {
+                Self.extractPK(from: $0.objectID)
+            })
+            guard !replacementMembershipIDs.isEmpty,
+                  replacementMembershipIDs.isSubset(of: expectedMembershipIDs) else {
+                throw ToolError.invalidInput("Replacement statement membership has drifted from the inspected inverse scope")
+            }
+            let membershipLinesAndPatches = try sortedMemberships.map { membership -> (NSManagedObject, StatementMembershipSyncPatch) in
+                guard let line = try fetchByPK(entityName: "LineItem", pk: membership.lineItemId, in: ctx),
+                      let lineAccount = Self.relatedObject(line, "pAccount"),
+                      Self.extractPK(from: lineAccount.objectID) == accountId,
+                      let transaction = Self.relatedObject(line, "pTransaction") else {
+                    throw ToolError.invalidInput("Restore line item is missing or outside account scope")
+                }
+                if let currentStatement = Self.relatedObject(line, "pStatement"),
+                   currentStatement.objectID != replacement.objectID {
+                    throw ToolError.invalidInput("Restore line item membership has drifted to another statement")
+                }
+                let transactionUUID = Self.stringValue(transaction, "pUniqueID")
+                let lineItemUUID = Self.stringValue(line, "pUniqueID")
+                guard !transactionUUID.isEmpty, !lineItemUUID.isEmpty else {
+                    throw ToolError.invalidInput("Restore line item sync identity is missing")
+                }
+                return (
+                    line,
+                    StatementMembershipSyncPatch(
+                        transactionUUID: transactionUUID,
+                        lineItemUUID: lineItemUUID,
+                        cleared: membership.cleared,
+                        selectedForReplacement: true
+                    )
+                )
+            }
             let restored = Self.createObject(entityName: "Statement", in: ctx)
             restored.setValue(account, forKey: "pAccount"); Self.setDate(restored, "pStartDate", isoString: statementPreimage.startDate); Self.setDate(restored, "pEndDate", isoString: statementPreimage.endDate)
             restored.setValue(statementPreimage.beginningBalance as NSNumber, forKey: "pBeginningBalance"); restored.setValue(statementPreimage.endingBalance as NSNumber, forKey: "pEndingBalance")
@@ -364,9 +409,8 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             restored.setValue(restoredUniqueId, forKey: "pUniqueID")
             if let createdAt = statementPreimage.createdAt { Self.setDate(restored, "pCreationTime", isoString: createdAt) } else { Self.setNow(restored, "pCreationTime") }
             if let modifiedAt = statementPreimage.modifiedAt { Self.setDate(restored, "pModificationDate", isoString: modifiedAt) } else { Self.setNow(restored, "pModificationDate") }
-            for membership in memberships {
-                guard let line = try fetchByPK(entityName: "LineItem", pk: membership.lineItemId, in: ctx),
-                      let lineAccount = Self.relatedObject(line, "pAccount"), Self.extractPK(from: lineAccount.objectID) == accountId else { throw ToolError.invalidInput("Restore line item is missing or outside account scope") }
+            for (index, membership) in sortedMemberships.enumerated() {
+                let line = membershipLinesAndPatches[index].0
                 line.setValue(restored, forKey: "pStatement"); line.setValue(membership.cleared, forKey: "pCleared")
             }
             // Sync metadata is part of this reversible operation.  These
@@ -375,7 +419,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             // replacement deletion together.
             if let updater = syncBlobUpdater {
                 try updater.restoreDeletedSyncRecord(entityUUID: restoredUniqueId, in: ctx)
-                for patch in preReadPatches {
+                for (_, patch) in membershipLinesAndPatches {
                     try updater.patchRequiredTransactionBlob(transactionUUID: patch.transactionUUID, in: ctx) { xml in
                         updater.patchCleared(
                             xml: updater.patchStatement(xml: xml, lineItemUUID: patch.lineItemUUID, statementUUID: restoredUniqueId),
@@ -1160,7 +1204,11 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
     private func validateStatementPosition(_ statement: NSManagedObject, account: NSManagedObject, expectedIndex: Int, beforeStatementId: Int?, afterStatementId: Int?, in ctx: NSManagedObjectContext) throws {
         let request = NSFetchRequest<NSManagedObject>(entityName: "Statement")
         request.predicate = NSPredicate(format: "pAccount == %@", account)
-        request.sortDescriptors = [NSSortDescriptor(key: "pStartDate", ascending: true), NSSortDescriptor(key: "pEndDate", ascending: true)]
+        request.sortDescriptors = [
+            NSSortDescriptor(key: "pStartDate", ascending: true),
+            NSSortDescriptor(key: "pEndDate", ascending: true),
+            NSSortDescriptor(key: "pUniqueID", ascending: true),
+        ]
         let rows = try ctx.fetch(request)
         guard let index = rows.firstIndex(where: { $0.objectID == statement.objectID }), index == expectedIndex else {
             throw ToolError.invalidInput("Statement position anchor index does not match")

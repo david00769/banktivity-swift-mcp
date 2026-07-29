@@ -223,7 +223,7 @@ struct StatementRepositoryTests {
             statementId: internalStatement.id, lineItemIds: [lineItemId], operatorConfirmedVisible: true
         )
         let inspection = try strictStatements.inspectMembership(lineItemId: lineItemId)
-        let replacement = try strictStatements.replaceInternalRowWithVisibleStatement(
+        let replacement = try repos.statements.replaceInternalRowWithVisibleStatement(
             sourceStatementId: internalStatement.id, accountId: investment.id,
             startDate: "2026-04-01", endDate: "2026-04-30", beginningBalance: 0,
             endingBalance: 10, name: "April 2026 provider statement", lineItemIds: [lineItemId],
@@ -248,6 +248,54 @@ struct StatementRepositoryTests {
         #expect(try strictStatements.get(statementId: replacement.id) != nil)
         #expect((try strictStatements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == replacement.id)
         #expect(try strictStatements.get(statementId: internalStatement.id) == nil)
+    }
+
+    @Test("Typed replacement rolls back the statement mutation when sync preconditions fail")
+    func typedInternalReplacementLeavesNoPartialStateWhenSyncFails() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+        let strictStatements = StatementRepository(
+            container: repos.vault.container,
+            lineItemRepo: LineItemRepository(container: repos.vault.container),
+            syncBlobUpdater: SyncBlobUpdater(container: repos.vault.container)
+        )
+        let investment = try createInvestmentAccount(named: "Atomic Sync Replacement", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10", title: "Atomic internal replacement",
+            lineItems: [(accountId: investment.id, amount: 10, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: investment.id)
+        let internalStatement = try repos.statements.create(
+            accountId: investment.id, startDate: "2026-04-01", endDate: "2026-04-30",
+            beginningBalance: 0, endingBalance: 10
+        )
+        _ = try repos.statements.reconcileLineItems(
+            statementId: internalStatement.id,
+            lineItemIds: [lineItemId],
+            operatorConfirmedVisible: true
+        )
+        let inspection = try strictStatements.inspectMembership(lineItemId: lineItemId)
+
+        #expect(throws: (any Error).self) {
+            _ = try strictStatements.replaceInternalRowWithVisibleStatement(
+                sourceStatementId: internalStatement.id,
+                accountId: investment.id,
+                startDate: "2026-04-01",
+                endDate: "2026-04-30",
+                beginningBalance: 0,
+                endingBalance: 10,
+                name: "April 2026 provider statement",
+                lineItemIds: [lineItemId],
+                preimageSha256: try #require(inspection.preimageSha256),
+                membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
+                positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
+                beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+                afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+            )
+        }
+
+        #expect(try strictStatements.get(statementId: internalStatement.id) != nil)
+        #expect((try strictStatements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == internalStatement.id)
     }
 
     @Test("Explicit reconciliation allows manually selected pre-start line items")
