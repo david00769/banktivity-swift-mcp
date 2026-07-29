@@ -59,5 +59,6 @@ struct CLIStatementContractTests {
         #expect(restore.output.contains("--line-item-memberships-json"))
         #expect(restore.output.contains("--replacement-line-item-ids"))
         #expect(restore.output.contains("--replacement-membership-preimage-sha256"))
+        #expect(restore.output.contains("--replacement-preimage-sha256"))
     }
 }
