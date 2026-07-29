@@ -12,11 +12,10 @@ A Swift MCP (Model Context Protocol) server and CLI for [Banktivity](https://www
 swift build                    # Debug build
 swift build -c release         # Release build
 
-# Install binaries
-cp .build/release/banktivity-mcp ~/.local/bin/
-cp .build/release/banktivity-cli ~/.local/bin/
-codesign -fs - ~/.local/bin/banktivity-mcp   # Re-sign after copy
-codesign -fs - ~/.local/bin/banktivity-cli
+# Install binaries — ALWAYS via make; never cp over ~/.local/bin yourself (see below)
+make install-fast              # native arch, fast dev loop
+make install                   # universal (arm64 + x86_64)
+make verify                    # check the installed binaries actually exec
 
 # Run MCP server
 BANKTIVITY_FILE_PATH="/path/to/file.bank8" swift run banktivity-mcp
@@ -25,6 +24,35 @@ BANKTIVITY_FILE_PATH="/path/to/file.bank8" swift run banktivity-mcp
 BANKTIVITY_FILE_PATH="/path/to/file.bank8" swift run banktivity-cli accounts list
 swift run banktivity-cli --vault "/path/to/file.bank8" accounts list
 ```
+
+### Never `cp` over an installed binary
+
+`banktivity-mcp` is a long-lived **stdio** server — Paperclip agent runs leave copies
+resident for hours. `cp` opens the destination `O_TRUNC` and rewrites it **in place**,
+so if any running process still has that inode mapped, the kernel's code-signing state
+for the vnode goes inconsistent and every later `exec` is SIGKILLed:
+
+```
+EXC_CRASH / SIGKILL (Code Signature Invalid)
+termination namespace CODESIGNING ("Taskgated Invalid Signature")
+```
+
+This happened on **2026-07-28**: two servers from 11:02 and 11:19 were still resident
+when 11:26 `cp`'d a new build over them. The build was fine — identical bytes ran
+correctly straight out of `.build/release` and from a plain copy — but the *installed
+path* was killed at exec for the next 10 hours. Every Paperclip agent silently lost the
+banktivity MCP: the connector looked up but exposed zero tools, and the CFO agent could
+not verify a single figure.
+
+**The trap:** `codesign --verify` reports `valid on disk` and `satisfies its Designated
+Requirement` the whole time. File-exists, `+x`, and signature checks all pass on a binary
+the kernel refuses to run. Only *executing* it reveals the problem — that is what
+`make verify` does (exit 137 = 128+SIGKILL).
+
+`make install` / `make install-fast` install to a temp file, sign it, then `mv` it into
+place. `mv` is a `rename(2)`: atomic, allocates a new inode, and leaves already-running
+servers on the old one. If you ever hit this state, `codesign -fs - <path>` clears it by
+rewriting the file.
 
 ## Testing
 
