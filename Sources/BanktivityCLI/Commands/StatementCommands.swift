@@ -33,8 +33,13 @@ struct Statements: AsyncParsableCommand {
 
             let resolvedId = try accountRepo.resolveAccountId(id: accountId, name: accountName)
             try emitStatementReadWarnings(try statements.warningsForStatementReads(accountId: resolvedId))
-            let results = try statements.list(accountId: resolvedId, includeInternal: includeInternal)
-            try outputJSON(results, format: parent.format)
+            if includeInternal {
+                let results = try statements.listWithInternalDiagnostics(accountId: resolvedId)
+                try outputJSON(results, format: parent.format)
+            } else {
+                let results = try statements.list(accountId: resolvedId)
+                try outputJSON(results, format: parent.format)
+            }
         }
     }
 

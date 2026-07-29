@@ -627,6 +627,39 @@ public struct StatementSummaryDTO: Codable, Sendable {
     }
 }
 
+/// A line-item reference which exists in the account graph but cannot safely
+/// be addressed as a statement in the requested account.  `--include-internal`
+/// reports these explicitly so hidden references can never vanish from a
+/// diagnostic listing.
+public struct StatementUnaddressableReferenceDTO: Codable, Sendable {
+    public let lineItemId: Int
+    public let referencedStatementId: Int
+    public let requestedAccountId: Int
+    public let reason: String
+    public let capabilityFlags: [String: Bool]
+
+    public init(lineItemId: Int, referencedStatementId: Int, requestedAccountId: Int, reason: String) {
+        self.lineItemId = lineItemId
+        self.referencedStatementId = referencedStatementId
+        self.requestedAccountId = requestedAccountId
+        self.reason = reason
+        self.capabilityFlags = ["addressable": false, "reconcilable": false, "restorable": false]
+    }
+}
+
+/// Complete internal-statement diagnostic listing.  This envelope is emitted
+/// only for `--include-internal`; the default statement-list shape remains
+/// stable for existing consumers.
+public struct StatementInternalListingDTO: Codable, Sendable {
+    public let statements: [StatementSummaryDTO]
+    public let unaddressableReferences: [StatementUnaddressableReferenceDTO]
+
+    public init(statements: [StatementSummaryDTO], unaddressableReferences: [StatementUnaddressableReferenceDTO]) {
+        self.statements = statements
+        self.unaddressableReferences = unaddressableReferences
+    }
+}
+
 public struct VisibleRowCorrectionPlanDTO: Codable, Sendable {
     public let statementId: Int?
     public let inputSource: String

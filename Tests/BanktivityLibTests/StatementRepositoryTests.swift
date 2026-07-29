@@ -60,6 +60,44 @@ struct StatementRepositoryTests {
         #expect(inspection.capabilityFlags == ["addressable": false, "reconcilable": false, "restorable": false])
     }
 
+    @Test("Internal listing reports cross-account references without omission")
+    func internalListingReportsUnaddressableReferences() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let requested = try createInvestmentAccount(named: "Requested Internal Listing", using: repos.accounts)
+        let foreign = try createInvestmentAccount(named: "Foreign Internal Listing", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10", title: "Cross-account reference",
+            lineItems: [(accountId: requested.id, amount: 10, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: requested.id)
+        let foreignStatement = try repos.statements.create(
+            accountId: foreign.id, startDate: "2026-04-01", endDate: "2026-04-30",
+            beginningBalance: 0, endingBalance: 0
+        )
+
+        // Build an otherwise-corrupt historical reference directly in the
+        // disposable test vault. The read path must surface it, not hide it.
+        let base = BaseRepository(container: repos.vault.container)
+        try base.performWrite { ctx in
+            let fetchedLineItem = try base.fetchByPK(entityName: "LineItem", pk: lineItemId, in: ctx)
+            let fetchedStatement = try base.fetchByPK(entityName: "Statement", pk: foreignStatement.id, in: ctx)
+            let lineItem = try #require(fetchedLineItem)
+            let statement = try #require(fetchedStatement)
+            lineItem.setValue(statement, forKey: "pStatement")
+        }
+
+        let listing = try repos.statements.listWithInternalDiagnostics(accountId: requested.id)
+        #expect(listing.statements.isEmpty)
+        let diagnostic = try #require(listing.unaddressableReferences.first)
+        #expect(diagnostic.lineItemId == lineItemId)
+        #expect(diagnostic.referencedStatementId == foreignStatement.id)
+        #expect(diagnostic.requestedAccountId == requested.id)
+        #expect(diagnostic.reason == "referenced_statement_is_not_addressable_in_requested_account")
+        #expect(diagnostic.capabilityFlags == ["addressable": false, "reconcilable": false, "restorable": false])
+    }
+
     @Test("Membership inspection proves visible statement references separately")
     func inspectMembershipReturnsVisibleReference() throws {
         let repos = try makeRepositories()

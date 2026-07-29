@@ -24,7 +24,10 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
     // MARK: - Read Operations
 
     public func list(accountId: Int, includeInternal: Bool = false) throws -> [StatementSummaryDTO] {
-        try performRead { [self] ctx in
+        if includeInternal {
+            return try listWithInternalDiagnostics(accountId: accountId).statements
+        }
+        return try performRead { [self] ctx in
             guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
                 throw ToolError.notFound("Account not found: \(accountId)")
             }
@@ -38,29 +41,55 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             ]
 
             let statements = try ctx.fetch(request)
-            if includeInternal {
-                let listedIDs = Set(statements.map { Self.extractPK(from: $0.objectID) })
-                let lineRequest = NSFetchRequest<NSManagedObject>(entityName: "LineItem")
-                lineRequest.predicate = NSPredicate(format: "pAccount == %@ AND pStatement != nil", account)
-                let unaddressable = try ctx.fetch(lineRequest).compactMap { line -> String? in
-                    guard let referenced = Self.relatedObject(line, "pStatement") else { return nil }
-                    let referencedID = Self.extractPK(from: referenced.objectID)
-                    guard let referencedAccount = Self.relatedObject(referenced, "pAccount"),
-                          referencedAccount.objectID == account.objectID,
-                          listedIDs.contains(referencedID) else {
-                        return "lineItem=\(Self.extractPK(from: line.objectID)),statement=\(referencedID)"
-                    }
-                    return nil
-                }.sorted()
-                guard unaddressable.isEmpty else {
-                    throw ToolError.invalidInput(
-                        "unaddressable_statement_reference:\(unaddressable.joined(separator: ";"))"
+            return statements
+                .filter { !Self.isInternalInvestmentStatement($0) }
+                .map { self.mapToSummaryDTO($0) }
+        }
+    }
+
+    /// Includes every addressable statement in the requested account and an
+    /// explicit record for every line-item statement reference that cannot be
+    /// represented there.  This must remain read-only: it is evidence for
+    /// planning, never a backdoor to an internal mutation.
+    public func listWithInternalDiagnostics(accountId: Int) throws -> StatementInternalListingDTO {
+        try performRead { [self] ctx in
+            guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
+                throw ToolError.notFound("Account not found: \(accountId)")
+            }
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Statement")
+            request.predicate = NSPredicate(format: "pAccount == %@", account)
+            request.sortDescriptors = [
+                NSSortDescriptor(key: "pStartDate", ascending: true),
+                NSSortDescriptor(key: "pEndDate", ascending: true),
+                NSSortDescriptor(key: "pUniqueID", ascending: true),
+            ]
+            let statements = try ctx.fetch(request)
+            let listedIDs = Set(statements.map { Self.extractPK(from: $0.objectID) })
+            let lineRequest = NSFetchRequest<NSManagedObject>(entityName: "LineItem")
+            lineRequest.predicate = NSPredicate(format: "pAccount == %@ AND pStatement != nil", account)
+            let unaddressable = try ctx.fetch(lineRequest).compactMap { line -> StatementUnaddressableReferenceDTO? in
+                guard let referenced = Self.relatedObject(line, "pStatement") else { return nil }
+                let referencedID = Self.extractPK(from: referenced.objectID)
+                guard let referencedAccount = Self.relatedObject(referenced, "pAccount"),
+                      referencedAccount.objectID == account.objectID,
+                      listedIDs.contains(referencedID) else {
+                    return StatementUnaddressableReferenceDTO(
+                        lineItemId: Self.extractPK(from: line.objectID),
+                        referencedStatementId: referencedID,
+                        requestedAccountId: accountId,
+                        reason: "referenced_statement_is_not_addressable_in_requested_account"
                     )
                 }
+                return nil
+            }.sorted { lhs, rhs in
+                lhs.lineItemId == rhs.lineItemId
+                    ? lhs.referencedStatementId < rhs.referencedStatementId
+                    : lhs.lineItemId < rhs.lineItemId
             }
-            return statements
-                .filter { includeInternal || !Self.isInternalInvestmentStatement($0) }
-                .map { self.mapToSummaryDTO($0) }
+            return StatementInternalListingDTO(
+                statements: statements.map { self.mapToSummaryDTO($0) },
+                unaddressableReferences: unaddressable
+            )
         }
     }
 
