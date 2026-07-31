@@ -164,17 +164,19 @@ public final class SyncBlobUpdater: @unchecked Sendable {
         return true
     }
 
-    /// Patch a required transaction sync blob in a caller-owned transaction.
-    /// Unlike the legacy best-effort updater, this is deliberately strict:
-    /// absence, malformed data, or a no-op patch rejects the enclosing typed
-    /// statement restore before its context can be saved.
-    public func patchRequiredTransactionBlob(
+    /// Patch a transaction sync blob in a caller-owned transaction when it
+    /// exists. An absent record is a valid preimage for a local-only
+    /// transaction: there is no remote blob to change. A present record is
+    /// still validated strictly, so malformed or non-canonical metadata rolls
+    /// back the enclosing typed statement mutation before its context saves.
+    @discardableResult
+    public func patchTransactionBlobIfPresent(
         transactionUUID: String,
         in context: NSManagedObjectContext,
         using transform: @Sendable (String) -> String
-    ) throws {
+    ) throws -> Bool {
         guard let record = try fetchSyncRecord(entityUUID: transactionUUID, in: context) else {
-            throw ToolError.notFound("No sync record exists for hash-bound statement mutation transaction")
+            return false
         }
         guard (record.value(forKey: "pSyncedState") as? NSNumber)?.intValue == 0,
               record.value(forKey: "pSyncedModificationDate") == nil else {
@@ -199,6 +201,7 @@ public final class SyncBlobUpdater: @unchecked Sendable {
         }
         record.setValue(compressed, forKey: "pRemoteEntityData")
         record.setValue(nil, forKey: "pSyncedModificationDate")
+        return true
     }
 
     // MARK: - Sync Record Creation

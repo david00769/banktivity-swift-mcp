@@ -329,7 +329,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 in: ctx
             )
             for patch in syncPatches {
-                try updater.patchRequiredTransactionBlob(
+                _ = try updater.patchTransactionBlobIfPresent(
                     transactionUUID: patch.transactionUUID,
                     in: ctx
                 ) { xml in
@@ -451,7 +451,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 in: ctx
             )
             for (_, patch) in membershipLinesAndPatches {
-                try updater.patchRequiredTransactionBlob(transactionUUID: patch.transactionUUID, in: ctx) { xml in
+                _ = try updater.patchTransactionBlobIfPresent(transactionUUID: patch.transactionUUID, in: ctx) { xml in
                     updater.patchCleared(
                         xml: updater.patchStatement(xml: xml, lineItemUUID: patch.lineItemUUID, statementUUID: restoredUniqueId),
                         lineItemUUID: patch.lineItemUUID,
