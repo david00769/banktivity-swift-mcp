@@ -117,6 +117,6 @@ Banktivity's CloudKit sync uses `ZSYNCEDENTITY` records with gzipped XML blobs (
 
 **`pSyncedModificationDate` must be NULL** for Banktivity to check a sync record during sync. Non-NULL means "already synced, skip". All blob patches must null this field after saving, otherwise changes made after the initial sync won't propagate to CloudKit.
 
-**LineItems have no separate sync records** — they're serialized inside the parent Transaction's blob. The `identifier` field in the XML maps to `pUniqueID` in Core Data. **Statements DO have their own sync records** in `ZSYNCEDENTITY` with `pHostedEntityType = "Statement"`.
+**LineItems have no separate sync records** — they're serialized inside the parent Transaction's blob. The `identifier` field in the XML maps to `pUniqueID` in Core Data. A Statement `SyncedHostedEntity` can exist, but historical vaults can legitimately omit an individual Statement record; typed statement replacement must never synthesize one. Its authoritative membership synchronization remains the strict transaction-blob patch for every affected line item. When an individual Statement record is present, its deleted/restore state is still a strict part of the atomic forward/inverse contract.
 
 **`pSyncedState` values**: 0 = normal/synced, 3 = deleted. For deletions, set state to 3 and `pSyncedModificationDate` to the current timestamp (preserving the blob). For modifications, null `pSyncedModificationDate` (keeping state at 0).
