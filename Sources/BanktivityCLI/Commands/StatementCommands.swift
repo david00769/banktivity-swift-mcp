@@ -7,7 +7,7 @@ import Foundation
 struct Statements: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Statement reconciliation operations",
-        subcommands: [List.self, Status.self, Get.self, InspectMembership.self, ReplaceInternalRow.self, RestoreInternalRow.self, CorrectionPlan.self, Create.self, Update.self, Delete.self, Reconcile.self, Unreconcile.self, Unreconciled.self]
+        subcommands: [List.self, Status.self, Get.self, InspectMembership.self, InspectSyncRecord.self, ReplaceInternalRow.self, RestoreInternalRow.self, CorrectionPlan.self, Create.self, Update.self, Delete.self, Reconcile.self, Unreconcile.self, Unreconciled.self]
     )
 
     struct List: AsyncParsableCommand {
@@ -107,6 +107,53 @@ struct Statements: AsyncParsableCommand {
             let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
             let result = try statements.inspectMembership(lineItemId: lineItemId)
             try outputJSON(result, format: parent.format)
+        }
+    }
+
+    struct InspectSyncRecord: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "inspect-sync-record",
+            abstract: "Read a statement's SyncedHostedEntity diagnostic without mutating the vault"
+        )
+
+        @OptionGroup var parent: GlobalOptions
+
+        @Argument(help: "Statement ID")
+        var statementId: Int
+
+        func run() async throws {
+            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
+            let container = try BanktivityCLI.createContainer(vaultPath: path)
+            let statements = StatementRepository(
+                container: container,
+                lineItemRepo: LineItemRepository(container: container)
+            )
+            guard let statement = try statements.get(statementId: statementId) else {
+                throw ToolError.notFound("Statement not found: \(statementId)")
+            }
+            guard let statementUUID = statement.uniqueId,
+                  !statementUUID.isEmpty else {
+                throw ToolError.invalidInput(
+                    "Statement sync inspection requires a stable statement identity"
+                )
+            }
+
+            var output: [String: Any] = [
+                "statementId": statement.id,
+                "statementUUID": statementUUID,
+                "statementName": statement.name as Any,
+            ]
+            if let syncInfo = SyncBlobUpdater(container: container)
+                .inspectSyncRecord(entityUUID: statementUUID) {
+                output["syncRecord"] = syncInfo
+            } else {
+                output["syncRecord"] = "NOT FOUND — no SyncedHostedEntity for this statement UUID"
+            }
+            let data = try JSONSerialization.data(
+                withJSONObject: output,
+                options: [.prettyPrinted, .sortedKeys]
+            )
+            print(String(data: data, encoding: .utf8)!)
         }
     }
 
