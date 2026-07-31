@@ -324,7 +324,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             for line in sourceLines where selectedIds.contains(Self.extractPK(from: line.objectID)) {
                 line.setValue(replacement, forKey: "pStatement"); line.setValue(true, forKey: "pCleared")
             }
-            try updater.markRequiredSyncRecordDeleted(
+            _ = try updater.markStatementSyncRecordDeletedIfPresent(
                 entityUUID: sourceStatementUUID,
                 in: ctx
             )
@@ -446,7 +446,10 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             // strict context-local updates execute before the context save, so
             // any failure rolls back the restored row, memberships, and
             // replacement deletion together.
-            try updater.restoreDeletedSyncRecord(entityUUID: restoredUniqueId, in: ctx)
+            _ = try updater.restoreDeletedStatementSyncRecordIfPresent(
+                entityUUID: restoredUniqueId,
+                in: ctx
+            )
             for (_, patch) in membershipLinesAndPatches {
                 try updater.patchRequiredTransactionBlob(transactionUUID: patch.transactionUUID, in: ctx) { xml in
                     updater.patchCleared(

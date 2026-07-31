@@ -106,7 +106,10 @@ public final class SyncBlobUpdater: @unchecked Sendable {
                 nonisolated(unsafe) var writeError: Error?
                 bgContext.performAndWait {
                     do {
-                        try self.restoreDeletedSyncRecord(entityUUID: entityUUID, in: bgContext)
+                        _ = try self.restoreDeletedStatementSyncRecordIfPresent(
+                            entityUUID: entityUUID,
+                            in: bgContext
+                        )
                         try bgContext.save()
                     } catch {
                         writeError = error
@@ -119,13 +122,17 @@ public final class SyncBlobUpdater: @unchecked Sendable {
         }
     }
 
-    /// Restore the exact deleted statement sync record in a caller-owned
-    /// transaction.  Typed statement restore uses this overload so a sync
-    /// failure aborts the Core Data statement/membership mutation instead of
-    /// leaving a partially restored row behind.
-    public func restoreDeletedSyncRecord(entityUUID: String, in context: NSManagedObjectContext) throws {
+    /// Restore a Statement sync record only when the inspected preimage had
+    /// one. Statement membership itself is synchronised through every
+    /// affected transaction blob; historical vaults can legitimately have no
+    /// separate Statement `SyncedHostedEntity`. When a record is present, its
+    /// state remains a strict part of the atomic inverse contract.
+    public func restoreDeletedStatementSyncRecordIfPresent(
+        entityUUID: String,
+        in context: NSManagedObjectContext
+    ) throws -> Bool {
         guard let record = try fetchSyncRecord(entityUUID: entityUUID, in: context) else {
-            throw ToolError.notFound("No sync record exists for hash-bound statement restore")
+            return false
         }
         guard (record.value(forKey: "pSyncedState") as? NSNumber)?.intValue == 3 else {
             throw ToolError.invalidInput("Statement sync record was not deleted by the forward operation")
@@ -133,18 +140,19 @@ public final class SyncBlobUpdater: @unchecked Sendable {
         record.setValue(Int16(0), forKey: "pSyncedState")
         record.setValue(nil, forKey: "pSyncedModificationDate")
         log("Restored deleted sync record for UUID \(entityUUID)")
+        return true
     }
 
-    /// Mark the exact source statement sync record as deleted inside a
-    /// caller-owned transaction. Typed internal-statement replacement uses
-    /// this path so a missing or non-canonical sync preimage aborts the
-    /// statement and membership mutation before the context is saved.
-    public func markRequiredSyncRecordDeleted(
+    /// Mark the source Statement sync record as deleted only if it exists.
+    /// See `restoreDeletedStatementSyncRecordIfPresent`: an absent individual
+    /// Statement record is not synthesized because transaction blob patches
+    /// are the authoritative membership-sync preimage.
+    public func markStatementSyncRecordDeletedIfPresent(
         entityUUID: String,
         in context: NSManagedObjectContext
-    ) throws {
+    ) throws -> Bool {
         guard let record = try fetchSyncRecord(entityUUID: entityUUID, in: context) else {
-            throw ToolError.notFound("No sync record exists for hash-bound statement replacement")
+            return false
         }
         guard (record.value(forKey: "pSyncedState") as? NSNumber)?.intValue == 0,
               record.value(forKey: "pSyncedModificationDate") == nil else {
@@ -153,6 +161,7 @@ public final class SyncBlobUpdater: @unchecked Sendable {
         record.setValue(Int16(3), forKey: "pSyncedState")
         record.setValue(Date(), forKey: "pSyncedModificationDate")
         log("Marked required sync record as deleted for UUID \(entityUUID)")
+        return true
     }
 
     /// Patch a required transaction sync blob in a caller-owned transaction.
