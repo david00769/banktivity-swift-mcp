@@ -995,7 +995,25 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         let beginningBalance = Self.doubleValue(object, "pBeginningBalance")
         let endingBalance = Self.doubleValue(object, "pEndingBalance")
 
-        let lineItems = lineItemsOverride ?? Array(Self.relatedSet(object, "pLineItems"))
+        // ``pLineItems`` is a Core Data set.  The statement preimage includes
+        // the derived balance fields below, so calculate them from the same
+        // canonical order used by the DTO.  Otherwise an inspect in a read
+        // context can hash a different floating-point accumulation from the
+        // subsequent write context even when the membership is unchanged.
+        let lineItems = (lineItemsOverride ?? Array(Self.relatedSet(object, "pLineItems")))
+            .sorted { lhs, rhs in
+                let lhsTransaction = Self.relatedObject(lhs, "pTransaction")
+                let rhsTransaction = Self.relatedObject(rhs, "pTransaction")
+                let lhsDate = lhsTransaction.flatMap { Self.dateValue($0, "pDate") } ?? 0
+                let rhsDate = rhsTransaction.flatMap { Self.dateValue($0, "pDate") } ?? 0
+                if lhsDate != rhsDate { return lhsDate < rhsDate }
+
+                let lhsTransactionId = lhsTransaction.map { Self.extractPK(from: $0.objectID) } ?? 0
+                let rhsTransactionId = rhsTransaction.map { Self.extractPK(from: $0.objectID) } ?? 0
+                if lhsTransactionId != rhsTransactionId { return lhsTransactionId < rhsTransactionId }
+
+                return Self.extractPK(from: lhs.objectID) < Self.extractPK(from: rhs.objectID)
+            }
         let reconciledBalance = lineItems.reduce(0.0) { sum, li in
             sum + Self.statementBalanceAmount(for: li)
         }
@@ -1030,21 +1048,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             modifiedAt = nil
         }
 
-        let lineItemDTOs = lineItems
-            .sorted { lhs, rhs in
-                let lhsTransaction = Self.relatedObject(lhs, "pTransaction")
-                let rhsTransaction = Self.relatedObject(rhs, "pTransaction")
-                let lhsDate = lhsTransaction.flatMap { Self.dateValue($0, "pDate") } ?? 0
-                let rhsDate = rhsTransaction.flatMap { Self.dateValue($0, "pDate") } ?? 0
-                if lhsDate != rhsDate { return lhsDate < rhsDate }
-
-                let lhsTransactionId = lhsTransaction.map { Self.extractPK(from: $0.objectID) } ?? 0
-                let rhsTransactionId = rhsTransaction.map { Self.extractPK(from: $0.objectID) } ?? 0
-                if lhsTransactionId != rhsTransactionId { return lhsTransactionId < rhsTransactionId }
-
-                return Self.extractPK(from: lhs.objectID) < Self.extractPK(from: rhs.objectID)
-            }
-            .map { lineItemRepo.mapToDTO($0) }
+        let lineItemDTOs = lineItems.map { lineItemRepo.mapToDTO($0) }
         let rowClassification = Self.statementRowClassification(object)
 
         return StatementDTO(

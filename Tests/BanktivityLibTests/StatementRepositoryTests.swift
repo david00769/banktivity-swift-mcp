@@ -1227,6 +1227,45 @@ struct StatementRepositoryTests {
         #expect(detachedLineItem.cleared)
     }
 
+    @Test("Internal statement inspection preimage is stable across read contexts")
+    func internalStatementInspectionPreimageIsStableAcrossReadContexts() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let investment = try createInvestmentAccount(named: "Stable preimage IRA", using: repos.accounts)
+        let lineItemIds = try [
+            ("2026-04-01", 9_007_199_254_740_992.0),
+            ("2026-04-02", -9_007_199_254_740_992.0),
+            ("2026-04-03", 0.01),
+        ].map { date, amount in
+            let transaction = try repos.transactions.create(
+                date: date,
+                title: "Preimage summation fixture",
+                lineItems: [(accountId: investment.id, amount: amount, memo: nil)]
+            )
+            return try accountLineItemId(in: transaction, accountId: investment.id)
+        }
+        let statement = try repos.statements.create(
+            accountId: investment.id,
+            startDate: "2026-04-01",
+            endDate: "2026-04-30",
+            beginningBalance: 0,
+            endingBalance: 0.01
+        )
+        _ = try repos.statements.reconcileLineItems(
+            statementId: statement.id,
+            lineItemIds: lineItemIds,
+            operatorConfirmedVisible: true
+        )
+
+        let first = try repos.statements.inspectMembership(lineItemId: lineItemIds[0])
+        let second = try repos.statements.inspectMembership(lineItemId: lineItemIds[0])
+
+        #expect(first.preimageSha256 == second.preimageSha256)
+        #expect(first.statementPreimage?.reconciledBalance == second.statementPreimage?.reconciledBalance)
+        #expect(first.statementPreimage?.difference == second.statementPreimage?.difference)
+    }
+
     @Test("Explicit reconciliation still rejects line items from another account")
     func reconcileRejectsWrongAccountLineItems() throws {
         let repos = try makeRepositories()
