@@ -293,6 +293,9 @@ struct Statements: AsyncParsableCommand {
         @Option(name: .long, help: "Note")
         var note: String?
 
+        @Option(name: .long, help: "Comma-separated line item IDs to reconcile as part of this create contract")
+        var lineItemIds: String?
+
         @Flag(name: .long, help: "Confirm a fresh whole-vault backup exists for this write session")
         var backupConfirmed: Bool = false
 
@@ -310,11 +313,25 @@ struct Statements: AsyncParsableCommand {
             try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
 
             let accountRepo = AccountRepository(container: container)
+            let syncBlobUpdater = SyncBlobUpdater(container: container)
             let lineItemRepo = LineItemRepository(container: container)
-            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
+            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: syncBlobUpdater)
+
+            let rawIds = lineItemIds?.split(separator: ",", omittingEmptySubsequences: false).map {
+                $0.trimmingCharacters(in: .whitespaces)
+            } ?? []
+            let ids = rawIds.compactMap(Int.init)
+            if lineItemIds != nil && (
+                ids.isEmpty
+                    || ids.count != rawIds.count
+                    || ids.contains(where: { $0 <= 0 })
+                    || Set(ids).count != ids.count
+            ) {
+                throw ToolError.invalidInput("Line item IDs must be a non-empty, unique comma-separated list of positive integers")
+            }
 
             let resolvedId = try accountRepo.resolveAccountId(id: accountId, name: accountName)
-            let result = try statements.create(
+            let created = try statements.create(
                 accountId: resolvedId,
                 startDate: startDate,
                 endDate: endDate,
@@ -323,7 +340,25 @@ struct Statements: AsyncParsableCommand {
                 name: name,
                 note: note
             )
-            try outputJSON(result, format: parent.format)
+            do {
+                let result = ids.isEmpty
+                    ? created
+                    : try statements.reconcileLineItems(
+                        statementId: created.id,
+                        lineItemIds: ids,
+                        operatorConfirmedVisible: operatorConfirmedVisible
+                    )
+                try outputJSON(result, format: parent.format)
+            } catch {
+                do {
+                    _ = try statements.delete(statementId: created.id)
+                } catch let rollbackError {
+                    throw ValidationError(
+                        "Statement create failed and rollback also failed: \(error); rollback: \(rollbackError)"
+                    )
+                }
+                throw error
+            }
         }
     }
 

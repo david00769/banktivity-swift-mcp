@@ -12,6 +12,7 @@ struct BanktivityCLI: AsyncParsableCommand {
         abstract: "CLI for Banktivity personal finance vaults",
         version: version,
         subcommands: [
+            Reconciliation.self,
             Accounts.self,
             Transactions.self,
             Categories.self,
@@ -42,7 +43,7 @@ struct BanktivityCLI: AsyncParsableCommand {
 
     /// Create a Core Data container for the given vault path
     static func createContainer(vaultPath: String) throws -> NSPersistentContainer {
-        try PersistentContainerFactory.create(bankFilePath: vaultPath)
+        try CLIProcessState.shared.container(vaultPath: vaultPath)
     }
 
     /// Create a WriteGuard for the given vault path
@@ -86,19 +87,65 @@ func outputJSON<T: Encodable>(_ value: T, format: OutputFormat = .json) throws {
     let encoder = JSONEncoder()
     encoder.outputFormatting = format == .json ? [.prettyPrinted, .sortedKeys] : [.sortedKeys]
     let data = try encoder.encode(value)
-    print(String(data: data, encoding: .utf8) ?? "{}")
+    emitJSONText(String(data: data, encoding: .utf8) ?? "{}")
 }
 
 func outputJSON(_ value: [String: Any], format: OutputFormat = .json) throws {
     let options: JSONSerialization.WritingOptions = format == .json ? [.prettyPrinted, .sortedKeys] : [.sortedKeys]
     let data = try JSONSerialization.data(withJSONObject: value, options: options)
-    print(String(data: data, encoding: .utf8) ?? "{}")
+    emitJSONText(String(data: data, encoding: .utf8) ?? "{}")
 }
 
 func outputJSON(_ value: [[String: Any]], format: OutputFormat = .json) throws {
     let options: JSONSerialization.WritingOptions = format == .json ? [.prettyPrinted, .sortedKeys] : [.sortedKeys]
     let data = try JSONSerialization.data(withJSONObject: value, options: options)
-    print(String(data: data, encoding: .utf8) ?? "[]")
+    emitJSONText(String(data: data, encoding: .utf8) ?? "[]")
+}
+
+private func emitJSONText(_ text: String) {
+    if !CLIProcessState.shared.captureOutput(text) {
+        print(text)
+    }
+}
+
+final class CLIProcessState: @unchecked Sendable {
+    static let shared = CLIProcessState()
+
+    private let lock = NSLock()
+    private var containers: [String: NSPersistentContainer] = [:]
+    private var outputSink: ((String) -> Void)?
+
+    func container(vaultPath: String) throws -> NSPersistentContainer {
+        lock.lock()
+        defer { lock.unlock() }
+        if let existing = containers[vaultPath] {
+            return existing
+        }
+        let created = try PersistentContainerFactory.create(bankFilePath: vaultPath)
+        containers[vaultPath] = created
+        return created
+    }
+
+    func beginOutputCapture(_ sink: @escaping (String) -> Void) {
+        lock.lock()
+        outputSink = sink
+        lock.unlock()
+    }
+
+    func endOutputCapture() {
+        lock.lock()
+        outputSink = nil
+        lock.unlock()
+    }
+
+    func captureOutput(_ text: String) -> Bool {
+        lock.lock()
+        let sink = outputSink
+        lock.unlock()
+        guard let sink else { return false }
+        sink(text)
+        return true
+    }
 }
 
 func emitWarning(_ message: String) {
