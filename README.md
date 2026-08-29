@@ -260,47 +260,75 @@ security-linked rows can carry separate security-line cash effects.
 
 ## CLI
 
-A standalone CLI (`banktivity-cli`) provides the same core query and write functionality without an MCP server. Set `BANKTIVITY_FILE_PATH` or pass `--vault`:
+A standalone CLI (`banktivity-cli`) provides the same query and write
+functionality without an MCP server. It reads a `.bank8` vault selected by
+`--vault /absolute/path/to/Ledger.bank8` or `BANKTIVITY_FILE_PATH`.
+
+Start with the built-in help:
+
+```sh
+banktivity-cli --help
+banktivity-cli accounts --help
+banktivity-cli statements inspect-membership --help
+banktivity-cli capabilities --format compact
+```
+
+Help is safe to run without opening a vault. Read commands return JSON on
+standard output. Write commands change financial records immediately through
+Core Data; back up the vault first and review the command-specific safeguards
+before using them.
+
+Common examples:
 
 ```sh
 banktivity-cli --vault ~/Documents/Banktivity/My\ Accounts.bank8 accounts list
 banktivity-cli accounts balance --account-name "Checking"
 banktivity-cli transactions list --account-name "Checking" --start-date 2025-01-01 --limit 10
-banktivity-cli transactions create --account-name "Checking" --date 2025-06-15 --title "Coffee" --amount -4.50 --category-name "Food"
-banktivity-cli statements status --account-name "Checking"
+banktivity-cli statements status --account-name "Brokerage"
 banktivity-cli tags get-by-tag --tag-name "Vacation" --limit 20
-banktivity-cli tags bulk-tag --transaction-ids "100,101,102" --tag-name "Vacation"
 banktivity-cli export turtle --output vault.ttl
 ```
 
-### CLI Subcommands
+### Command reference
 
-- `accounts list`, `accounts balance`, `accounts net-worth`, `accounts spending`, `accounts income`, `accounts summary`
-- `transactions list`, `transactions search`, `transactions get`, `transactions create`, `transactions repair-forex`, `transactions update`, `transactions delete`
-- `categories list`, `categories get`, `categories tree`, `categories create`
-- `tags list`, `tags create`, `tags tag-transaction`, `tags get-by-tag`, `tags bulk-tag`
-- `uncategorized list`, `uncategorized suggest`, `uncategorized recategorize`, `uncategorized bulk-recategorize`, `uncategorized review`, `uncategorized payee-summary`
-- `line-items get`, `line-items add`, `line-items update`, `line-items delete`
-  - `line-items update <id> --account-id 0` deliberately clears the account relation and restores Banktivity's `Unknown` balancing-line state. This is supported for reviewed repair workflows; ordinary account IDs still must resolve to a real account.
-  - `line-items update <id> --cleared|--uncleared` changes the exact line-item clear state and patches its parent transaction sync record. Use this for exact statement-reconciliation rollback; transaction-level clear flags are not a substitute for investment line state.
-- `templates list`, `templates get`, `templates create`, `templates update`, `templates delete`
-- `import-rules list`, `import-rules get`, `import-rules match`, `import-rules create`, `import-rules update`, `import-rules delete`
-- `scheduled list`, `scheduled get`, `scheduled create`, `scheduled update`, `scheduled delete`
-- `statements list`, `statements status`, `statements get`, `statements inspect-membership`, `statements inspect-sync-record`, `statements create`, `statements delete`, `statements reconcile`, `statements unreconcile`, `statements unreconciled`
-  - `statements delete` rejects internal/unnamed investment rows unless the diagnostic plan explicitly supplies `--allow-internal`
-  - `statements inspect-membership --line-item-id <id>` is read-only. It reports the linked row's identity, balances, membership, chain anchors, preimage hashes, and addressable/reconcilable/restorable capabilities.
-  - `statements inspect-sync-record --statement-id <id>` is read-only. It reports whether the individual Statement sync record exists; an absent record is normal for some historical vaults and is never synthesized by typed replacement.
-  - `statements list --include-internal` returns all addressable internal rows plus explicit `unaddressableReferences`; a referenced statement never silently disappears from the diagnostic listing.
-  - `statements replace-internal-row-with-visible-statement` and `statements restore-internal-row-from-preimage` are the only typed internal-row replacement pair. Both require the exact account, period/position anchors, membership and cleared-state preimages, and their SHA-256 bindings. The exact selected replacement subset is bound in both directions by `--replacement-membership-preimage-sha256`, calculated over the JSON encoding of the sorted line-item ID array; restore also requires that same subset through `--replacement-line-item-ids`.
-  - Before restore, inspect one selected line item again and pass that post-forward inspection's `preimageSha256` as `--replacement-preimage-sha256`. This prevents the inverse from deleting a replacement row whose name, period, balances, or membership-derived fields changed after the forward operation.
-  - Typed internal-row replacement fails closed unless its atomic transaction sync-blob updates are available. A legitimately absent transaction or individual Statement sync record is a local-only preimage and is left absent; any present record is validated and updated strictly. Restore rejects selected or unselected members that no longer match the exact forward state, rather than overwriting intervening changes. The restore returns its allocator-generated row ID for replay; these commands are not a generic `--allow-internal` mutation route.
-- `securities list`, `securities create`, `securities prices`, `securities holdings`, `securities trades`, `securities income`, `securities create-income`, `securities adjust`, `securities import-prices`, `securities delete-prices`
-- `export turtle`
-- `schema`
+The command groups below are the complete CLI surface. Use a group's
+`--help` output for required arguments, defaults, and write confirmations.
 
-Most commands that accept `--account-id` also accept `--account-name` as an alternative. Statement dates use local-day statement boundaries, and statement reconciliation preserves existing cleared-state semantics when assigning or unassigning line items. The `transactions create` command supports `--line-items` with a JSON array for multi-line-item (split) transactions.
+- `accounts`: `list`, `balance`, `net-worth`, `spending`, `income`, `summary`, `create`
+- `transactions`: `list`, `search`, `get`, `create`, `repair-forex`, `update`, `delete`, `sync-info`
+- `categories`: `list`, `get`, `tree`, `audit-entities`, `create`
+- `tags`: `list`, `create`, `tag-transaction`, `get-by-tag`, `bulk-tag`
+- `uncategorized`: `list`, `suggest`, `review`, `payee-summary`, `recategorize`, `bulk-recategorize`
+- `line-items`: `get`, `add`, `update`, `delete`
+- `templates`: `list`, `get`, `create`, `update`, `delete`
+- `import-rules`: `list`, `get`, `match`, `create`, `update`, `delete`
+- `scheduled`: `list`, `get`, `create`, `update`, `delete`
+- `statements`: `list`, `status`, `get`, `inspect-membership`, `inspect-sync-record`, `replace-internal-row-with-visible-statement`, `restore-internal-row-from-preimage`, `visible-row-correction-plan`, `create`, `update`, `delete`, `reconcile`, `unreconcile`, `unreconciled`
+- `securities`: `list`, `create`, `prices`, `import-prices`, `delete-prices`, `fix-prices`, `holdings`, `trades`, `income`, `create-trade`, `create-income`, `adjust`, `update-trade`
+- `reconciliation`: `execute-bundle` for a reviewed, hash-bound phase bundle
+- `export`: `turtle`
+- `schema`: dump the Core Data schema
+- `capabilities`: show stable JSON safety metadata for CLI and MCP commands
 
-Use `--format compact` for machine-readable single-line JSON output (default is pretty-printed).
+Important behavior:
+
+- Commands that accept `--account-id` generally also accept `--account-name`.
+- Statement dates use local-day boundaries. Reconciliation preserves existing
+  cleared-state semantics when assigning or unassigning line items.
+- `transactions create --line-items` accepts a JSON array for split transactions.
+- `statements inspect-membership` and `statements inspect-sync-record` are
+  read-only diagnostics. They expose statement references and sync-record state;
+  they do not synthesize missing records.
+- Internal statement replacement and restoration require exact account,
+  period, membership, cleared-state, and SHA-256 preimage evidence. They are
+  typed repair operations, not a general-purpose internal-row write escape hatch.
+- `reconciliation execute-bundle` validates the bundle digest, vault, operation
+  order, and command templates before running the phase.
+- `capabilities` is the machine-readable source for access, write-mode,
+  confirmation, dry-run, and UI-verification metadata.
+
+Use `--format compact` when a script needs one-line JSON; the default is
+pretty-printed JSON for human inspection.
 
 ### Shell Completions
 

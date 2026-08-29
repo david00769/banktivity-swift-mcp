@@ -62,6 +62,10 @@ public enum CapabilityRegistry {
 
     public static func cliCapabilities() -> [CommandCapabilityDTO] {
         [
+            writeCLI(
+                "reconciliation execute-bundle",
+                note: "Runs a reviewed hash-bound phase bundle; the guarded wrapper classifies each nested command before execution."
+            ),
             readCLI("accounts list"),
             readCLI("accounts balance"),
             readCLI("accounts net-worth"),

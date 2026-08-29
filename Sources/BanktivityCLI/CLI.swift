@@ -9,7 +9,24 @@ import Foundation
 struct BanktivityCLI: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "banktivity-cli",
-        abstract: "CLI for Banktivity personal finance vaults",
+        abstract: "Read and manage a Banktivity personal-finance vault",
+        discussion: """
+        Use a command group to inspect accounts, transactions, statements, securities,
+        and other parts of a Banktivity vault. Read commands return JSON on standard
+        output. Commands that change financial data are marked as writes and retain
+        the project's normal backup, review, and verification requirements.
+
+        Supply a vault with --vault /path/to/Ledger.bank8 or set
+        BANKTIVITY_FILE_PATH. Run banktivity-cli <group> --help for the options and
+        examples for one area. Run banktivity-cli capabilities for machine-readable
+        command and safety metadata.
+
+        Examples:
+          banktivity-cli accounts list
+          banktivity-cli transactions list --account-name "Checking" --limit 20
+          banktivity-cli statements status --account-name "Brokerage"
+          banktivity-cli capabilities --format compact
+        """,
         version: version,
         subcommands: [
             Reconciliation.self,
