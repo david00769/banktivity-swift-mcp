@@ -13,6 +13,23 @@ Inspired by [banktivity-mcp](https://github.com/mhriemers/banktivity-mcp) (TypeS
 ## Requirements
 
 - macOS 14+
+
+## Read-only mode
+
+The CLI and MCP server normally open a vault for read/write access. To protect
+the store while inspecting it, set BANKTIVITY_STORE_READ_ONLY=1 (also
+accepted: true or yes) in the process environment. The Core Data store is then
+opened read-only; write commands still fail when they attempt to mutate the
+store. This setting is an extra protection layer, not a replacement for the
+normal backup and write-guard workflow.
+
+For CLI usage:
+
+`sh
+BANKTIVITY_STORE_READ_ONLY=1 \
+  banktivity-cli --vault ~/Documents/Banktivity/My\\ Accounts.bank8 accounts list
+`
+
 - A Banktivity `.bank8` vault file
 
 ## Installation
