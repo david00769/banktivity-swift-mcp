@@ -26,6 +26,20 @@ public enum BanktivityError: Error, CustomStringConvertible {
 /// Loads and configures an NSPersistentContainer from a .bank8 bundle's compiled Core Data models.
 public enum PersistentContainerFactory {
 
+    /// Read the wrapper-supplied read-only intent.
+    ///
+    /// `scripts/mcp/run-banktivity-swift-cli.sh` already classifies every
+    /// invocation as read or write and exports this; the binary only honours it.
+    public static var readOnlyFromEnvironment: Bool {
+        let raw = ProcessInfo.processInfo.environment["BANKTIVITY_STORE_READ_ONLY"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        switch raw {
+        case "1", "true", "yes": return true
+        default: return false
+        }
+    }
+
     /// Load all .momd model bundles from the StoreContent directory and merge them.
     public static func loadMergedModel(from storeContentURL: URL) throws -> NSManagedObjectModel {
         let contents = try FileManager.default.contentsOfDirectory(
@@ -55,9 +69,18 @@ public enum PersistentContainerFactory {
 
     /// Create a configured NSPersistentContainer for the given .bank8 file path.
     ///
-    /// - Parameter bankFilePath: Path to the .bank8 bundle
+    /// - Parameters:
+    ///   - bankFilePath: Path to the .bank8 bundle
+    ///   - readOnly: Open the SQLite store read-only. A read-write handle can
+    ///     checkpoint the WAL and recover a hot journal, so it mutates the vault
+    ///     even when no write command runs. Callers that know an invocation only
+    ///     reads should pass true to remove the write vector rather than rely on
+    ///     the command to behave.
     /// - Returns: A loaded NSPersistentContainer
-    public static func create(bankFilePath: String) throws -> NSPersistentContainer {
+    public static func create(
+        bankFilePath: String,
+        readOnly: Bool = false
+    ) throws -> NSPersistentContainer {
         let storeContentURL = URL(fileURLWithPath: bankFilePath)
             .appendingPathComponent("StoreContent")
 
@@ -79,6 +102,7 @@ public enum PersistentContainerFactory {
 
         let description = NSPersistentStoreDescription(url: sqlURL)
         description.type = NSSQLiteStoreType
+        description.isReadOnly = readOnly
         // Do NOT enable persistent history tracking — Banktivity uses its own sync
         // mechanism (ZSYNCEDENTITY) rather than Core Data's built-in persistent history.
         // Enabling history tracking populates the ATRANSACTION/ACHANGE tables and adds

@@ -121,7 +121,10 @@ final class CLIProcessState: @unchecked Sendable {
         if let existing = containers[vaultPath] {
             return existing
         }
-        let created = try PersistentContainerFactory.create(bankFilePath: vaultPath)
+        let created = try PersistentContainerFactory.create(
+            bankFilePath: vaultPath,
+            readOnly: PersistentContainerFactory.readOnlyFromEnvironment
+        )
         containers[vaultPath] = created
         return created
     }
