@@ -11,6 +11,24 @@ struct CapabilityRegistryTests {
         #expect(report.schemaVersion == 1)
         #expect(!report.commands.isEmpty)
         #expect(!report.tools.isEmpty)
+        #expect(report.commands.count == 82)
+
+        let commandNames = Set(report.commands.map(\.name))
+        for name in [
+            "categories audit-entities",
+            "transactions repair-forex",
+            "statements status",
+            "statements inspect-membership",
+            "statements inspect-sync-record",
+            "statements visible-row-correction-plan",
+            "statements update",
+            "statements replace-internal-row-with-visible-statement",
+            "statements restore-internal-row-from-preimage",
+            "securities create-trade",
+            "securities create-income",
+        ] {
+            #expect(commandNames.contains(name))
+        }
 
         let reconciliation = try #require(
             report.commands.first { $0.name == "reconciliation execute-bundle" }
