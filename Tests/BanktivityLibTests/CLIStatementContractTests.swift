@@ -13,6 +13,11 @@ struct CLIStatementContractTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let buildRoot = packageRoot.appendingPathComponent(".build")
+        #if DEBUG
+        let expectedBuildDirectory = "/debug/"
+        #else
+        let expectedBuildDirectory = "/release/"
+        #endif
         guard let enumerator = FileManager.default.enumerator(
             at: buildRoot,
             includingPropertiesForKeys: [.isRegularFileKey],
@@ -22,7 +27,7 @@ struct CLIStatementContractTests {
         }
         for case let candidate as URL in enumerator
         where candidate.lastPathComponent == "banktivity-cli"
-            && candidate.path.contains("/debug/")
+            && candidate.path.contains(expectedBuildDirectory)
             && !candidate.path.contains(".dSYM/") {
             if (try? candidate.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
                 return candidate
