@@ -185,6 +185,14 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ## CLI
 
+A human-first workflow is:
+
+1. Run banktivity-cli --help, then banktivity-cli GROUP --help.
+2. Use read commands to inspect the vault; they return JSON on standard output.
+3. Back up the vault before using a write command, then review its safeguards.
+4. Run banktivity-cli capabilities --format compact when an agent or script
+   needs stable access and safety metadata.
+
 A standalone CLI (`banktivity-cli`) provides the same functionality without an MCP server. Set `BANKTIVITY_FILE_PATH` or pass `--vault`:
 
 ```sh
