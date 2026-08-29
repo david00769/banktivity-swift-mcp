@@ -41,7 +41,10 @@ struct BanktivityCLI: AsyncParsableCommand {
 
     /// Create a Core Data container for the given vault path
     static func createContainer(vaultPath: String) throws -> NSPersistentContainer {
-        try PersistentContainerFactory.create(bankFilePath: vaultPath)
+        try PersistentContainerFactory.create(
+            bankFilePath: vaultPath,
+            readOnly: PersistentContainerFactory.readOnlyFromEnvironment
+        )
     }
 
     /// Create a WriteGuard for the given vault path
