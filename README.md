@@ -47,6 +47,7 @@ make install        # Build universal binary and install to ~/.local/bin
 Other Makefile targets:
 
 ```sh
+make help            # List available targets with short descriptions
 make build          # Debug build
 make test           # Run all tests
 make release        # Universal release build (arm64 + x86_64)
@@ -54,6 +55,12 @@ make package        # Build release tarball with SHA256
 make clean          # Remove build artifacts
 ```
 
+`make test` uses the same release configuration, Xcode framework paths, and
+single-worker test execution used by the reproducible release-test workflow.
+Use `make test-filter FILTER=TestName` when iterating on one focused test.
+The `make release` and `make package` targets are the
+release-artifact path; `make install` builds the universal binaries
+and copies them to `~/.local/bin`.
 ## Configuration
 
 ### Claude Code
