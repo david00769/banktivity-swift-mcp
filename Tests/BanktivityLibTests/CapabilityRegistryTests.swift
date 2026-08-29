@@ -12,6 +12,13 @@ struct CapabilityRegistryTests {
         #expect(!report.commands.isEmpty)
         #expect(!report.tools.isEmpty)
 
+        let reconciliation = try #require(
+            report.commands.first { $0.name == "reconciliation execute-bundle" }
+        )
+        #expect(reconciliation.access == "write")
+        #expect(reconciliation.requiresWriteMode)
+        #expect(reconciliation.notes.contains { $0.contains("hash-bound phase bundle") })
+
         let transactionCreate = try #require(report.commands.first { $0.name == "transactions create" })
         #expect(transactionCreate.access == "write")
         #expect(transactionCreate.requiresWriteMode)

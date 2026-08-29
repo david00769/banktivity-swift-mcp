@@ -6,7 +6,12 @@ import Foundation
 
 struct Reconciliation: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Guarded reconciliation execution",
+        abstract: "Execute a reviewed, hash-bound reconciliation phase",
+        discussion: """
+        This command runs an ordered phase bundle whose bytes, vault, operation
+        order, and nested command shapes are checked before execution. It is intended
+        for the reconciliation workflow, not for ad-hoc command batching.
+        """,
         subcommands: [ExecuteBundle.self]
     )
 
@@ -52,7 +57,14 @@ struct Reconciliation: AsyncParsableCommand {
     struct ExecuteBundle: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "execute-bundle",
-            abstract: "Execute a hash-bound ordered phase bundle over one persistent CoreData stack"
+            abstract: "Execute a reviewed hash-bound phase bundle over one Core Data stack",
+            discussion: """
+            The bundle must be the exact file reviewed by the caller. Its SHA-256
+            digest is checked before any operation is read, and each operation must
+            arrive in the declared order with the declared arguments. The local
+            guarded wrapper classifies every nested command before this command is
+            started.
+            """
         )
 
         @Option(name: .long, help: "Absolute phase bundle path")
