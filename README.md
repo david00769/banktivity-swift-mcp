@@ -255,6 +255,14 @@ banktivity-cli transactions repair-forex \
 
 ## CLI
 
+A human-first workflow for statement repair is:
+
+1. Run `banktivity-cli --help`, then `banktivity-cli statements --help`.
+2. Use `inspect-membership` before planning a statement repair.
+3. Treat the reported preimage hashes and membership IDs as exact evidence.
+4. Back up the vault and review the typed replacement or restoration
+   safeguards before using a write command.
+
 A standalone CLI (`banktivity-cli`) provides the same core query and write functionality without an MCP server. Set `BANKTIVITY_FILE_PATH` or pass `--vault`:
 
 ```sh
