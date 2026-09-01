@@ -126,7 +126,15 @@ Required inputs:
 
 Optional inputs are `title`, `date`, `note`, `source_memo`, `target_memo`, and `fee_memo`.
 
-The repaired transaction is stored in the source account currency. The target line item stores `gross_source_amount - source_fee_amount` as its transaction amount, `exchange_rate` as `pExchangeRate`, and `target_amount` as the target account amount. The fee is a separate source-currency category split. Transactions with unmanaged extra line items are rejected instead of merged or deleted.
+The repaired transaction is stored in the source account currency, and the fee becomes a separate source-currency category split. The target line item ends up holding:
+
+| Field | Value |
+| --- | --- |
+| transaction amount | `gross_source_amount - source_fee_amount` |
+| `pExchangeRate` | `exchange_rate` |
+| target account amount | `target_amount` |
+
+A transaction carrying line items this repair does not manage is rejected, rather than merged or deleted.
 
 Example MCP call arguments:
 
@@ -323,7 +331,7 @@ Banktivity's `.bank8` bundle is a directory containing compiled Core Data models
 
 1. Loads and merges all `.momd` model bundles from the vault
 2. Opens the SQLite store via `NSPersistentContainer` (no history tracking)
-3. Exposes 67 MCP tools over stdio transport
+3. Exposes 68 MCP tools over stdio transport
 4. Uses KVC (`value(forKey:)`) to access entities since we load Banktivity's own compiled models at runtime
 
 ## License
