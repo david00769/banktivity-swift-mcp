@@ -7,7 +7,7 @@ import Foundation
 struct Securities: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Security and price history operations",
-        subcommands: [List.self, Create.self, Prices.self, ImportPrices.self, DeletePrices.self, FixPrices.self, Holdings.self, Trades.self, Income.self, CreateTrade.self, CreateIncome.self, Adjust.self, UpdateTrade.self]
+        subcommands: [List.self, Create.self, Delete.self, Prices.self, ImportPrices.self, DeletePrices.self, FixPrices.self, Holdings.self, Trades.self, Income.self, CreateTrade.self, CreateIncome.self, Adjust.self, UpdateTrade.self]
     )
 
     struct List: AsyncParsableCommand {
@@ -158,6 +158,84 @@ struct Securities: AsyncParsableCommand {
                 startDate: startDate, endDate: endDate
             )
             try outputJSON(["message": "Deleted \(count) price(s)"] as [String: Any], format: parent.format)
+        }
+    }
+
+    struct Delete: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Delete a security record that no trade references"
+        )
+
+        @OptionGroup var parent: GlobalOptions
+
+        @Option(name: .long, help: "Security ticker symbol")
+        var symbol: String?
+
+        @Option(name: .long, help: "Security ID (alternative to --symbol)")
+        var id: Int?
+
+        @Flag(name: .long, help: "Also delete the security's price history")
+        var withPrices: Bool = false
+
+        @Flag(name: .long, help: "Validate and return the planned deletion without writing")
+        var dryRun: Bool = false
+
+        @Flag(name: .long, help: "Confirm the operator reviewed the target security")
+        var operatorReviewedTarget: Bool = false
+
+        @Flag(name: .long, help: "Confirm Banktivity UI inspection will be performed after this write")
+        var postUIVerificationRequired: Bool = false
+
+        func run() async throws {
+            guard symbol != nil || id != nil else {
+                throw ValidationError("Provide --symbol or --id")
+            }
+            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
+            let container = try BanktivityCLI.createContainer(vaultPath: path)
+            let securities = SecurityRepository(container: container)
+
+            guard let info = try securities.inspectForDeletion(symbol: symbol, id: id) else {
+                throw ToolError.notFound("Security not found: \(symbol ?? String(id ?? 0))")
+            }
+
+            if dryRun {
+                let blocked = info.tradeCount > 0 || (info.priceCount > 0 && !withPrices)
+                try outputJSON([
+                    "operation": "securities.delete",
+                    "securityId": info.securityId,
+                    "symbol": info.symbol,
+                    "name": info.name,
+                    "tradeCount": info.tradeCount,
+                    "priceCount": info.priceCount,
+                    "withPrices": withPrices,
+                    "wouldWrite": !blocked,
+                    "requiredConfirmations": ["operator_reviewed_target", "post_ui_verification_required"],
+                    "warnings": blocked
+                        ? ["Deletion refused: re-point trades with 'securities update-trade --security-id', or pass --with-prices."]
+                        : ["Dry-run validation only; no Core Data write was performed."],
+                ] as [String: Any], format: parent.format)
+                return
+            }
+
+            let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
+            try await guardWrite(writeGuard)
+            try requireReviewedWriteConfirmations(
+                subject: "Security deletions",
+                operatorReviewedTarget: operatorReviewedTarget,
+                postUIVerificationRequired: postUIVerificationRequired
+            )
+
+            let deleted = try securities.deleteSecurity(symbol: symbol, id: id, withPrices: withPrices)
+            guard deleted > 0 else {
+                throw ToolError.notFound("Security \(info.securityId) was not deleted")
+            }
+            try outputJSON([
+                "securityId": info.securityId,
+                "symbol": info.symbol,
+                "deleted": true,
+                "pricesDeleted": withPrices ? info.priceCount : 0,
+                "message": "Security \(info.securityId) (\(info.symbol)) deleted",
+            ] as [String: Any], format: parent.format)
         }
     }
 
