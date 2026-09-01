@@ -100,14 +100,7 @@ Property names are prefixed with `p` (e.g., `pName`, `pDate`, `pAccountClass`, `
 
 **WriteGuard before mutations.** All write tools check `WriteGuard.guardWriteAccess()` first. If Banktivity.app has the SQLite file open (detected via `lsof`), writes are blocked to prevent corruption.
 
-**Agent write safety.** AI assistants can issue parallel tool calls or start
-multiple MCP servers. Keep one MCP/CLI process per vault, serialize writes in
-the harness, and add read-before-write checks where practical so a write only
-applies if the target row still has the expected value. Close all MCP/CLI
-processes before opening the same vault in Banktivity.app. Make a fresh backup
-before write runs, and re-resolve account, transaction, statement, and category
-IDs after Banktivity 10 restore/import/migration because local numeric IDs can
-change.
+**Agent write safety.** AI assistants issue parallel tool calls and can start more than one MCP server, so the harness needs its own layer: one MCP/CLI process per vault, serialized writes, and read-before-write checks where practical so a write only applies while the target row still holds the expected value. Close every MCP/CLI process before opening the same vault in Banktivity.app, and back up before a write run. Local numeric IDs change across a Banktivity 10 restore, import, or migration, so re-resolve account, transaction, statement, and category IDs afterwards.
 
 ### Sync Blob Updates (SyncBlobUpdater)
 

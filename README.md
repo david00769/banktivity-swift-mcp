@@ -10,21 +10,7 @@ Inspired by [banktivity-mcp](https://github.com/mhriemers/banktivity-mcp) (TypeS
 
 > **WARNING: This server can modify your Banktivity data.** Write tools (create, update, delete) make real changes to your `.bank8` vault. While the server uses Core Data for proper change tracking and includes a write guard that blocks mutations when Banktivity is open, AI assistants can and will make mistakes. **Back up your vault regularly** and consider working on a copy until you're confident in your workflow. The authors are not responsible for any data loss or corruption.
 
-Write operations are serialized within each running process. This protects
-concurrent MCP tool calls handled by one `banktivity-mcp` server and overlapping
-writes inside one CLI command, but it is not a cross-process file lock. Do not
-run multiple `banktivity-cli` or `banktivity-mcp` processes against the same
-vault at the same time.
-
-AI harnesses should add their own safety layer around this tool. Use one
-MCP/CLI process per vault, serialize write calls, and prefer read-before-write
-checks where the tool can verify the row still has the expected value before
-mutating it. Shut down `banktivity-mcp` and any long-running CLI process before
-opening the same vault in Banktivity.app; the app and external Core Data clients
-must not hold the live file open together. Always make a fresh backup before
-write runs, and re-resolve account, transaction, statement, and category IDs
-after restoring, importing, or migrating a Banktivity 10 vault because local
-numeric IDs can change.
+Writes are serialized within each running process, which covers concurrent MCP tool calls handled by one `banktivity-mcp` server and overlapping writes inside a single CLI command. It is not a cross-process file lock: run one `banktivity-cli` or `banktivity-mcp` process per vault at a time, and shut them down before opening the same vault in Banktivity.app.
 
 ## Requirements
 
