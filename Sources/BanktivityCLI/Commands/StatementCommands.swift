@@ -92,7 +92,7 @@ struct Statements: AsyncParsableCommand {
     struct InspectMembership: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "inspect-membership",
-            abstract: "Read a line item's complete statement-reference capability diagnostic"
+            abstract: "Show the statement a line item belongs to, and whether it can be repaired"
         )
 
         @OptionGroup var parent: GlobalOptions
@@ -111,7 +111,23 @@ struct Statements: AsyncParsableCommand {
     }
 
     struct ReplaceInternalRow: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(commandName: "replace-internal-row-with-visible-statement", abstract: "Atomically replace an inspected internal statement row with a visible provider-period row")
+        static let configuration = CommandConfiguration(commandName: "replace-internal-row-with-visible-statement",
+            abstract: "Replace an unnamed internal statement row with the visible statement it should be",
+            discussion: """
+            Run 'statements inspect-membership' first and keep what it returns. This
+            command re-checks all of it before writing: the account, the period and
+            position anchors, the balances, the row identity, which line items were
+            members, and their cleared state. If any of that moved since the
+            inspection, it stops rather than writing over the change.
+
+            The exact set of line items being moved is bound in both directions by
+            --replacement-membership-preimage-sha256, a SHA-256 over the JSON encoding
+            of the sorted line-item ID array. 'restore-internal-row-from-preimage'
+            requires that same set again, so the two commands cannot disagree about
+            what was moved.
+
+            The Core Data, sync, and transaction updates land together or not at all.
+            """)
         @OptionGroup var parent: GlobalOptions
         @Option(name: .long) var sourceStatementId: Int
         @Option(name: .long) var accountId: Int
@@ -147,7 +163,24 @@ struct Statements: AsyncParsableCommand {
     }
 
     struct RestoreInternalRow: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(commandName: "restore-internal-row-from-preimage", abstract: "Restore an internal statement row only from its exact hash-bound preimage")
+        static let configuration = CommandConfiguration(commandName: "restore-internal-row-from-preimage",
+            abstract: "Put an internal statement row back exactly as inspection recorded it",
+            discussion: """
+            The inverse of 'replace-internal-row-with-visible-statement', and it only
+            runs against the exact state that command left behind.
+
+            Before restoring, inspect one of the selected line items again and pass
+            that inspection's preimageSha256 as --replacement-preimage-sha256. That
+            stops the restore from deleting a replacement row whose name, period,
+            balances, or membership changed after the forward operation.
+
+            Restore refuses when a line item that was -- or was not -- part of the
+            original selection no longer matches, instead of forcing the old state
+            back over whatever happened in between. It returns the row ID it
+            allocated so the sequence can be replayed.
+
+            This is not a general --allow-internal escape hatch.
+            """)
         @OptionGroup var parent: GlobalOptions
         @Option(name: .long) var replacementStatementId: Int
         @Option(name: .long) var accountId: Int
@@ -185,7 +218,7 @@ struct Statements: AsyncParsableCommand {
     struct CorrectionPlan: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "visible-row-correction-plan",
-            abstract: "Generate a visible-row correction plan from operator-entered Banktivity UI START/END/MISSING values"
+            abstract: "Build a correction plan from the START, END and MISSING values shown in the app"
         )
 
         @OptionGroup var parent: GlobalOptions

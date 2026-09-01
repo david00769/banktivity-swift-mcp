@@ -255,14 +255,6 @@ banktivity-cli transactions repair-forex \
 
 ## CLI
 
-A human-first workflow for statement repair is:
-
-1. Run `banktivity-cli --help`, then `banktivity-cli statements --help`.
-2. Use `inspect-membership` before planning a statement repair.
-3. Treat the reported preimage hashes and membership IDs as exact evidence.
-4. Back up the vault and review the typed replacement or restoration
-   safeguards before using a write command.
-
 A standalone CLI (`banktivity-cli`) provides the same core query and write functionality without an MCP server. Set `BANKTIVITY_FILE_PATH` or pass `--vault`:
 
 ```sh
@@ -287,13 +279,10 @@ banktivity-cli export turtle --output vault.ttl
 - `templates list`, `templates get`, `templates create`, `templates update`, `templates delete`
 - `import-rules list`, `import-rules get`, `import-rules match`, `import-rules create`, `import-rules update`, `import-rules delete`
 - `scheduled list`, `scheduled get`, `scheduled create`, `scheduled update`, `scheduled delete`
-- `statements list`, `statements status`, `statements get`, `statements inspect-membership`, `statements create`, `statements delete`, `statements reconcile`, `statements unreconcile`, `statements unreconciled`
-  - `statements delete` rejects internal/unnamed investment rows unless the diagnostic plan explicitly supplies `--allow-internal`
-  - `statements inspect-membership --line-item-id <id>` is read-only. It reports the linked row's identity, balances, membership, chain anchors, preimage hashes, and addressable/reconcilable/restorable capabilities.
-  - `statements list --include-internal` returns all addressable internal rows plus explicit `unaddressableReferences`; a referenced statement never silently disappears from the diagnostic listing.
-  - `statements replace-internal-row-with-visible-statement` and `statements restore-internal-row-from-preimage` are the only typed internal-row replacement pair. Both require the exact account, period/position anchors, membership and cleared-state preimages, and their SHA-256 bindings. The exact selected replacement subset is bound in both directions by `--replacement-membership-preimage-sha256`, calculated over the JSON encoding of the sorted line-item ID array; restore also requires that same subset through `--replacement-line-item-ids`.
-  - Before restore, inspect one selected line item again and pass that post-forward inspection's `preimageSha256` as `--replacement-preimage-sha256`. This prevents the inverse from deleting a replacement row whose name, period, balances, or membership-derived fields changed after the forward operation.
-  - Typed internal-row replacement fails closed unless atomic sync metadata updates are available. Restore rejects selected or unselected members that no longer match the exact forward state, rather than overwriting intervening changes. The restore returns its allocator-generated row ID for replay; these commands are not a generic `--allow-internal` mutation route.
+- `statements list`, `statements status`, `statements get`, `statements inspect-membership`, `statements visible-row-correction-plan`, `statements create`, `statements update`, `statements delete`, `statements replace-internal-row-with-visible-statement`, `statements restore-internal-row-from-preimage`, `statements reconcile`, `statements unreconcile`, `statements unreconciled`
+  - Some investment accounts hold statement rows with no visible name. `statements inspect-membership --line-item-id <id>` is read-only and is where any repair of one starts: it reports the row's identity, account, dates, balances, the line items linked to it, and the recorded before-change values that the repair commands check against.
+  - `statements replace-internal-row-with-visible-statement` and `statements restore-internal-row-from-preimage` are a matched pair. Each refuses unless the vault still matches what inspection recorded, so a change made in between stops the command rather than being overwritten. Run `banktivity-cli statements <command> --help` for the exact arguments and what each one binds.
+  - `statements list --include-internal` reports references it cannot resolve instead of omitting them, so a referenced statement never quietly disappears from a listing. `statements delete` refuses internal and unnamed investment rows unless given `--allow-internal`.
 - `securities list`, `securities create`, `securities prices`, `securities holdings`, `securities trades`, `securities income`, `securities adjust`, `securities import-prices`, `securities delete-prices`
 - `export turtle`
 - `schema`
