@@ -185,14 +185,6 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ## CLI
 
-A human-first workflow is:
-
-1. Run banktivity-cli --help, then banktivity-cli GROUP --help.
-2. Use read commands to inspect the vault; they return JSON on standard output.
-3. Back up the vault before using a write command, then review its safeguards.
-4. Run banktivity-cli capabilities --format compact when an agent or script
-   needs stable access and safety metadata.
-
 A standalone CLI (`banktivity-cli`) provides the same functionality without an MCP server. Set `BANKTIVITY_FILE_PATH` or pass `--vault`:
 
 ```sh
@@ -220,6 +212,9 @@ banktivity-cli export turtle --output vault.ttl
 - `securities list`, `securities create`, `securities prices`, `securities holdings`, `securities trades`, `securities income`, `securities adjust`, `securities import-prices`, `securities delete-prices`
 - `export turtle`
 - `schema`
+- `capabilities`
+
+`banktivity-cli capabilities` lists every command, marks it read or write, and reports what each write expects — whether it supports a dry run, and whether it needs a backup or a check in Banktivity afterwards. Use `--format compact` when a script or agent is reading it. The MCP equivalent is `get_capabilities`.
 
 Most commands that accept `--account-id` also accept `--account-name` as an alternative. The `transactions create` command supports `--line-items` with a JSON array for multi-line-item (split) transactions.
 
