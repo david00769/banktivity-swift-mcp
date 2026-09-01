@@ -405,4 +405,43 @@ func registerSecurityTools(
         )
         return ToolHelpers.successResponse("Deleted \(count) price(s)")
     }
+
+    registry.register(
+        name: "delete_security",
+        description: "Delete a security record that no trade references. Refuses if the security still has trades: re-point them with update_security_trade first.",
+        inputSchema: ToolHelpers.schema(properties: [
+            "symbol": ToolHelpers.property(type: "string", description: "Security ticker symbol (e.g. AAPL)"),
+            "id": ToolHelpers.property(type: "number", description: "Security ID (alternative to symbol)"),
+            "with_prices": ToolHelpers.property(type: "boolean", description: "Also delete the security's price history (default false)"),
+            "dry_run": ToolHelpers.property(type: "boolean", description: "Report the trade and price counts without writing"),
+        ])
+    ) { arguments in
+        let symbol = ToolHelpers.getString(arguments, key: "symbol")
+        let id = ToolHelpers.getInt(arguments, key: "id")
+        let withPrices = ToolHelpers.getBool(arguments, key: "with_prices")
+        let dryRun = ToolHelpers.getBool(arguments, key: "dry_run")
+
+        guard symbol != nil || id != nil else {
+            return ToolHelpers.errorResponse("Provide symbol or id")
+        }
+        guard let info = try securities.inspectForDeletion(symbol: symbol, id: id) else {
+            return ToolHelpers.errorResponse("Security not found")
+        }
+
+        if dryRun {
+            let blocked = info.tradeCount > 0 || (info.priceCount > 0 && !withPrices)
+            return ToolHelpers.successResponse(
+                "security \(info.securityId) (\(info.symbol)) — trades \(info.tradeCount), prices \(info.priceCount), wouldDelete \(!blocked)"
+            )
+        }
+
+        if let msg = await writeGuard.guardWriteAccess() {
+            return ToolHelpers.errorResponse(msg)
+        }
+        let deleted = try securities.deleteSecurity(symbol: symbol, id: id, withPrices: withPrices)
+        guard deleted > 0 else {
+            return ToolHelpers.errorResponse("Security \(info.securityId) was not deleted")
+        }
+        return ToolHelpers.successResponse("Security \(info.securityId) (\(info.symbol)) deleted")
+    }
 }
