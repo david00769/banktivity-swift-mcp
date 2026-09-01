@@ -154,7 +154,7 @@ struct Statements: AsyncParsableCommand {
         @Flag(name: .long, help: "Confirm Banktivity UI inspection will be performed after this write")
         var postUIVerificationRequired: Bool = false
 
-        @Flag(name: .long, help: "Confirm the unnamed investment statement row was matched to the intended visible Banktivity Statements UI row")
+        @Flag(name: .long, help: "Confirm this unnamed row was matched to the intended statement in the Banktivity UI")
         var operatorConfirmedVisible: Bool = false
 
         func run() async throws {
@@ -242,7 +242,7 @@ struct Statements: AsyncParsableCommand {
         @Flag(name: .long, help: "Confirm Banktivity UI inspection will be performed after this write")
         var postUIVerificationRequired: Bool = false
 
-        @Flag(name: .long, help: "Confirm the unnamed investment statement row was matched to the intended visible Banktivity Statements UI row")
+        @Flag(name: .long, help: "Confirm this unnamed row was matched to the intended statement in the Banktivity UI")
         var operatorConfirmedVisible: Bool = false
 
         func run() async throws {
@@ -282,7 +282,7 @@ struct Statements: AsyncParsableCommand {
         @Flag(name: .long, help: "Confirm Banktivity UI inspection will be performed after this write")
         var postUIVerificationRequired: Bool = false
 
-        @Flag(name: .long, help: "Confirm the unnamed investment statement row was matched to the intended visible Banktivity Statements UI row")
+        @Flag(name: .long, help: "Confirm this unnamed row was matched to the intended statement in the Banktivity UI")
         var operatorConfirmedVisible: Bool = false
 
         func run() async throws {
@@ -327,7 +327,7 @@ struct Statements: AsyncParsableCommand {
         @Flag(name: .long, help: "Confirm Banktivity UI inspection will be performed after this write")
         var postUIVerificationRequired: Bool = false
 
-        @Flag(name: .long, help: "Confirm the unnamed investment statement row was matched to the intended visible Banktivity Statements UI row")
+        @Flag(name: .long, help: "Confirm this unnamed row was matched to the intended statement in the Banktivity UI")
         var operatorConfirmedVisible: Bool = false
 
         func run() async throws {
