@@ -192,14 +192,28 @@ struct Securities: AsyncParsableCommand {
             }
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
-            let securities = SecurityRepository(container: container)
+            let syncBlobUpdater = SyncBlobUpdater(container: container)
+            let securities = SecurityRepository(container: container, syncBlobUpdater: syncBlobUpdater)
 
             guard let info = try securities.inspectForDeletion(symbol: symbol, id: id) else {
                 throw ToolError.notFound("Security not found: \(symbol ?? String(id ?? 0))")
             }
 
             if dryRun {
-                let blocked = info.tradeCount > 0 || (info.priceCount > 0 && !withPrices)
+                var refusals: [String] = []
+                if info.tradeCount > 0 {
+                    refusals.append("\(info.tradeCount) trade line item(s) reference this security. Re-point them with 'securities update-trade --security-id' first.")
+                } else if info.priceCount > 0 && !withPrices {
+                    refusals.append("\(info.priceCount) price record(s) would be left behind. Pass --with-prices to remove them along with the security.")
+                }
+                // The real run also requires both confirmations, so a dry run that
+                // ignored them would report wouldWrite for an invocation that fails.
+                if !operatorReviewedTarget {
+                    refusals.append("--operator-reviewed-target is required.")
+                }
+                if !postUIVerificationRequired {
+                    refusals.append("--post-ui-verification-required is required.")
+                }
                 try outputJSON([
                     "operation": "securities.delete",
                     "securityId": info.securityId,
@@ -208,11 +222,11 @@ struct Securities: AsyncParsableCommand {
                     "tradeCount": info.tradeCount,
                     "priceCount": info.priceCount,
                     "withPrices": withPrices,
-                    "wouldWrite": !blocked,
+                    "wouldWrite": refusals.isEmpty,
                     "requiredConfirmations": ["operator_reviewed_target", "post_ui_verification_required"],
-                    "warnings": blocked
-                        ? ["Deletion refused: re-point trades with 'securities update-trade --security-id', or pass --with-prices."]
-                        : ["Dry-run validation only; no Core Data write was performed."],
+                    "warnings": refusals.isEmpty
+                        ? ["Dry-run validation only; no Core Data write was performed."]
+                        : refusals.map { "Deletion refused: \($0)" },
                 ] as [String: Any], format: parent.format)
                 return
             }
@@ -221,6 +235,7 @@ struct Securities: AsyncParsableCommand {
             try await guardWrite(writeGuard)
             try requireReviewedWriteConfirmations(
                 subject: "Security deletions",
+                target: "security",
                 operatorReviewedTarget: operatorReviewedTarget,
                 postUIVerificationRequired: postUIVerificationRequired
             )

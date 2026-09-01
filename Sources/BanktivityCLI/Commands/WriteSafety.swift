@@ -11,11 +11,12 @@ import Foundation
 /// between call sites.
 func requireReviewedWriteConfirmations(
     subject: String,
+    target: String,
     operatorReviewedTarget: Bool,
     postUIVerificationRequired: Bool
 ) throws {
     guard operatorReviewedTarget else {
-        throw ToolError.invalidInput("\(subject) require --operator-reviewed-target after reviewing the target transaction/account.")
+        throw ToolError.invalidInput("\(subject) require --operator-reviewed-target after reviewing the target \(target).")
     }
     guard postUIVerificationRequired else {
         throw ToolError.invalidInput("\(subject) require --post-ui-verification-required because balances and statement membership must be checked in Banktivity UI after writing.")
