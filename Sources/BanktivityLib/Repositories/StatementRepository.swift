@@ -755,6 +755,15 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         return try get(statementId: statementId)
     }
 
+    /// Update a visible statement's balances.
+    ///
+    /// Unlike `replaceInternalRowWithVisibleStatement` and
+    /// `restoreInternalRowFromPreimage`, which fail closed without a
+    /// `SyncBlobUpdater`, this path does not touch the statement's own sync
+    /// record. A vault that already has a `SyncedHostedEntity` for the
+    /// statement will therefore keep the pre-update balances in that blob until
+    /// Banktivity rewrites it. Verify the statement in the Banktivity UI after
+    /// using this, which is what `--post-ui-verification-required` asserts.
     public func update(
         statementId: Int,
         endingBalance: Double,

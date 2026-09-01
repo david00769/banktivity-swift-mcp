@@ -1288,4 +1288,101 @@ struct StatementRepositoryTests {
         #expect(lineItem.statementId == nil)
         #expect(lineItem.cleared)
     }
+
+    // MARK: - Guarded visible-row metadata update
+
+    @Test("Balance update refuses an unnamed investment row without confirmation")
+    func updateRefusesUnconfirmedInternalRow() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+        let investment = try createInvestmentAccount(named: "Unconfirmed Update", using: repos.accounts)
+        let internalStatement = try repos.statements.create(
+            accountId: investment.id,
+            startDate: "2026-05-01",
+            endDate: "2026-05-31",
+            beginningBalance: 0,
+            endingBalance: 10
+        )
+
+        #expect(throws: (any Error).self) {
+            _ = try repos.statements.update(statementId: internalStatement.id, endingBalance: 99)
+        }
+
+        // The refusal must leave the row untouched, not partially written.
+        let after = try #require(try repos.statements.get(statementId: internalStatement.id))
+        #expect(after.endingBalance == 10)
+    }
+
+    @Test("Balance update proceeds on an unnamed row once the operator confirms it")
+    func updateAcceptsConfirmedInternalRow() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+        let investment = try createInvestmentAccount(named: "Confirmed Update", using: repos.accounts)
+        let internalStatement = try repos.statements.create(
+            accountId: investment.id,
+            startDate: "2026-05-01",
+            endDate: "2026-05-31",
+            beginningBalance: 0,
+            endingBalance: 10
+        )
+
+        let updated = try repos.statements.update(
+            statementId: internalStatement.id,
+            endingBalance: 42.5,
+            operatorConfirmedVisible: true
+        )
+        #expect(updated.endingBalance == 42.5)
+        // Only the ending balance was asked for, so the beginning must not move.
+        #expect(updated.beginningBalance == 0)
+    }
+
+    @Test("allowInternal bypasses the visible-row guard")
+    func updateAllowInternalBypassesGuard() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+        let investment = try createInvestmentAccount(named: "Allow Internal Update", using: repos.accounts)
+        let internalStatement = try repos.statements.create(
+            accountId: investment.id,
+            startDate: "2026-06-01",
+            endDate: "2026-06-30",
+            beginningBalance: 5,
+            endingBalance: 15
+        )
+
+        let updated = try repos.statements.update(
+            statementId: internalStatement.id,
+            endingBalance: 25,
+            beginningBalance: 7,
+            allowInternal: true
+        )
+        #expect(updated.endingBalance == 25)
+        #expect(updated.beginningBalance == 7)
+    }
+
+    @Test("Balance update on a named account statement needs no confirmation")
+    func updateVisibleStatementNeedsNoConfirmation() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+        let checking = try createCheckingAccount(named: "Visible Update", using: repos.accounts)
+        let statement = try repos.statements.create(
+            accountId: checking.id,
+            startDate: "2026-05-01",
+            endDate: "2026-05-31",
+            beginningBalance: 100,
+            endingBalance: 200
+        )
+
+        let updated = try repos.statements.update(statementId: statement.id, endingBalance: 250)
+        #expect(updated.endingBalance == 250)
+        #expect(updated.beginningBalance == 100)
+    }
+
+    @Test("Balance update reports a missing statement instead of writing")
+    func updateMissingStatementThrows() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+        #expect(throws: (any Error).self) {
+            _ = try repos.statements.update(statementId: 999_999, endingBalance: 1)
+        }
+    }
 }
