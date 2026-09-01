@@ -316,4 +316,216 @@ struct SecurityUpdateTests {
         #expect(xml.contains("Account:\(BaseRepository.stringValue(category, "pUniqueID"))"))
     }
 
+
+    // MARK: - Security deletion
+
+    /// Attach a SecurityLineItem to a security so it counts as referenced.
+    private func seedTrade(
+        in container: NSPersistentContainer,
+        security: NSManagedObject,
+        account: NSManagedObject,
+        currency: NSManagedObject
+    ) throws {
+        let ctx = container.viewContext
+        let txType = NSEntityDescription.insertNewObject(forEntityName: "TransactionType", into: ctx)
+        txType.setValue(Int16(200), forKey: "pBaseType")
+        txType.setValue("Buy", forKey: "pName")
+        txType.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+        BaseRepository.setNow(txType, "pCreationTime")
+        BaseRepository.setNow(txType, "pModificationDate")
+
+        let tx = NSEntityDescription.insertNewObject(forEntityName: "Transaction", into: ctx)
+        tx.setValue("Buy TEST", forKey: "pTitle")
+        tx.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+        tx.setValue(false, forKey: "pCleared")
+        tx.setValue(false, forKey: "pVoid")
+        tx.setValue(false, forKey: "pAdjustment")
+        tx.setValue(txType, forKey: "pTransactionType")
+        tx.setValue(currency, forKey: "pCurrency")
+        BaseRepository.setDate(tx, "pDate", isoString: "2025-03-01")
+        BaseRepository.setNow(tx, "pCreationTime")
+        BaseRepository.setNow(tx, "pModificationDate")
+
+        let lineItem = NSEntityDescription.insertNewObject(forEntityName: "LineItem", into: ctx)
+        lineItem.setValue(100.0 as NSNumber, forKey: "pTransactionAmount")
+        lineItem.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+        lineItem.setValue(1.0 as NSNumber, forKey: "pExchangeRate")
+        lineItem.setValue(0.0 as NSNumber, forKey: "pRunningBalance")
+        lineItem.setValue(false, forKey: "pCleared")
+        lineItem.setValue(account, forKey: "pAccount")
+        lineItem.setValue(tx, forKey: "pTransaction")
+        BaseRepository.setNow(lineItem, "pCreationTime")
+
+        let sli = NSEntityDescription.insertNewObject(forEntityName: "SecurityLineItem", into: ctx)
+        sli.setValue(5.0 as NSNumber, forKey: "pShares")
+        sli.setValue(20.0 as NSNumber, forKey: "pPricePerShare")
+        sli.setValue(100.0 as NSNumber, forKey: "pAmount")
+        sli.setValue(0.0 as NSNumber, forKey: "pCommission")
+        sli.setValue(security, forKey: "pSecurity")
+        sli.setValue(lineItem, forKey: "pLineItem")
+        try ctx.save()
+    }
+
+    /// Give a security a SecurityPriceItem holding `count` SecurityPrice rows.
+    private func seedPrices(
+        in container: NSPersistentContainer,
+        security: NSManagedObject,
+        count: Int
+    ) throws {
+        let ctx = container.viewContext
+        let uniqueId = BaseRepository.stringValue(security, "pUniqueID")
+        let priceItem = BaseRepository.createObject(entityName: "SecurityPriceItem", in: ctx)
+        priceItem.setValue(uniqueId, forKey: "pSecurityID")
+        for i in 0..<count {
+            let price = BaseRepository.createObject(entityName: "SecurityPrice", in: ctx)
+            price.setValue(Int32(20000 + i), forKey: "pDate")
+            price.setValue(10.0 as NSNumber, forKey: "pClosePrice")
+            price.setValue(10.0 as NSNumber, forKey: "pAdjustedClosePrice")
+            price.setValue(10.0 as NSNumber, forKey: "pOpenPrice")
+            price.setValue(10.0 as NSNumber, forKey: "pHighPrice")
+            price.setValue(10.0 as NSNumber, forKey: "pLowPrice")
+            price.setValue(0.0 as NSNumber, forKey: "pVolume")
+            price.setValue(0 as Int32, forKey: "pDataSource")
+            price.setValue(priceItem, forKey: "pSecurityPriceItem")
+        }
+        try ctx.save()
+    }
+
+    private func securityCount(in container: NSPersistentContainer) throws -> Int {
+        try container.viewContext.count(for: NSFetchRequest<NSManagedObject>(entityName: "Security"))
+    }
+
+    @Test("inspectForDeletion counts referencing trades and prices")
+    func inspectForDeletionCounts() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        let account = try TestVaultHelper.seedInvestmentAccount(in: vault.container, currency: eur)
+        let security = try TestVaultHelper.seedSecurity(in: vault.container, currency: eur)
+        try seedTrade(in: vault.container, security: security, account: account, currency: eur)
+        try seedPrices(in: vault.container, security: security, count: 3)
+
+        let repo = SecurityRepository(container: vault.container)
+        let info = try #require(try repo.inspectForDeletion(symbol: "TEST"))
+
+        #expect(info.symbol == "TEST")
+        #expect(info.tradeCount == 1)
+        #expect(info.priceCount == 3)
+        #expect(info.uniqueID == BaseRepository.stringValue(security, "pUniqueID"))
+        #expect(try repo.inspectForDeletion(symbol: "NOSUCH") == nil)
+    }
+
+    @Test("deleteSecurity refuses a security that trades still reference")
+    func deleteSecurityRefusesReferencedSecurity() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        let account = try TestVaultHelper.seedInvestmentAccount(in: vault.container, currency: eur)
+        let security = try TestVaultHelper.seedSecurity(in: vault.container, currency: eur)
+        try seedTrade(in: vault.container, security: security, account: account, currency: eur)
+
+        let repo = SecurityRepository(container: vault.container)
+        #expect(throws: (any Error).self) {
+            _ = try repo.deleteSecurity(symbol: "TEST")
+        }
+        // withPrices does not override the trade invariant.
+        #expect(throws: (any Error).self) {
+            _ = try repo.deleteSecurity(symbol: "TEST", withPrices: true)
+        }
+        #expect(try securityCount(in: vault.container) == 1)
+    }
+
+    @Test("deleteSecurity refuses price history unless withPrices is set")
+    func deleteSecurityRefusesPriceHistory() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        let security = try TestVaultHelper.seedSecurity(in: vault.container, currency: eur)
+        try seedPrices(in: vault.container, security: security, count: 2)
+
+        let repo = SecurityRepository(container: vault.container)
+        #expect(throws: (any Error).self) {
+            _ = try repo.deleteSecurity(symbol: "TEST")
+        }
+
+        let ctx = vault.container.viewContext
+        ctx.refreshAllObjects()
+        #expect(try securityCount(in: vault.container) == 1)
+        #expect(try ctx.count(for: NSFetchRequest<NSManagedObject>(entityName: "SecurityPrice")) == 2)
+    }
+
+    @Test("deleteSecurity removes a security nothing references")
+    func deleteSecurityRemovesCleanSecurity() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        _ = try TestVaultHelper.seedSecurity(in: vault.container, symbol: "KEEP", currency: eur)
+        _ = try TestVaultHelper.seedSecurity(in: vault.container, symbol: "TEST", currency: eur)
+
+        let repo = SecurityRepository(container: vault.container)
+        #expect(try repo.deleteSecurity(symbol: "TEST") == 1)
+
+        let ctx = vault.container.viewContext
+        ctx.refreshAllObjects()
+        #expect(try securityCount(in: vault.container) == 1)
+        #expect(try repo.inspectForDeletion(symbol: "TEST") == nil)
+        // The unrelated security is untouched.
+        #expect(try repo.inspectForDeletion(symbol: "KEEP") != nil)
+    }
+
+    @Test("deleteSecurity with prices leaves no orphaned SecurityPriceItem")
+    func deleteSecurityWithPricesLeavesNoOrphan() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        let security = try TestVaultHelper.seedSecurity(in: vault.container, currency: eur)
+        try seedPrices(in: vault.container, security: security, count: 4)
+
+        let repo = SecurityRepository(container: vault.container)
+        #expect(try repo.deleteSecurity(symbol: "TEST", withPrices: true) == 1)
+
+        let ctx = vault.container.viewContext
+        ctx.refreshAllObjects()
+        #expect(try securityCount(in: vault.container) == 0)
+        #expect(try ctx.count(for: NSFetchRequest<NSManagedObject>(entityName: "SecurityPrice")) == 0)
+        // The price item is keyed by pSecurityID, so leaving it behind would strand it.
+        #expect(try ctx.count(for: NSFetchRequest<NSManagedObject>(entityName: "SecurityPriceItem")) == 0)
+    }
+
+    @Test("deleteSecurity marks the security's sync record deleted")
+    func deleteSecurityTombstonesSyncRecord() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        let security = try TestVaultHelper.seedSecurity(in: vault.container, currency: eur)
+        let uniqueId = BaseRepository.stringValue(security, "pUniqueID")
+
+        let ctx = vault.container.viewContext
+        let record = NSEntityDescription.insertNewObject(forEntityName: "SyncedHostedEntity", into: ctx)
+        record.setValue(uniqueId, forKey: "pLocalID")
+        record.setValue(uniqueId, forKey: "pRemoteID")
+        record.setValue("Security", forKey: "pHostedEntityType")
+        record.setValue(Int16(0), forKey: "pSyncedState")
+        try ctx.save()
+
+        let repo = SecurityRepository(
+            container: vault.container,
+            syncBlobUpdater: SyncBlobUpdater(container: vault.container)
+        )
+        #expect(try repo.deleteSecurity(symbol: "TEST") == 1)
+
+        ctx.refreshAllObjects()
+        let request = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
+        request.predicate = NSPredicate(format: "pLocalID == %@", uniqueId)
+        let saved = try #require(try ctx.fetch(request).first)
+        // pSyncedState 3 is the tombstone that propagates the delete, as used by
+        // transaction deletion. Without it the blob can resurrect the security.
+        #expect(saved.value(forKey: "pSyncedState") as? Int16 == 3)
+    }
 }

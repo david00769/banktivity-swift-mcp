@@ -1225,6 +1225,141 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         return count
     }
 
+    /// Inspect a security before deleting it: resolve it and count everything that
+    /// depends on it. Returns nil when the security does not exist.
+    ///
+    /// `tradeCount` counts the `SecurityLineItem` rows referencing the security.
+    /// Deletion is refused while that count is non-zero, because removing the
+    /// security would orphan the trades carrying its cost basis and realized gain.
+    public func inspectForDeletion(symbol: String? = nil, id: Int? = nil) throws
+        -> (securityId: Int, uniqueID: String, symbol: String, name: String, tradeCount: Int, priceCount: Int)?
+    {
+        try performRead { [self] ctx in
+            guard let security = try resolveSecurity(symbol: symbol, id: id, in: ctx) else { return nil }
+
+            let sliRequest = NSFetchRequest<NSManagedObject>(entityName: "SecurityLineItem")
+            sliRequest.predicate = NSPredicate(format: "pSecurity == %@", security)
+            let tradeCount = try ctx.count(for: sliRequest)
+
+            let uniqueId = Self.stringValue(security, "pUniqueID")
+            var priceCount = 0
+            if let priceItem = try Self.priceItem(forSecurityUniqueID: uniqueId, in: ctx) {
+                let priceRequest = NSFetchRequest<NSManagedObject>(entityName: "SecurityPrice")
+                priceRequest.predicate = NSPredicate(format: "pSecurityPriceItem == %@", priceItem)
+                priceCount = try ctx.count(for: priceRequest)
+            }
+
+            return (
+                securityId: Self.extractPK(from: security.objectID),
+                uniqueID: uniqueId,
+                symbol: Self.stringValue(security, "pSymbol"),
+                name: Self.stringValue(security, "pName"),
+                tradeCount: tradeCount,
+                priceCount: priceCount
+            )
+        }
+    }
+
+    /// Delete a security record that nothing references. Returns 1 when the security
+    /// was deleted and 0 when it was not.
+    ///
+    /// Fails closed: throws if the security still has any `SecurityLineItem`. That
+    /// invariant is not overridable — a security still carrying trades has to be
+    /// merged onto its surviving identity with `update-trade --security-id` first,
+    /// never deleted. Price history is removed only when `withPrices` is true;
+    /// otherwise a security carrying prices is refused so the caller chooses
+    /// explicitly.
+    ///
+    /// The prices, their parent `SecurityPriceItem`, and the security itself are
+    /// deleted in one write, so a security that turns out to be referenced after all
+    /// cannot leave its price history destroyed behind it.
+    public func deleteSecurity(symbol: String? = nil, id: Int? = nil, withPrices: Bool = false) throws -> Int {
+        guard let info = try inspectForDeletion(symbol: symbol, id: id) else {
+            throw NSError(domain: "BanktivitySecurity", code: 404, userInfo: [
+                NSLocalizedDescriptionKey: "Security not found",
+            ])
+        }
+        if info.tradeCount > 0 {
+            throw NSError(domain: "BanktivitySecurity", code: 409, userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Refusing to delete security \(info.securityId) (\(info.symbol)): it still has \(info.tradeCount) trade line item(s). Re-point them with 'securities update-trade --security-id' first.",
+            ])
+        }
+        if info.priceCount > 0 && !withPrices {
+            throw NSError(domain: "BanktivitySecurity", code: 409, userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Refusing to delete security \(info.securityId) (\(info.symbol)): it has \(info.priceCount) price record(s). Pass --with-prices to remove them along with the security.",
+            ])
+        }
+
+        struct DeletionTargets: Sendable {
+            let security: NSManagedObjectID
+            let priceItem: NSManagedObjectID?
+        }
+
+        let targets: DeletionTargets? = try performRead { [self] ctx in
+            guard let security = try resolveSecurity(symbol: symbol, id: id, in: ctx) else { return nil }
+            let uniqueId = Self.stringValue(security, "pUniqueID")
+            let priceItem = try Self.priceItem(forSecurityUniqueID: uniqueId, in: ctx)
+            return DeletionTargets(security: security.objectID, priceItem: priceItem?.objectID)
+        }
+        guard let targets = targets else { return 0 }
+
+        let deleted: Int = try performWriteReturning { ctx in
+            guard let secInCtx = try? ctx.existingObject(with: targets.security) else { return 0 }
+
+            // Re-check inside the write context: nothing may have attached in between.
+            let sliRequest = NSFetchRequest<NSManagedObject>(entityName: "SecurityLineItem")
+            sliRequest.predicate = NSPredicate(format: "pSecurity == %@", secInCtx)
+            if try ctx.count(for: sliRequest) > 0 { return 0 }
+
+            if let priceItemID = targets.priceItem,
+               let piInCtx = try? ctx.existingObject(with: priceItemID)
+            {
+                let priceRequest = NSFetchRequest<NSManagedObject>(entityName: "SecurityPrice")
+                priceRequest.predicate = NSPredicate(format: "pSecurityPriceItem == %@", piInCtx)
+                for price in try ctx.fetch(priceRequest) {
+                    ctx.delete(price)
+                }
+                // The price item is keyed by pSecurityID, so it is unreachable once the
+                // security is gone. It goes too, rather than being left orphaned.
+                ctx.delete(piInCtx)
+            }
+
+            ctx.delete(secInCtx)
+            return 1
+        }
+
+        // Mark the sync record deleted (non-fatal), as transaction deletion does.
+        // Without this the removed security's sync blob survives and can resurrect it
+        // on a vault using Cloud Sync.
+        if deleted > 0, let updater = syncBlobUpdater, !info.uniqueID.isEmpty {
+            updater.deleteSyncRecord(entityUUID: info.uniqueID)
+        }
+
+        return deleted
+    }
+
+    /// Resolve a security by primary key or symbol within an existing context.
+    private func resolveSecurity(symbol: String?, id: Int?, in ctx: NSManagedObjectContext) throws -> NSManagedObject? {
+        if let id = id {
+            return try fetchByPK(entityName: "Security", pk: id, in: ctx)
+        }
+        guard let sym = symbol else { return nil }
+        let req = NSFetchRequest<NSManagedObject>(entityName: "Security")
+        req.predicate = NSPredicate(format: "pSymbol ==[c] %@", sym)
+        req.fetchLimit = 1
+        return try ctx.fetch(req).first
+    }
+
+    /// The `SecurityPriceItem` holding a security's price history, if it has one.
+    private static func priceItem(forSecurityUniqueID uniqueID: String, in ctx: NSManagedObjectContext) throws -> NSManagedObject? {
+        let request = NSFetchRequest<NSManagedObject>(entityName: "SecurityPriceItem")
+        request.predicate = NSPredicate(format: "pSecurityID == %@", uniqueID)
+        request.fetchLimit = 1
+        return try ctx.fetch(request).first
+    }
+
     /// Fix price records where closePrice=0 but adjustedClosePrice has the actual value.
     /// Optionally filter by symbol. Returns per-security fix counts and updates sync blobs.
     public func fixBrokenPrices(symbol: String? = nil) throws -> [(symbol: String, fixed: Int)] {
