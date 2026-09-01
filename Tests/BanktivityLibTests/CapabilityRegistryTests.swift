@@ -11,7 +11,7 @@ struct CapabilityRegistryTests {
         #expect(report.schemaVersion == 1)
         #expect(!report.commands.isEmpty)
         #expect(!report.tools.isEmpty)
-        #expect(report.commands.count == 82)
+        #expect(report.commands.count == 83)
 
         let commandNames = Set(report.commands.map(\.name))
         for name in [
@@ -26,9 +26,18 @@ struct CapabilityRegistryTests {
             "statements restore-internal-row-from-preimage",
             "securities create-trade",
             "securities create-income",
+            "securities delete",
         ] {
             #expect(commandNames.contains(name))
         }
+
+        #expect(Set(report.tools.map(\.name)).contains("delete_security"))
+
+        let securityDelete = try #require(report.commands.first { $0.name == "securities delete" })
+        #expect(securityDelete.access == "write")
+        #expect(securityDelete.supportsDryRun)
+        #expect(securityDelete.uiVerificationRequired)
+        #expect(securityDelete.requiredConfirmations.contains("operator_reviewed_target"))
 
         let reconciliation = try #require(
             report.commands.first { $0.name == "reconciliation execute-bundle" }

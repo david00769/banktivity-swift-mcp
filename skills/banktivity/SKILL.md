@@ -83,6 +83,7 @@ Use `get_account_reconciliation_status` through MCP or `banktivity-cli statement
 | `create_share_adjustment` | `--account_id N --symbol SYM --shares=-10 --date YYYY-MM-DD` | Share adjustment (charges, splits); `--amount` for cash |
 | `import_security_prices` | `--file_path /path/to/csv --symbol AAPL` | Supports Yahoo Finance, OHLCV, or Date/Close CSV |
 | `delete_security_prices` | `--symbol AAPL --start_date --end_date` | Delete prices; date range optional |
+| `delete_security` / `securities delete` | `--symbol AAPL [--with_prices] [--dry_run]` | Delete a security no trade references; refuses while trades point at it. CLI also requires `--operator-reviewed-target` and `--post-ui-verification-required` |
 | `securities update-trade` | `<transaction_id> [--shares N] [--price_per_share N] [--amount N] [--symbol SYM]` | Update SecurityLineItem fields on an existing trade transaction |
 
 ### Modifying

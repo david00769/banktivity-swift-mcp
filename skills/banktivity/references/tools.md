@@ -933,6 +933,26 @@ Delete price history for a security, optionally filtered by date range.
 }
 ```
 
+### delete_security
+Delete a security record that no trade references. Refuses while any
+`SecurityLineItem` still points at the security, because deleting it would
+orphan the line items carrying its cost basis and realized gain — re-point
+those with `update_security_trade` first. Price history is kept unless
+`with_prices` is set. The prices, their parent `SecurityPriceItem`, and the
+security are removed in one write, and the security's sync record is marked
+deleted so the removal propagates.
+
+```json
+{
+  "properties": {
+    "symbol": { "type": "string", "description": "Security ticker symbol (e.g. AAPL)" },
+    "id": { "type": "number", "description": "Security ID (alternative to symbol)" },
+    "with_prices": { "type": "boolean", "description": "Also delete the security's price history (default false)" },
+    "dry_run": { "type": "boolean", "description": "Report the trade and price counts without writing" }
+  }
+}
+```
+
 ---
 
 ## Export

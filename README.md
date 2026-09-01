@@ -3,7 +3,7 @@
 A Swift library, [MCP](https://modelcontextprotocol.io/) server, and CLI for [Banktivity](https://www.iggsoftware.com/banktivity/) personal finance files. Provides full read/write access to `.bank8` vaults — accounts, transactions, categories, tags, templates, import rules, scheduled transactions, statements, securities, and RDF export.
 
 - **BanktivityLib** — pure domain library with Core Data repositories and RDF export, no server dependencies
-- **banktivity-mcp** — MCP server exposing 67 tools over stdio, for AI assistants like Claude
+- **banktivity-mcp** — MCP server exposing 73 tools over stdio, for AI assistants like Claude
 - **banktivity-cli** — standalone CLI for scripting and automation
 
 Inspired by [banktivity-mcp](https://github.com/mhriemers/banktivity-mcp) (TypeScript/Node.js), this is a ground-up rewrite in Swift. The original uses `better-sqlite3` to read and write Core Data's SQLite store directly, bypassing Core Data's internal change tracking. This works for reads, but direct SQL writes are invisible to CloudKit sync — Banktivity doesn't know the data changed, and the vault can become corrupted or fail to sync. This Swift version uses `NSPersistentContainer` so all mutations go through Core Data's API, ensuring proper change tracking and CloudKit compatibility.
@@ -251,6 +251,7 @@ security-linked rows can carry separate security-line cash effects.
 - `create_share_adjustment` — Create a share adjustment (e.g. charges, stock splits, position corrections)
 - `import_security_prices` — Import prices from a CSV file (Yahoo Finance, OHLCV, or Date/Close)
 - `delete_security_prices` — Delete price history for a security (optional date range)
+- `delete_security` — Delete a security record that no trade references
 
 ### Export
 - `export_turtle` — Export the entire vault as RDF/Turtle (.ttl), optionally to a file
@@ -304,7 +305,7 @@ The command groups below are the complete CLI surface. Use a group's
 - `import-rules`: `list`, `get`, `match`, `create`, `update`, `delete`
 - `scheduled`: `list`, `get`, `create`, `update`, `delete`
 - `statements`: `list`, `status`, `get`, `inspect-membership`, `inspect-sync-record`, `replace-internal-row-with-visible-statement`, `restore-internal-row-from-preimage`, `visible-row-correction-plan`, `create`, `update`, `delete`, `reconcile`, `unreconcile`, `unreconciled`
-- `securities`: `list`, `create`, `prices`, `import-prices`, `delete-prices`, `fix-prices`, `holdings`, `trades`, `income`, `create-trade`, `create-income`, `adjust`, `update-trade`
+- `securities`: `list`, `create`, `delete`, `prices`, `import-prices`, `delete-prices`, `fix-prices`, `holdings`, `trades`, `income`, `create-trade`, `create-income`, `adjust`, `update-trade`
 - `reconciliation`: `execute-bundle` for a reviewed, hash-bound phase bundle
 - `export`: `turtle`
 - `schema`: dump the Core Data schema
@@ -373,7 +374,7 @@ Banktivity's `.bank8` bundle is a directory containing compiled Core Data models
 
 1. Loads and merges all `.momd` model bundles from the vault
 2. Opens the SQLite store via `NSPersistentContainer` (no history tracking)
-3. Exposes 64 MCP tools over stdio transport
+3. Exposes 73 MCP tools over stdio transport
 4. Uses KVC (`value(forKey:)`) to access entities since we load Banktivity's own compiled models at runtime
 
 ## License
