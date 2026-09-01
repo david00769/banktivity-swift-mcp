@@ -80,6 +80,7 @@ struct LineItems: AsyncParsableCommand {
             try await guardWrite(writeGuard)
             try requireReviewedWriteConfirmations(
                 subject: "Line-item writes",
+                target: "transaction/account",
                 operatorReviewedTarget: operatorReviewedTarget,
                 postUIVerificationRequired: postUIVerificationRequired
             )
@@ -162,6 +163,7 @@ struct LineItems: AsyncParsableCommand {
             try await guardWrite(writeGuard)
             try requireReviewedWriteConfirmations(
                 subject: "Line-item writes",
+                target: "transaction/account",
                 operatorReviewedTarget: operatorReviewedTarget,
                 postUIVerificationRequired: postUIVerificationRequired
             )
@@ -208,6 +210,7 @@ struct LineItems: AsyncParsableCommand {
             try await guardWrite(writeGuard)
             try requireReviewedWriteConfirmations(
                 subject: "Line-item writes",
+                target: "transaction/account",
                 operatorReviewedTarget: operatorReviewedTarget,
                 postUIVerificationRequired: postUIVerificationRequired
             )
