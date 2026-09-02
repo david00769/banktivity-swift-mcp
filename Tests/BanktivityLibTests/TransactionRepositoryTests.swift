@@ -85,4 +85,40 @@ struct TransactionRepositoryTests {
         #expect(filtered.count == 1)
         #expect(filtered.first?.title == "Should not leak through missing account filter")
     }
+    // Added 2026-09-02. Midnight is the START of a day, so an end bound built as
+    // `pDate <= midnight(endDate)` drops every row stored later in that day.
+    // Measured on the production vault before any anchoring work: two of three
+    // sampled rows were already missing from a same-day window. Anchored writes
+    // land at 10:00 UTC and would be dropped every time.
+    @Test("a same-day window returns a row written that day")
+    func sameDayWindowReturnsTheRowWrittenThatDay() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let account = try repos.accounts.create(
+            name: "Synthetic Checking",
+            accountClass: AccountClass.checking,
+            currencyCode: "USD"
+        )
+
+        let created = try repos.transactions.create(
+            date: "2026-06-08",
+            title: "Same day window probe",
+            lineItems: [(accountId: account.id, amount: -12.34, memo: nil)]
+        )
+        #expect(created.date == "2026-06-08")
+
+        let sameDay = try repos.transactions.list(
+            accountId: account.id, startDate: "2026-06-08", endDate: "2026-06-08"
+        )
+        #expect(sameDay.contains { $0.id == created.id })
+
+        // The bound must be exclusive of the NEXT day, not inclusive of this one:
+        // a window ending the day before must still not return it.
+        let dayBefore = try repos.transactions.list(
+            accountId: account.id, startDate: "2026-06-01", endDate: "2026-06-07"
+        )
+        #expect(!dayBefore.contains { $0.id == created.id })
+    }
+
 }

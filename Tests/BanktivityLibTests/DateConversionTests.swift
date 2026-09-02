@@ -118,4 +118,54 @@ struct DateConversionTests {
         let timestamp = DateConversion.fromDate(date)
         #expect(timestamp == 12345.0)
     }
+
+    // MARK: - Date-only anchor (added 2026-09-02)
+    //
+    // These two cover the whole of the date-anchor change. Before they existed
+    // the entire suite passed with the change reverted, because every other
+    // DateConversion test passes an explicit `timeZone` and so is blind to what
+    // the anchor does.
+
+    @Test("the defaults stay host-local; only writers anchor")
+    func defaultsRemainHostLocal() throws {
+        // This is the contract that caused the 2026-09-02 rollback. Anchoring the
+        // read/query defaults re-dated every not-yet-restamped row and every
+        // statement period. If someone changes either default to dateOnlyTimeZone,
+        // this fails -- which nothing else in the suite would catch.
+        let label = "2026-06-08"
+        let viaDefault = try #require(DateConversion.fromISO(label))
+        let viaHost = try #require(DateConversion.fromISO(label, timeZone: .current))
+        #expect(viaDefault == viaHost)
+
+        let ts = 800_000_000.0
+        #expect(DateConversion.toISO(ts) == DateConversion.toISO(ts, timeZone: .current))
+
+        // And the anchor itself is 10:00 UTC, which is what write paths opt into.
+        let anchored = try #require(
+            DateConversion.fromISO(label, timeZone: DateConversion.dateOnlyTimeZone)
+        )
+        var utcCalendar = Calendar(identifier: .gregorian)
+        utcCalendar.timeZone = try #require(TimeZone(identifier: "UTC"))
+        let parts = utcCalendar.dateComponents(
+            [.hour, .minute], from: Date(timeIntervalSinceReferenceDate: anchored)
+        )
+        #expect(parts.hour == 10)
+        #expect(parts.minute == 0)
+    }
+
+    @Test("the sync blob timestamp describes the same instant as the Core Data write")
+    func syncBlobTimestampMatchesTheStoredInstant() throws {
+        let dateOnly = "2026-06-08"
+        let stored = try #require(
+            DateConversion.fromISO(dateOnly, timeZone: DateConversion.dateOnlyTimeZone)
+        )
+
+        let blob = DateConversion.syncBlobTimestamp(dateOnly: dateOnly)
+        #expect(blob == "2026-06-08T10:00:00+0000")
+
+        // Round-trip: the blob string must parse back to the very instant Core Data
+        // holds. If these two ever disagree a sync can silently move the date.
+        let reparsed = try #require(DateConversion.fromISO(blob))
+        #expect(reparsed == stored)
+    }
 }
