@@ -250,8 +250,8 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         guard let updater = syncBlobUpdater else {
             throw ToolError.invalidInput("Internal statement replacement requires atomic sync metadata updates")
         }
-        guard let startTimestamp = DateConversion.fromISO(startDate),
-              let endTimestamp = DateConversion.fromISO(endDate),
+        guard let startTimestamp = DateConversion.fromISO(startDate, timeZone: DateConversion.dateOnlyTimeZone),
+              let endTimestamp = DateConversion.fromISO(endDate, timeZone: DateConversion.dateOnlyTimeZone),
               endTimestamp > startTimestamp else {
             throw ToolError.invalidInput("Replacement requires valid ordered statement dates")
         }
@@ -476,10 +476,10 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         name: String? = nil,
         note: String? = nil
     ) throws -> StatementDTO {
-        guard let startTs = DateConversion.fromISO(startDate) else {
+        guard let startTs = DateConversion.fromISO(startDate, timeZone: DateConversion.dateOnlyTimeZone) else {
             throw ToolError.invalidInput("Invalid start date: \(startDate)")
         }
-        guard let endTs = DateConversion.fromISO(endDate) else {
+        guard let endTs = DateConversion.fromISO(endDate, timeZone: DateConversion.dateOnlyTimeZone) else {
             throw ToolError.invalidInput("Invalid end date: \(endDate)")
         }
         guard endTs > startTs else {
@@ -840,7 +840,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 let currentEnd = Self.dateValue(statement, "pEndDate")
                 let startTs: Double
                 if let startDate {
-                    guard let parsed = DateConversion.fromISO(startDate) else {
+                    guard let parsed = DateConversion.fromISO(startDate, timeZone: DateConversion.dateOnlyTimeZone) else {
                         throw ToolError.invalidInput("Invalid start date: \(startDate)")
                     }
                     startTs = parsed
@@ -851,7 +851,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 }
                 let endTs: Double
                 if let endDate {
-                    guard let parsed = DateConversion.fromISO(endDate) else {
+                    guard let parsed = DateConversion.fromISO(endDate, timeZone: DateConversion.dateOnlyTimeZone) else {
                         throw ToolError.invalidInput("Invalid end date: \(endDate)")
                     }
                     endTs = parsed
@@ -896,8 +896,8 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             if let start = startDate, let startTs = DateConversion.fromISO(start) {
                 predicates.append(NSPredicate(format: "pTransaction.pDate >= %@", DateConversion.toDate(startTs) as NSDate))
             }
-            if let end = endDate, let endTs = DateConversion.fromISO(end) {
-                predicates.append(NSPredicate(format: "pTransaction.pDate <= %@", DateConversion.toDate(endTs) as NSDate))
+            if let end = endDate, let endTs = DateConversion.endOfDayExclusive(end) {
+                predicates.append(NSPredicate(format: "pTransaction.pDate < %@", DateConversion.toDate(endTs) as NSDate))
             }
 
             request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)

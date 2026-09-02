@@ -276,7 +276,7 @@ public final class SyncBlobUpdater: @unchecked Sendable {
         xml += "<field type=\"bool\" name=\"adjustment\">\(adjustment ? "yes" : "no")</field>"
         xml += "<field type=\"int\" name=\"checkNumber\" null=\"null\"/>"
         xml += "<field type=\"reference\" name=\"currency\">Currency:\(currencyUUID)</field>"
-        xml += "<field type=\"date\" name=\"date\">\(date)T00:00:00+0000</field>"
+        xml += "<field type=\"date\" name=\"date\">\(DateConversion.syncBlobTimestamp(dateOnly: date))</field>"
         xml += buildLineItemsXML(lineItems)
         if let note = note {
             xml += "<field type=\"string\" name=\"note\">\(escapeXML(note))</field>"
@@ -545,7 +545,7 @@ public final class SyncBlobUpdater: @unchecked Sendable {
 
     public func updateSecurityLatestPrice(securityUUID: String, closePrice: Double, date: String) {
         let priceStr = formatDecimal(closePrice)
-        let dateStr = date.contains("T") ? date : "\(date)T00:00:00+0100"
+        let dateStr = date.contains("T") ? date : DateConversion.syncBlobTimestamp(dateOnly: date)
         updateTransactionBlob(transactionUUID: securityUUID) { xml in
             // Replace the latestSecurityPrice record contents
             guard let recordStart = xml.range(of: "<record type=\"SecurityPrice\" name=\"latestSecurityPrice\">"),
