@@ -619,11 +619,25 @@ public final class SyncBlobUpdater: @unchecked Sendable {
             var result = xml
             for (field, value) in [("symbol", symbol), ("name", name)] {
                 guard let value else { continue }
+                let escaped = escapeXML(value)
+                // An empty field is present but self-closing -- a security with
+                // no ticker carries `<field ... name="symbol" null="null"/>`,
+                // not nothing at all. Handling only the valued form meant the
+                // rename silently failed to reach the blob for exactly the
+                // securities that needed a ticker most. Both forms are rewritten
+                // here; nothing is inserted, so field order and the record
+                // structure are left as Banktivity wrote them.
+                let empty = "<field type=\"string\" name=\"\(field)\" null=\"null\"/>"
+                if let range = result.range(of: empty) {
+                    result.replaceSubrange(
+                        range, with: "<field type=\"string\" name=\"\(field)\">\(escaped)</field>")
+                    continue
+                }
                 let open = "<field type=\"string\" name=\"\(field)\">"
                 guard let start = result.range(of: open),
                       let end = result.range(of: "</field>", range: start.upperBound..<result.endIndex)
                 else { continue }
-                result.replaceSubrange(start.upperBound..<end.lowerBound, with: escapeXML(value))
+                result.replaceSubrange(start.upperBound..<end.lowerBound, with: escaped)
             }
             return result
         }

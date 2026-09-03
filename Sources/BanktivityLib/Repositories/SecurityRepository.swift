@@ -223,14 +223,13 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             guard let sec = try ctx.fetch(request).first else {
                 throw ToolError.notFound("Security vanished during rename")
             }
-            return SecurityDTO(
-                id: Self.extractPK(from: sec.objectID),
-                name: Self.stringValue(sec, "pName"),
-                symbol: Self.stringValue(sec, "pSymbol"),
-                uniqueId: uuid,
-                currency: Self.relatedObject(sec, "currency").map { Self.stringValue($0, "pCode") },
-                securityType: Self.intValue(sec, "pSecurityType")
-            )
+            // Reuse the one mapper every other read goes through. Building the
+            // DTO by hand here is what crashed the first version: it asked KVC
+            // for a "currency" relationship that is named `pCurrency`, and an
+            // unrecognised key is an Objective-C exception, so the process died
+            // with SIGSEGV *after* the rename had already committed -- a write
+            // that succeeds and then reports nothing.
+            return self.mapToSecurityDTO(sec)
         }
         return after
     }
