@@ -5,7 +5,7 @@ import Foundation
 import Testing
 @testable import BanktivityLib
 
-@Suite("CategoryRepository")
+@Suite("CategoryRepository", .serialized)
 struct CategoryRepositoryTests {
 
     @Test("create stores categories as Category entities")

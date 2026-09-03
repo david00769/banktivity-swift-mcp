@@ -4,7 +4,7 @@ import Foundation
 import Testing
 @testable import BanktivityLib
 
-@Suite("TransactionRepository")
+@Suite("TransactionRepository", .serialized)
 struct TransactionRepositoryTests {
 
     private func makeRepositories() throws -> (

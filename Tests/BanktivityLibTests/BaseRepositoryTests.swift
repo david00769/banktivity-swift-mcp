@@ -4,7 +4,7 @@ import Foundation
 import Testing
 @testable import BanktivityLib
 
-@Suite("BaseRepository")
+@Suite("BaseRepository", .serialized)
 struct BaseRepositoryTests {
 
     @Test("Repository writes are serialized across concurrent callers")
