@@ -176,6 +176,68 @@ struct SecurityUpdateTests {
         }
     }
 
+    @Test("update-trade refuses a transaction that is not a security trade")
+    func updateSecurityLineItemRefusesNonTradeTarget() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        let account = try TestVaultHelper.seedInvestmentAccount(in: vault.container, currency: eur)
+        let security = try TestVaultHelper.seedSecurity(in: vault.container, symbol: "MA", currency: eur)
+
+        let ctx = vault.container.viewContext
+        let depositType = NSEntityDescription.insertNewObject(forEntityName: "TransactionType", into: ctx)
+        depositType.setValue(Int16(1), forKey: "pBaseType")
+        depositType.setValue("Deposit", forKey: "pName")
+        depositType.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+        BaseRepository.setNow(depositType, "pCreationTime")
+        BaseRepository.setNow(depositType, "pModificationDate")
+
+        // The shape from board item 40: a tool-created cash dividend with two
+        // cash legs and no security line item at all.
+        let tx = NSEntityDescription.insertNewObject(forEntityName: "Transaction", into: ctx)
+        tx.setValue("MASTERCARD INCORPORATED DIVIDEND", forKey: "pTitle")
+        tx.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+        tx.setValue(depositType, forKey: "pTransactionType")
+        tx.setValue(eur, forKey: "pCurrency")
+        BaseRepository.setDate(tx, "pDate", isoString: "2025-03-14")
+        BaseRepository.setNow(tx, "pCreationTime")
+        BaseRepository.setNow(tx, "pModificationDate")
+
+        for amount in [2.64, -2.64] {
+            let leg = NSEntityDescription.insertNewObject(forEntityName: "LineItem", into: ctx)
+            leg.setValue(amount as NSNumber, forKey: "pTransactionAmount")
+            leg.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            leg.setValue(1.0 as NSNumber, forKey: "pExchangeRate")
+            leg.setValue(account, forKey: "pAccount")
+            leg.setValue(tx, forKey: "pTransaction")
+            BaseRepository.setNow(leg, "pCreationTime")
+        }
+        try ctx.save()
+
+        let repo = SecurityRepository(container: vault.container)
+        let txPK = BaseRepository.extractPK(from: tx.objectID)
+        let accountPK = BaseRepository.extractPK(from: account.objectID)
+
+        #expect(throws: (any Error).self) {
+            try repo.updateSecurityLineItem(transactionId: txPK, securitySymbol: "MA")
+        }
+
+        // The refusal must leave the row exactly as it was. Before 2026-09-03
+        // this returned a clean success naming the security while grafting a
+        // zero-share, zero-income SecurityLineItem onto one of the cash legs --
+        // so the row stayed a Deposit and never reached `securities income`.
+        let transactions = TransactionRepository(
+            container: vault.container,
+            lineItemRepo: LineItemRepository(container: vault.container)
+        )
+        let readBack = try #require(try transactions.get(transactionId: txPK))
+        #expect(readBack.transactionType == "Deposit")
+        #expect(try repo.getIncome(accountId: accountPK).isEmpty)
+        #expect(try repo.getTrades(accountId: accountPK).isEmpty)
+        _ = security
+    }
+
     /// Base type and the vault's own name for it, read from `ZTRANSACTIONTYPE`.
     ///
     /// 250 and 302 are the cases that matter: the deleted hard-coded map had no
