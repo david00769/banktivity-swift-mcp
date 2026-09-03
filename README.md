@@ -16,6 +16,16 @@ writes inside one CLI command, but it is not a cross-process file lock. Do not
 run multiple `banktivity-cli` or `banktivity-mcp` processes against the same
 vault at the same time.
 
+AI harnesses should add their own safety layer around this tool. Use one
+MCP/CLI process per vault, serialize write calls, and prefer read-before-write
+checks where the tool can verify the row still has the expected value before
+mutating it. Shut down `banktivity-mcp` and any long-running CLI process before
+opening the same vault in Banktivity.app; the app and external Core Data clients
+must not hold the live file open together. Always make a fresh backup before
+write runs, and re-resolve account, transaction, statement, and category IDs
+after restoring, importing, or migrating a Banktivity 10 vault because local
+numeric IDs can change.
+
 ## Requirements
 
 - macOS 14+
