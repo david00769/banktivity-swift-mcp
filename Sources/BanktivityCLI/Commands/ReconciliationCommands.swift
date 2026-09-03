@@ -1,6 +1,7 @@
 // Hash-bound persistent execution surface for one reconciliation phase.
 
 import ArgumentParser
+import BanktivityLib
 import CryptoKit
 import Foundation
 
@@ -135,12 +136,28 @@ struct Reconciliation: AsyncParsableCommand {
                     ])
                 } catch {
                     CLIProcessState.shared.endOutputCapture()
-                    emitEnvelope([
+                    // A one-shot CLI run reports *why* it failed twice: the exit
+                    // code and the `Error: [<category>] ...` stderr line, both
+                    // derived from `cliExitCategory` (CLI.swift). A session has
+                    // neither channel -- it has this envelope -- and callers
+                    // depend on the distinction. Reading a row that is genuinely
+                    // absent must not look like a read that failed, or a delete's
+                    // readback becomes self-certifying: it asks whether the row is
+                    // gone and a broken read answers "gone". So carry the category
+                    // rather than making the caller parse the message text.
+                    var envelope: [String: Any] = [
                         "status": "failed",
                         "operation_id": request.operationId,
                         "operation_index": request.operationIndex,
                         "error": String(describing: error),
-                    ])
+                    ]
+                    let category = (error as? ToolError)?.cliExitCategory
+                        ?? (error as? RepositoryError)?.cliExitCategory
+                    if let category {
+                        envelope["category"] = category.rawValue
+                        envelope["exit_code"] = Int(category.exitCode)
+                    }
+                    emitEnvelope(envelope)
                     return
                 }
             }
