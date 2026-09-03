@@ -14,6 +14,7 @@ func registerLineItemTools(
     // get_line_item
     registry.register(
         name: "get_line_item",
+        access: .read,
         description: "Get a specific line item by ID",
         inputSchema: ToolHelpers.schema(
             properties: [
@@ -36,6 +37,7 @@ func registerLineItemTools(
     // add_line_item
     registry.register(
         name: "add_line_item",
+        access: .write,
         description: "Add a new line item to an existing transaction. Live writes require operator_reviewed_target and post_ui_verification_required. Use dry_run to validate without writing.",
         inputSchema: ToolHelpers.schema(
             properties: [
@@ -86,6 +88,7 @@ func registerLineItemTools(
     // update_line_item
     registry.register(
         name: "update_line_item",
+        access: .write,
         description: "Update a line item's account, amount, memo, or cleared state. Live writes require operator_reviewed_target and post_ui_verification_required. Use dry_run to validate without writing.",
         inputSchema: ToolHelpers.schema(
             properties: [
@@ -146,6 +149,7 @@ func registerLineItemTools(
     // delete_line_item
     registry.register(
         name: "delete_line_item",
+        access: .write,
         description: "Delete a line item from a transaction. Live writes require operator_reviewed_target and post_ui_verification_required. Use dry_run to validate without writing.",
         inputSchema: ToolHelpers.schema(
             properties: [

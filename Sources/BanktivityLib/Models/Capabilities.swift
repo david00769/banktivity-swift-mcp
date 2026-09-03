@@ -21,10 +21,26 @@ public struct CapabilityReportDTO: Codable, Sendable {
     }
 }
 
+/// Read or write, as a type rather than a string.
+///
+/// The raw values are the wire format, so the emitted JSON does not move: every
+/// Python consumer of `banktivity-cli capabilities` reads these exact tokens.
+public enum CapabilityAccess: String, Codable, Sendable, CaseIterable {
+    case read
+    case write
+}
+
+/// Which front door a capability belongs to.
+public enum CapabilitySurface: String, Codable, Sendable, CaseIterable {
+    case cli
+    case mcp
+}
+
 public struct CommandCapabilityDTO: Codable, Sendable {
     public let name: String
-    public let surface: String
-    public let access: String
+    public let surface: CapabilitySurface
+    public let access: CapabilityAccess
+    /// Stored rather than computed, so the synthesised `Codable` still emits it.
     public let requiresWriteMode: Bool
     public let requiredConfirmations: [String]
     public let supportsDryRun: Bool
@@ -33,9 +49,8 @@ public struct CommandCapabilityDTO: Codable, Sendable {
 
     public init(
         name: String,
-        surface: String,
-        access: String,
-        requiresWriteMode: Bool,
+        surface: CapabilitySurface,
+        access: CapabilityAccess,
         requiredConfirmations: [String] = [],
         supportsDryRun: Bool = false,
         uiVerificationRequired: Bool = false,
@@ -44,7 +59,8 @@ public struct CommandCapabilityDTO: Codable, Sendable {
         self.name = name
         self.surface = surface
         self.access = access
-        self.requiresWriteMode = requiresWriteMode
+        // One definition, not a second field a caller can disagree with.
+        self.requiresWriteMode = access == .write
         self.requiredConfirmations = requiredConfirmations
         self.supportsDryRun = supportsDryRun
         self.uiVerificationRequired = uiVerificationRequired
@@ -160,8 +176,6 @@ public enum CapabilityRegistry {
             readMCP("get_spending_by_category"),
             readMCP("get_income_by_category"),
             readMCP("get_summary"),
-            writeMCP("create_account"),
-            readMCP("list_transactions"),
             readMCP("search_transactions"),
             readMCP("get_transaction"),
             writeMCP("create_transaction"),
@@ -171,17 +185,13 @@ public enum CapabilityRegistry {
             readMCP("get_category"),
             readMCP("get_category_tree"),
             writeMCP("create_category"),
-            readMCP("list_tags"),
             writeMCP("create_tag"),
             writeMCP("tag_transaction"),
             readMCP("get_transactions_by_tag"),
             writeMCP("bulk_tag_transactions"),
             readMCP("get_uncategorized_transactions"),
-            readMCP("suggest_category"),
-            readMCP("review_categories"),
             readMCP("get_payee_category_summary"),
             writeMCP("recategorize_transaction"),
-            writeMCP("bulk_recategorize", supportsDryRun: true),
             readMCP("get_line_item"),
             verifiedWriteMCP("add_line_item", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
             verifiedWriteMCP("update_line_item", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
@@ -198,7 +208,6 @@ public enum CapabilityRegistry {
             writeMCP("create_share_adjustment"),
             readMCP("get_security_prices"),
             writeMCP("import_security_prices"),
-            writeMCP("fix_security_prices"),
             readMCP("get_security_holdings", note: "Aggregate cost basis is best-effort and not lot-aware."),
             readMCP("get_security_trades"),
             readMCP("get_security_income"),
@@ -208,11 +217,44 @@ public enum CapabilityRegistry {
             readMCP("dump_schema"),
             readMCP("export_turtle"),
             readMCP("get_capabilities"),
+
+            // Reconciled against ToolRegistry on 2026-09-03. These were reachable
+            // over stdio while unadvertised; MCPToolRegistrationDriftTests now fails
+            // if the two lists part again in either direction.
+            readMCP("audit_category_entities"),
+            readMCP("get_account_reconciliation_status"),
+            readMCP("get_import_rule"),
+            readMCP("get_scheduled_transaction"),
+            readMCP("get_tags"),
+            readMCP("get_transaction_template"),
+            readMCP("get_transactions"),
+            readMCP("list_import_rules"),
+            readMCP("list_scheduled_transactions"),
+            readMCP("list_transaction_templates"),
+            readMCP("match_import_rules"),
+            readMCP("plan_statement_visible_row_correction"),
+            readMCP("review_categorizations"),
+            readMCP("suggest_category_for_merchant"),
+            writeMCP("bulk_recategorize_by_payee"),
+            writeMCP("create_import_rule"),
+            writeMCP("create_scheduled_transaction"),
+            writeMCP("create_security_income"),
+            writeMCP("create_security_trade"),
+            writeMCP("create_transaction_template"),
+            writeMCP("delete_import_rule"),
+            writeMCP("delete_scheduled_transaction"),
+            writeMCP("delete_transaction_template"),
+            writeMCP("rename_security"),
+            writeMCP("repair_forex_transfer"),
+            writeMCP("update_import_rule"),
+            writeMCP("update_scheduled_transaction"),
+            writeMCP("update_statement"),
+            writeMCP("update_transaction_template"),
         ].sorted { $0.name < $1.name }
     }
 
     private static func readCLI(_ name: String, uiVerificationRequired: Bool = false, note: String? = nil) -> CommandCapabilityDTO {
-        capability(name, surface: "cli", access: "read", uiVerificationRequired: uiVerificationRequired, note: note)
+        capability(name, surface: .cli, access: .read, uiVerificationRequired: uiVerificationRequired, note: note)
     }
 
     private static func writeCLI(
@@ -222,7 +264,7 @@ public enum CapabilityRegistry {
         uiVerificationRequired: Bool = false,
         note: String? = nil
     ) -> CommandCapabilityDTO {
-        capability(name, surface: "cli", access: "write", confirmations: confirmations, supportsDryRun: supportsDryRun, uiVerificationRequired: uiVerificationRequired, note: note)
+        capability(name, surface: .cli, access: .write, confirmations: confirmations, supportsDryRun: supportsDryRun, uiVerificationRequired: uiVerificationRequired, note: note)
     }
 
     private static func verifiedWriteCLI(_ name: String, supportsDryRun: Bool = false, note: String) -> CommandCapabilityDTO {
@@ -230,7 +272,7 @@ public enum CapabilityRegistry {
     }
 
     private static func readMCP(_ name: String, uiVerificationRequired: Bool = false, note: String? = nil) -> CommandCapabilityDTO {
-        capability(name, surface: "mcp", access: "read", uiVerificationRequired: uiVerificationRequired, note: note)
+        capability(name, surface: .mcp, access: .read, uiVerificationRequired: uiVerificationRequired, note: note)
     }
 
     private static func writeMCP(
@@ -240,7 +282,7 @@ public enum CapabilityRegistry {
         uiVerificationRequired: Bool = false,
         note: String? = nil
     ) -> CommandCapabilityDTO {
-        capability(name, surface: "mcp", access: "write", confirmations: confirmations, supportsDryRun: supportsDryRun, uiVerificationRequired: uiVerificationRequired, note: note)
+        capability(name, surface: .mcp, access: .write, confirmations: confirmations, supportsDryRun: supportsDryRun, uiVerificationRequired: uiVerificationRequired, note: note)
     }
 
     private static func verifiedWriteMCP(_ name: String, supportsDryRun: Bool = false, note: String) -> CommandCapabilityDTO {
@@ -249,8 +291,8 @@ public enum CapabilityRegistry {
 
     private static func capability(
         _ name: String,
-        surface: String,
-        access: String,
+        surface: CapabilitySurface,
+        access: CapabilityAccess,
         confirmations: [String] = [],
         supportsDryRun: Bool = false,
         uiVerificationRequired: Bool = false,
@@ -260,7 +302,6 @@ public enum CapabilityRegistry {
             name: name,
             surface: surface,
             access: access,
-            requiresWriteMode: access == "write",
             requiredConfirmations: confirmations,
             supportsDryRun: supportsDryRun,
             uiVerificationRequired: uiVerificationRequired,
