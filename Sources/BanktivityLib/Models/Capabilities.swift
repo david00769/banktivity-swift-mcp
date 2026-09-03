@@ -144,6 +144,7 @@ public enum CapabilityRegistry {
             writeCLI("securities create-trade", note: "Creates native investment trade and balancing line items; verify the investment and cash effects before writing."),
             writeCLI("securities create-income", note: "Creates native investment income and balancing line items; verify the investment and cash effects before writing."),
             writeCLI("securities adjust"),
+            verifiedWriteCLI("securities rename", note: "Changes a security's ticker or display name and re-pushes its sync blob. Every reader that names a security is downstream of this, so confirm the security is the intended one before writing; it refuses a symbol another security already holds rather than merging."),
             verifiedWriteCLI("securities update-trade", note: "Security trade writes should be verified against provider trade evidence. Use --basis-only-transfer for zero-cash transfer-in basis repairs."),
             readCLI("schema"),
             readCLI("export turtle"),
