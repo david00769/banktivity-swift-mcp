@@ -528,7 +528,7 @@ struct Securities: AsyncParsableCommand {
         @Option(name: .long, help: "Income/expense category ID for the balancing line. Defaults to an unknown balancing line")
         var offsetCategoryId: Int?
 
-        @Option(name: .long, help: "Income type. Currently only dividend is supported")
+        @Option(name: .long, help: "Income type: dividend, return-of-capital, capital-gains-short, capital-gains-long, interest, investment-income. A spin-off distributes as return-of-capital, not a dividend")
         var incomeType: String = "dividend"
 
         @Option(name: .long, help: "Tax withheld at source. --amount stays the GROSS: the account receives the net, the income category is credited the gross, and this sits on its own line")
@@ -588,6 +588,9 @@ struct Securities: AsyncParsableCommand {
         @Option(name: .long, parsing: .unconditional, help: "Security cost/principal amount. This does not change investment-account cash line items unless --cash-line-amount is also supplied")
         var amount: Double?
 
+        @Option(name: .long, help: "Movement type: split-shares, move-shares-in, move-shares-out, transfer-shares, buy, sell. Without it the type is buy or sell by sign, which cannot express a corporate action")
+        var transactionType: String?
+
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
@@ -598,7 +601,8 @@ struct Securities: AsyncParsableCommand {
             let securities = SecurityRepository(container: container, syncBlobUpdater: syncBlobUpdater)
             let result = try securities.createShareAdjustment(
                 accountId: accountId, symbol: symbol, id: id,
-                shares: shares, date: date, title: title, amount: amount
+                shares: shares, date: date, title: title, amount: amount,
+                transactionType: transactionType
             )
             try outputJSON(result, format: parent.format)
         }

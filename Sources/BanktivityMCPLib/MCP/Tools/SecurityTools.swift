@@ -64,6 +64,7 @@ func registerSecurityTools(
                 "id": ToolHelpers.property(type: "number", description: "Security ID (alternative to symbol)"),
                 "shares": ToolHelpers.property(type: "number", description: "Number of shares to adjust (negative to reduce)"),
                 "date": ToolHelpers.property(type: "string", description: "Date of adjustment in YYYY-MM-DD format"),
+                "transaction_type": ToolHelpers.property(type: "string", description: "Movement type: split-shares, move-shares-in, move-shares-out, transfer-shares, buy, sell. Without it the type is buy or sell by sign, which cannot express a corporate action"),
                 "title": ToolHelpers.property(type: "string", description: "Transaction title/memo"),
                 "amount": ToolHelpers.property(type: "number", description: "Cash amount (negative for buy outflow, positive for sell inflow)"),
             ],
@@ -90,7 +91,8 @@ func registerSecurityTools(
 
         let result = try securities.createShareAdjustment(
             accountId: accountId, symbol: symbol, id: id,
-            shares: shares, date: date, title: title, amount: amount
+            shares: shares, date: date, title: title, amount: amount,
+            transactionType: ToolHelpers.getString(arguments, key: "transaction_type")
         )
         return try ToolHelpers.jsonResponse(result)
     }
@@ -358,7 +360,7 @@ func registerSecurityTools(
                 "title": ToolHelpers.property(type: "string", description: "Transaction title"),
                 "memo": ToolHelpers.property(type: "string", description: "Cash line memo"),
                 "offset_category_id": ToolHelpers.property(type: "number", description: "Income/expense category ID for the balancing line. Omit to create an unknown balancing line"),
-                "income_type": ToolHelpers.property(type: "string", description: "Income type. Currently only dividend is supported"),
+                "income_type": ToolHelpers.property(type: "string", description: "Income type: dividend, return-of-capital, capital-gains-short, capital-gains-long, interest, investment-income. A spin-off distributes as return-of-capital, not a dividend"),
             ],
             required: ["account_id", "amount", "date"]
         )
