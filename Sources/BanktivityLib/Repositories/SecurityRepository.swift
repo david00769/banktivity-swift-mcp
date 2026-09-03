@@ -393,10 +393,33 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         title: String? = nil,
         memo: String? = nil,
         offsetCategoryId: Int? = nil,
-        incomeType: String = "dividend"
+        incomeType: String = "dividend",
+        withheldAmount: Double? = nil,
+        withholdingCategoryId: Int? = nil
     ) throws -> SecurityIncomeDTO {
         guard amount > 0 else {
             throw ToolError.invalidInput("amount must be positive")
+        }
+        // A dividend with tax withheld at source is ONE transaction with three
+        // line items: the account receives the net, the income category is
+        // credited the gross, and the withholding sits on its own line.
+        // `amount` stays the GROSS throughout, because that is what the security
+        // income view and the 1099 report. Taking the net here is precisely the
+        // defect that dropped the foreign tax credit on imported dividends.
+        if let withheldAmount {
+            guard withheldAmount > 0 else {
+                throw ToolError.invalidInput("withheld amount must be positive")
+            }
+            guard withheldAmount < amount else {
+                throw ToolError.invalidInput("withheld amount must be less than the gross amount")
+            }
+            guard withholdingCategoryId != nil else {
+                throw ToolError.missingParameter(
+                    "withholding category is required when a withheld amount is given")
+            }
+        } else if withholdingCategoryId != nil {
+            throw ToolError.missingParameter(
+                "withheld amount is required when a withholding category is given")
         }
         guard DateConversion.fromISO(date) != nil else {
             throw ToolError.invalidInput("date must be YYYY-MM-DD")
@@ -445,6 +468,8 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let txTitle: String
             let cashLineItemUUID: String
             let offsetLineItemUUID: String
+            let withholdingLineItemUUID: String?
+            let withholdingAccountUUID: String?
             let accountUUID: String
             let accountName: String
             let offsetAccountUUID: String?
@@ -473,6 +498,18 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 offsetAccount = category
             } else {
                 offsetAccount = nil
+            }
+
+            var withholdingAccount: NSManagedObject?
+            if let withholdingCategoryId {
+                guard let category = try fetchByPK(entityName: "Account", pk: withholdingCategoryId, in: ctx) else {
+                    throw ToolError.notFound("Withholding category not found: \(withholdingCategoryId)")
+                }
+                let categoryClass = Self.intValue(category, "pAccountClass")
+                guard categoryClass == AccountClass.income || categoryClass == AccountClass.expense else {
+                    throw ToolError.invalidInput("Withholding category must be an income or expense category")
+                }
+                withholdingAccount = category
             }
 
             let typeRequest = NSFetchRequest<NSManagedObject>(entityName: "TransactionType")
@@ -507,7 +544,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
 
             let cashLI = Self.createObject(entityName: "LineItem", in: ctx)
             let cashLIUUID = Self.generateUUID()
-            cashLI.setValue(amount as NSNumber, forKey: "pTransactionAmount")
+            cashLI.setValue((amount - (withheldAmount ?? 0)) as NSNumber, forKey: "pTransactionAmount")
             cashLI.setValue(cashLIUUID, forKey: "pUniqueID")
             cashLI.setValue(1.0 as NSNumber, forKey: "pExchangeRate")
             cashLI.setValue(0.0 as NSNumber, forKey: "pRunningBalance")
@@ -528,6 +565,21 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             if let offsetAccount { offsetLI.setValue(offsetAccount, forKey: "pAccount") }
             offsetLI.setValue(tx, forKey: "pTransaction")
 
+            var withholdingLIUUID: String?
+            if let withheldAmount, let withholdingAccount {
+                let taxLI = Self.createObject(entityName: "LineItem", in: ctx)
+                let taxLIUUID = Self.generateUUID()
+                taxLI.setValue(withheldAmount as NSNumber, forKey: "pTransactionAmount")
+                taxLI.setValue(taxLIUUID, forKey: "pUniqueID")
+                taxLI.setValue(1.0 as NSNumber, forKey: "pExchangeRate")
+                taxLI.setValue(0.0 as NSNumber, forKey: "pRunningBalance")
+                taxLI.setValue(false, forKey: "pCleared")
+                Self.setNow(taxLI, "pCreationTime")
+                taxLI.setValue(withholdingAccount, forKey: "pAccount")
+                taxLI.setValue(tx, forKey: "pTransaction")
+                withholdingLIUUID = taxLIUUID
+            }
+
             let sli = Self.createObject(entityName: "SecurityLineItem", in: ctx)
             sli.setValue(0.0 as NSNumber, forKey: "pShares")
             sli.setValue(0.0 as NSNumber, forKey: "pAmount")
@@ -545,6 +597,8 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 txTitle: txTitle,
                 cashLineItemUUID: cashLIUUID,
                 offsetLineItemUUID: offsetLIUUID,
+                withholdingLineItemUUID: withholdingLIUUID,
+                withholdingAccountUUID: withholdingAccount.map { Self.stringValue($0, "pUniqueID") },
                 accountUUID: accountUUID,
                 accountName: accountName,
                 offsetAccountUUID: offsetAccountUUID,
@@ -568,12 +622,12 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             )
             let cashSyncLI = SyncBlobUpdater.SyncLineItem(
                 accountUUID: info.accountUUID,
-                accountAmount: amount,
+                accountAmount: amount - (withheldAmount ?? 0),
                 cleared: false,
                 identifier: info.cashLineItemUUID,
                 memo: memo,
                 securityLineItem: syncSLI,
-                transactionAmount: amount
+                transactionAmount: amount - (withheldAmount ?? 0)
             )
             let offsetSyncLI = SyncBlobUpdater.SyncLineItem(
                 accountUUID: info.offsetAccountUUID,
@@ -584,6 +638,18 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 securityLineItem: nil,
                 transactionAmount: -amount
             )
+            var syncLineItems = [cashSyncLI, offsetSyncLI]
+            if let withheldAmount, let taxUUID = info.withholdingLineItemUUID {
+                syncLineItems.append(SyncBlobUpdater.SyncLineItem(
+                    accountUUID: info.withholdingAccountUUID,
+                    accountAmount: withheldAmount,
+                    cleared: false,
+                    identifier: taxUUID,
+                    memo: nil,
+                    securityLineItem: nil,
+                    transactionAmount: withheldAmount
+                ))
+            }
             updater.createTransactionSyncRecord(
                 transactionUUID: info.txUUID,
                 currencyUUID: info.currencyUUID,
@@ -591,7 +657,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 title: info.txTitle,
                 note: nil,
                 adjustment: false,
-                lineItems: [cashSyncLI, offsetSyncLI],
+                lineItems: syncLineItems,
                 transactionTypeBaseType: "dividend",
                 transactionTypeUUID: info.transactionTypeUUID
             )
