@@ -484,6 +484,12 @@ struct Securities: AsyncParsableCommand {
         @Option(name: .long, help: "Income type. Currently only dividend is supported")
         var incomeType: String = "dividend"
 
+        @Option(name: .long, help: "Tax withheld at source. --amount stays the GROSS: the account receives the net, the income category is credited the gross, and this sits on its own line")
+        var withheldAmount: Double?
+
+        @Option(name: .long, help: "Category ID for the withheld tax line (required with --withheld-amount)")
+        var withholdingCategoryId: Int?
+
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
@@ -501,7 +507,9 @@ struct Securities: AsyncParsableCommand {
                 title: title,
                 memo: memo,
                 offsetCategoryId: offsetCategoryId,
-                incomeType: incomeType
+                incomeType: incomeType,
+                withheldAmount: withheldAmount,
+                withholdingCategoryId: withholdingCategoryId
             )
             try outputJSON(result, format: parent.format)
         }
