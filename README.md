@@ -31,6 +31,23 @@ numeric IDs can change.
 - macOS 14+
 - A Banktivity `.bank8` vault file
 
+## Read-only mode
+
+Set `BANKTIVITY_STORE_READ_ONLY` to `1`, `true`, or `yes` to open the Core Data
+store read-only. Even a pure read makes SQLite touch its write-ahead log and
+other housekeeping files, so use this when the goal is to inspect a vault
+without altering a byte of it. Writes then fail down at the store layer rather
+than at the write guard.
+
+```sh
+BANKTIVITY_STORE_READ_ONLY=1 \
+  banktivity-cli --vault ~/Documents/Banktivity/My\ Accounts.bank8 accounts list
+```
+
+One caveat: SQLite may still open `core.sql-shm` for writing on its own account.
+The default remains read/write and the write guard is unchanged, so treat this as
+a second layer rather than a substitute for backups.
+
 ## Installation
 
 ### Homebrew (recommended)
@@ -63,12 +80,18 @@ make install        # Build universal binary and install to ~/.local/bin
 Other Makefile targets:
 
 ```sh
+make help           # List available targets with short descriptions
 make build          # Debug build
 make test           # Run all tests
 make release        # Universal release build (arm64 + x86_64)
 make package        # Build release tarball with SHA256
 make clean          # Remove build artifacts
 ```
+
+`make test` builds the CLI first and runs the suite single-worker under the same
+release configuration and Xcode framework paths as `make release`, so a test
+failure reproduces the way a release build would hit it. Use
+`make test-filter FILTER=TestName` when iterating on one test.
 
 ## Configuration
 
