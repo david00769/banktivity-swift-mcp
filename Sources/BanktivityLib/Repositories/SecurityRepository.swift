@@ -928,13 +928,24 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 }
             }
 
-            // If no SecurityLineItem found, use first line item with an account and create one
-            if targetLI == nil {
-                targetLI = lineItems.first
+            guard !lineItems.isEmpty else {
+                throw ToolError.notFound("No line items found for transaction \(transactionId)")
             }
 
-            guard let li = targetLI else {
-                throw ToolError.notFound("No line items found for transaction \(transactionId)")
+            // A trade update requires a trade. Until 2026-09-03 this fell back to
+            // `lineItems.first` and grafted a fresh zero-share, zero-income
+            // SecurityLineItem onto whatever leg that happened to be -- and
+            // `relatedSet` is an unordered NSSet, so on a multi-leg transaction
+            // "whatever leg" was not even deterministic. Against a two-cash-leg
+            // Deposit it returned a clean success naming the security while the
+            // row stayed a Deposit and never appeared in `securities income`,
+            // which is worse than a no-op. Use `securities create-income` to give
+            // a cash row a security, and `create-trade` to make a new trade.
+            guard let li = targetLI, existingSLI != nil else {
+                throw ToolError.invalidInput(
+                    "transaction \(transactionId) is not a security trade: it carries no security line item. "
+                    + "Use create-income to attach a security to a cash row, or create-trade to record a new trade."
+                )
             }
 
             if basisOnlyTransfer {
@@ -948,19 +959,8 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 }
             }
 
-            let sli: NSManagedObject
-            if let existing = existingSLI {
-                sli = existing
-            } else {
-                // Create a new SecurityLineItem
-                sli = Self.createObject(entityName: "SecurityLineItem", in: ctx)
-                sli.setValue(0.0 as NSNumber, forKey: "pShares")
-                sli.setValue(0.0 as NSNumber, forKey: "pAmount")
-                sli.setValue(0.0 as NSNumber, forKey: "pPricePerShare")
-                sli.setValue(0.0 as NSNumber, forKey: "pCommission")
-                sli.setValue(0.0 as NSNumber, forKey: "pIncome")
-                sli.setValue(1.0 as NSNumber, forKey: "pPriceMultiplier")
-                sli.setValue(li, forKey: "pLineItem")
+            guard let sli = existingSLI else {
+                throw ToolError.invalidInput("transaction \(transactionId) is not a security trade")
             }
 
             if let shares = shares {
