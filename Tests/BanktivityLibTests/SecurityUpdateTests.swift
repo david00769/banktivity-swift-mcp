@@ -107,11 +107,6 @@ struct SecurityUpdateTests {
         #expect(xml.contains("<field type=\"decimal\" name=\"commission\">0</field>"))
     }
 
-    @Test("transaction type 212 is transfer shares")
-    func transactionTypeNameTransferShares() {
-        #expect(SecurityRepository.transactionTypeName(212) == "Transfer Shares")
-    }
-
     @Test("basis-only transfer update requires zero cash line")
     func basisOnlyTransferUpdateRequiresZeroCashLine() throws {
         let vault = try TestVaultHelper.createFreshVault()
@@ -181,8 +176,20 @@ struct SecurityUpdateTests {
         }
     }
 
-    @Test("getTrades maps transfer shares transaction type")
-    func getTradesMapsTransferSharesTransactionType() throws {
+    /// Base type and the vault's own name for it, read from `ZTRANSACTIONTYPE`.
+    ///
+    /// 250 and 302 are the cases that matter: the deleted hard-coded map had no
+    /// 250 at all, so a correct `Split Shares` row read back as `Unknown (250)`,
+    /// and it called 302 `Interest` when the vault calls it `Cap. Gains Short`.
+    @Test(
+        "getTrades reports the vault's own transaction type name",
+        arguments: [
+            (Int16(212), "Transfer Shares"),
+            (Int16(250), "Split Shares"),
+            (Int16(302), "Cap. Gains Short"),
+        ]
+    )
+    func getTradesReportsVaultTransactionTypeName(baseType: Int16, typeName: String) throws {
         let vault = try TestVaultHelper.createFreshVault()
         defer { TestVaultHelper.cleanup(vault) }
 
@@ -192,8 +199,8 @@ struct SecurityUpdateTests {
 
         let ctx = vault.container.viewContext
         let transferSharesType = NSEntityDescription.insertNewObject(forEntityName: "TransactionType", into: ctx)
-        transferSharesType.setValue(Int16(212), forKey: "pBaseType")
-        transferSharesType.setValue("Transfer Shares", forKey: "pName")
+        transferSharesType.setValue(baseType, forKey: "pBaseType")
+        transferSharesType.setValue(typeName, forKey: "pName")
         transferSharesType.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
         BaseRepository.setNow(transferSharesType, "pCreationTime")
         BaseRepository.setNow(transferSharesType, "pModificationDate")
@@ -237,7 +244,7 @@ struct SecurityUpdateTests {
         let trade = try #require(trades.first)
 
         #expect(trades.count == 1)
-        #expect(trade.type == "Transfer Shares")
+        #expect(trade.type == typeName)
         #expect(trade.shares == 10.0)
         #expect(trade.amount == 500.0)
     }

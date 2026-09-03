@@ -1019,11 +1019,11 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 txDate = ""
             }
 
-            let baseType: Int = {
+            let typeName: String = {
                 if let txType = Self.relatedObject(tx, "pTransactionType") {
-                    return Self.intValue(txType, "pBaseType")
+                    return Self.stringValue(txType, "pName")
                 }
-                return 0
+                return ""
             }()
 
             let security = Self.relatedObject(sli, "pSecurity")
@@ -1032,7 +1032,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let trade = SecurityTradeDTO(
                 id: transactionId,
                 date: txDate,
-                type: Self.transactionTypeName(baseType),
+                type: typeName,
                 symbol: security.map { Self.stringValue($0, "pSymbol") } ?? "",
                 securityName: security.map { Self.stringValue($0, "pName") } ?? "",
                 shares: Self.doubleValue(sli, "pShares"),
@@ -1746,17 +1746,17 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 if let start = startDate, dateStr < start { continue }
                 if let end = endDate, dateStr > end { continue }
 
-                let baseType: Int = {
+                let typeName: String = {
                     if let txType = Self.relatedObject(transaction, "pTransactionType") {
-                        return Self.intValue(txType, "pBaseType")
+                        return Self.stringValue(txType, "pName")
                     }
-                    return 0
+                    return ""
                 }()
 
                 trades.append(SecurityTradeDTO(
                     id: Self.extractPK(from: transaction.objectID),
                     date: dateStr,
-                    type: Self.transactionTypeName(baseType),
+                    type: typeName,
                     symbol: Self.stringValue(security, "pSymbol"),
                     securityName: Self.stringValue(security, "pName"),
                     shares: Self.doubleValue(sli, "pShares"),
@@ -1818,17 +1818,17 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 if let start = startDate, dateStr < start { continue }
                 if let end = endDate, dateStr > end { continue }
 
-                let baseType: Int = {
+                let typeName: String = {
                     if let txType = Self.relatedObject(transaction, "pTransactionType") {
-                        return Self.intValue(txType, "pBaseType")
+                        return Self.stringValue(txType, "pName")
                     }
-                    return 0
+                    return ""
                 }()
 
                 incomes.append(SecurityIncomeDTO(
                     id: Self.extractPK(from: transaction.objectID),
                     date: dateStr,
-                    type: Self.transactionTypeName(baseType),
+                    type: typeName,
                     symbol: Self.stringValue(security, "pSymbol"),
                     securityName: Self.stringValue(security, "pName"),
                     amount: Self.doubleValue(sli, "pIncome"),
@@ -1838,30 +1838,6 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             }
 
             return incomes.sorted { $0.date > $1.date }
-        }
-    }
-
-    // MARK: - Transaction Type Mapping
-
-    static func transactionTypeName(_ baseType: Int) -> String {
-        switch baseType {
-        case 100: return "Buy"
-        case 101: return "Sell"
-        case 102: return "Short Sell"
-        case 103: return "Cover Short"
-        case 200: return "Buy to Open"
-        case 201: return "Sell to Close"
-        case 210: return "Move Shares In"
-        case 211: return "Move Shares Out"
-        case 212: return "Transfer Shares"
-        case 300: return "Income"
-        case 301: return "Dividend"
-        case 302: return "Interest"
-        case 303: return "Capital Gains"
-        case 304: return "Interest Charge"
-        case 400: return "Return of Capital"
-        case 500: return "Stock Split"
-        default: return "Unknown (\(baseType))"
         }
     }
 
