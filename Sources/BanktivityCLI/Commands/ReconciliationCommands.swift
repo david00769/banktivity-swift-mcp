@@ -158,7 +158,23 @@ struct Reconciliation: AsyncParsableCommand {
                         envelope["exit_code"] = Int(category.exitCode)
                     }
                     emitEnvelope(envelope)
-                    return
+                    // Report and carry on. A failed *operation* is not a failed
+                    // *session*: the caller may have expected it. The clearest
+                    // case is a delete's readback, which asks whether the row is
+                    // gone -- `not_found` is the answer that proves the delete
+                    // worked. Ending the session there left a bundle unable to
+                    // verify its own deletes: the readback killed the executor
+                    // and the next operation met a dead process.
+                    //
+                    // The order binding is untouched. Requests are still matched
+                    // against the next declared operation, and the two paths that
+                    // detect a *protocol* violation -- malformed JSON, or a
+                    // request that does not match its bound template -- still end
+                    // the session at once. Only the outcome of running an
+                    // already-bound command is now the caller's to judge. Each
+                    // operation commits on its own context, so a failure leaves
+                    // nothing half-written for the next one.
+                    continue
                 }
             }
         }
