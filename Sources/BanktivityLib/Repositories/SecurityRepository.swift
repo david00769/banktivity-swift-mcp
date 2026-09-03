@@ -101,6 +101,35 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
 
     // MARK: - Write Operations
 
+    /// Transaction base types this repository will write, by their vault names.
+    ///
+    /// Read from the vault's own `ZTRANSACTIONTYPE` table, which maps
+    /// `ZPBASETYPE` to `ZPNAME` and is Banktivity's authority (backlog item 46).
+    /// Recorded here because the two primitives below could previously write
+    /// only Buy/Sell and Dividend, which is why no corporate action could be
+    /// modelled in its correct shape: a split needs `Split Shares`, a merger
+    /// needs `Move Shares Out` and `Move Shares In`, and a spin-off needs
+    /// `Return of Capital`.
+    ///
+    /// Unknown names are refused rather than defaulted. A corporate action
+    /// written under the wrong type is not a visible error -- it reads as a
+    /// plausible transaction and quietly moves the position.
+    public static let shareMovementBaseTypes: [String: Int16] = [
+        "buy": 100, "sell": 101,
+        "split-shares": 250,
+        "move-shares-in": 210, "move-shares-out": 211,
+        "transfer-shares": 212,
+    ]
+
+    public static let incomeBaseTypes: [String: Int16] = [
+        "dividend": 301,
+        "investment-income": 300,
+        "capital-gains-short": 302,
+        "capital-gains-long": 303,
+        "interest": 304,
+        "return-of-capital": 310,
+    ]
+
     public func createSecurity(
         symbol: String,
         name: String,
@@ -511,8 +540,10 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         guard DateConversion.fromISO(date) != nil else {
             throw ToolError.invalidInput("date must be YYYY-MM-DD")
         }
-        guard incomeType.lowercased() == "dividend" else {
-            throw ToolError.invalidInput("Only dividend income is supported")
+        guard let incomeBaseType = Self.incomeBaseTypes[incomeType.lowercased()] else {
+            throw ToolError.invalidInput(
+                "Unknown income type '\(incomeType)'. Valid: "
+                + Self.incomeBaseTypes.keys.sorted().joined(separator: ", "))
         }
 
         struct SecurityInfo: Sendable {
@@ -600,10 +631,11 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             }
 
             let typeRequest = NSFetchRequest<NSManagedObject>(entityName: "TransactionType")
-            typeRequest.predicate = NSPredicate(format: "pBaseType == %d", 301)
+            typeRequest.predicate = NSPredicate(format: "pBaseType == %d", incomeBaseType)
             typeRequest.fetchLimit = 1
             guard let txType = try ctx.fetch(typeRequest).first else {
-                throw ToolError.notFound("Transaction type not found for Dividend")
+                throw ToolError.notFound(
+                    "Transaction type not found for base type \(incomeBaseType) (\(incomeType))")
             }
 
             guard let currency = Self.relatedObject(account, "currency") else {
@@ -769,8 +801,20 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         shares: Double,
         date: String,
         title: String? = nil,
-        amount: Double? = nil
+        amount: Double? = nil,
+        transactionType: String? = nil
     ) throws -> SecurityTradeDTO {
+        // Resolved once, before the write closure, so it can be captured as a
+        // constant -- a `var` here is not Sendable into the background context.
+        let movementBaseType: Int16? = try {
+            guard let transactionType else { return nil }
+            guard let code = Self.shareMovementBaseTypes[transactionType.lowercased()] else {
+                throw ToolError.invalidInput(
+                    "Unknown transaction type '\(transactionType)'. Valid: "
+                    + Self.shareMovementBaseTypes.keys.sorted().joined(separator: ", "))
+            }
+            return code
+        }()
         struct SecurityInfo: Sendable {
             let objectID: NSManagedObjectID
             let symbol: String
@@ -829,7 +873,9 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             }
 
             // Find the appropriate transaction type: Buy (100) or Sell (101)
-            let baseType: Int16 = shares >= 0 ? 100 : 101
+            // Buy/Sell only until 2026-09-03, which meant a split, a merger leg
+            // or a transfer could not be written in its own shape at all.
+            let baseType: Int16 = movementBaseType ?? (shares >= 0 ? 100 : 101)
             let typeRequest = NSFetchRequest<NSManagedObject>(entityName: "TransactionType")
             typeRequest.predicate = NSPredicate(format: "pBaseType == %d", baseType)
             typeRequest.fetchLimit = 1
