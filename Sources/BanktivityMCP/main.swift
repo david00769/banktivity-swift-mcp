@@ -51,6 +51,9 @@ let dbPath =
     .appendingPathComponent("core.sql")
     .path
 let writeGuard = WriteGuard(dbPath: dbPath)
+// Same choke point as the CLI: a tool that never calls the guard is still
+// refused at the write rather than relying on every handler remembering.
+VaultWriteGate.install(writeGuard.monitor.writeRefusal)
 
 // MARK: - Tool Registry
 
