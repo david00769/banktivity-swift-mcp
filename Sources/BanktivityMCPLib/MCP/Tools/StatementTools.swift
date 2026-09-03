@@ -20,6 +20,7 @@ func registerStatementTools(
     // list_statements
     registry.register(
         name: "list_statements",
+        access: .read,
         description: "List statements for an account, sorted by start date. Investment account balance fields are advisory and require Banktivity UI verification.",
         inputSchema: ToolHelpers.schema(properties: [
             "account_id": ToolHelpers.property(type: "number", description: "The account ID"),
@@ -46,6 +47,7 @@ func registerStatementTools(
     // get_account_reconciliation_status
     registry.register(
         name: "get_account_reconciliation_status",
+        access: .read,
         description: "Get account statement reconciliation status derived only from active statements",
         inputSchema: ToolHelpers.schema(properties: [
             "account_id": ToolHelpers.property(type: "number", description: "The account ID"),
@@ -60,6 +62,7 @@ func registerStatementTools(
     // get_statement
     registry.register(
         name: "get_statement",
+        access: .read,
         description: "Get a statement with reconciliation progress and line item membership. Balance fields are cash-line/advisory for investment accounts; uiVerificationRequired=true means the Banktivity Statements UI is required.",
         inputSchema: ToolHelpers.schema(
             properties: [
@@ -82,6 +85,7 @@ func registerStatementTools(
     // plan_statement_visible_row_correction
     registry.register(
         name: "plan_statement_visible_row_correction",
+        access: .read,
         description: "Generate a visible-row correction plan from operator-entered Banktivity UI START/END/MISSING values. This helper does not discover or verify UI state.",
         inputSchema: ToolHelpers.schema(
             properties: [
@@ -113,6 +117,7 @@ func registerStatementTools(
     // create_statement
     registry.register(
         name: "create_statement",
+        access: .write,
         description: "Create a new statement for an account with beginning/ending balance validation. Requires a fresh backup and post-write Banktivity UI verification.",
         inputSchema: ToolHelpers.schema(
             properties: [
@@ -170,6 +175,7 @@ func registerStatementTools(
     // update_statement
     registry.register(
         name: "update_statement",
+        access: .write,
         description: "Update a visible statement row's ending balance after an operator-entered UI correction plan. Unnamed investment statement rows require operator_confirmed_visible=true after UI matching; requires backup plus post-write Banktivity UI verification.",
         inputSchema: ToolHelpers.schema(
             properties: [
@@ -206,6 +212,7 @@ func registerStatementTools(
     // delete_statement
     registry.register(
         name: "delete_statement",
+        access: .write,
         description: "Delete a visible statement and remove statement links from its line items while preserving their cleared state. Rejects internal investment statement rows unless allow_internal=true is supplied from a diagnostic repair plan; requires backup plus post-write Banktivity UI verification.",
         inputSchema: ToolHelpers.schema(
             properties: [
@@ -240,6 +247,7 @@ func registerStatementTools(
     // reconcile_line_items
     registry.register(
         name: "reconcile_line_items",
+        access: .write,
         description: "Assign explicitly selected line items to a visible statement (sets pCleared=true). Unnamed investment statement rows require operator_confirmed_visible=true after UI matching; validates account ownership and no double-assignment, and requires backup plus post-write Banktivity UI verification.",
         inputSchema: ToolHelpers.schema(
             properties: [
@@ -281,6 +289,7 @@ func registerStatementTools(
     // unreconcile_line_items
     registry.register(
         name: "unreconcile_line_items",
+        access: .write,
         description: "Remove line items from a visible statement while preserving their cleared state. Unnamed investment statement rows require operator_confirmed_visible=true after UI matching and require backup plus post-write Banktivity UI verification.",
         inputSchema: ToolHelpers.schema(
             properties: [
@@ -324,6 +333,7 @@ func registerStatementTools(
     // get_unreconciled_line_items
     registry.register(
         name: "get_unreconciled_line_items",
+        access: .read,
         description: "List unreconciled line items for an account, optionally filtered by date range",
         inputSchema: ToolHelpers.schema(properties: [
             "account_id": ToolHelpers.property(type: "number", description: "The account ID"),
