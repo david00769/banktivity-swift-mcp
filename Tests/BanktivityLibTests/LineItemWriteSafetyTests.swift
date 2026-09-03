@@ -3,7 +3,7 @@
 import Testing
 @testable import BanktivityLib
 
-@Suite("LineItemWriteSafety")
+@Suite("LineItemWriteSafety", .serialized)
 struct LineItemWriteSafetyTests {
     private func makeRepositories() throws -> (
         vault: TestVaultHelper.TestVault,

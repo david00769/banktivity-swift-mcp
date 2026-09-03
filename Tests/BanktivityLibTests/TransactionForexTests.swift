@@ -5,7 +5,7 @@ import Foundation
 import Testing
 @testable import BanktivityLib
 
-@Suite("TransactionForex")
+@Suite("TransactionForex", .serialized)
 struct TransactionForexTests {
 
     private struct Repos {

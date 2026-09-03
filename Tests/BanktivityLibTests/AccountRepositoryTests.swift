@@ -5,7 +5,7 @@ import Foundation
 import Testing
 @testable import BanktivityLib
 
-@Suite("AccountRepository")
+@Suite("AccountRepository", .serialized)
 struct AccountRepositoryTests {
 
     private func expectAccountNotFound(accountId: Int, _ action: () throws -> Void) {

@@ -10,10 +10,21 @@ enum TestVaultHelper {
         let container: NSPersistentContainer
     }
 
-    private static let vaultLock = NSLock()
-
+    /// A fresh vault at a path nothing else uses.
+    ///
+    /// Serialization is the suites' job, declared with `.serialized`, not this
+    /// helper's. It used to hold an `NSLock` here and release it in `cleanup`,
+    /// which split acquisition and release across two functions with arbitrary
+    /// caller code in between, and that produced two failures. A helper that
+    /// threw after this returned -- seeding, say -- never reached the caller's
+    /// `defer { cleanup }`, so the permit leaked and the next test blocked
+    /// forever: one observed run held 70 locks against 69 unlocks and hung.
+    /// And `cleanup` released unconditionally, so an unbalanced or cross-thread
+    /// unlock hit `NSLock`'s undefined behaviour, which is what the intermittent
+    /// SIGSEGV at a different test each time was.
+    ///
+    /// Every vault already has a UUID path, so nothing here is shared state.
     static func createFreshVault() throws -> TestVault {
-        vaultLock.lock()
         do {
             let tmpDir = NSTemporaryDirectory()
             let vaultPath = (tmpDir as NSString).appendingPathComponent("test-\(UUID().uuidString).bank8")
@@ -36,14 +47,14 @@ enum TestVaultHelper {
             let container = try PersistentContainerFactory.create(bankFilePath: vaultPath)
             return TestVault(path: vaultPath, container: container)
         } catch {
-            vaultLock.unlock()
             throw error
         }
     }
 
+    /// Idempotent: it removes a directory and nothing more, so calling it twice,
+    /// from another thread, or not at all cannot affect another test.
     static func cleanup(_ vault: TestVault) {
         try? FileManager.default.removeItem(atPath: vault.path)
-        vaultLock.unlock()
     }
 
     static func seedCurrencies(in container: NSPersistentContainer) throws -> (usd: NSManagedObject, eur: NSManagedObject) {
