@@ -13,11 +13,11 @@ struct CapabilityRegistryTests {
         #expect(!report.tools.isEmpty)
 
         let transactionCreate = try #require(report.commands.first { $0.name == "transactions create" })
-        #expect(transactionCreate.access == "write")
+        #expect(transactionCreate.access == .write)
         #expect(transactionCreate.requiresWriteMode)
         #expect(!transactionCreate.supportsDryRun)
 
-        let bulkRecategorize = try #require(report.tools.first { $0.name == "bulk_recategorize" })
+        let bulkRecategorize = try #require(report.tools.first { $0.name == "bulk_recategorize_by_payee" })
         #expect(bulkRecategorize.supportsDryRun)
 
         let lineItemUpdate = try #require(report.tools.first { $0.name == "update_line_item" })
@@ -26,7 +26,7 @@ struct CapabilityRegistryTests {
         #expect(lineItemUpdate.notes.contains { $0.contains("Line-item writes affect balances") })
 
         let capabilitiesTool = try #require(report.tools.first { $0.name == "get_capabilities" })
-        #expect(capabilitiesTool.access == "read")
+        #expect(capabilitiesTool.access == .read)
         #expect(!capabilitiesTool.requiresWriteMode)
     }
 }
