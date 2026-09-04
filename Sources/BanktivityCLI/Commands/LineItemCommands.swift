@@ -78,7 +78,9 @@ struct LineItems: AsyncParsableCommand {
 
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
-            try requireLineItemWriteSafety(
+            try requireReviewedWriteConfirmations(
+                subject: "Line-item writes",
+                target: "transaction/account",
                 operatorReviewedTarget: operatorReviewedTarget,
                 postUIVerificationRequired: postUIVerificationRequired
             )
@@ -144,7 +146,9 @@ struct LineItems: AsyncParsableCommand {
 
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
-            try requireLineItemWriteSafety(
+            try requireReviewedWriteConfirmations(
+                subject: "Line-item writes",
+                target: "transaction/account",
                 operatorReviewedTarget: operatorReviewedTarget,
                 postUIVerificationRequired: postUIVerificationRequired
             )
@@ -188,7 +192,9 @@ struct LineItems: AsyncParsableCommand {
 
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
-            try requireLineItemWriteSafety(
+            try requireReviewedWriteConfirmations(
+                subject: "Line-item writes",
+                target: "transaction/account",
                 operatorReviewedTarget: operatorReviewedTarget,
                 postUIVerificationRequired: postUIVerificationRequired
             )
@@ -201,14 +207,3 @@ struct LineItems: AsyncParsableCommand {
     }
 }
 
-private func requireLineItemWriteSafety(
-    operatorReviewedTarget: Bool,
-    postUIVerificationRequired: Bool
-) throws {
-    guard operatorReviewedTarget else {
-        throw ToolError.invalidInput("Line-item writes require --operator-reviewed-target after reviewing the target transaction/account.")
-    }
-    guard postUIVerificationRequired else {
-        throw ToolError.invalidInput("Line-item writes require --post-ui-verification-required because balances and statement membership must be checked in Banktivity UI after writing.")
-    }
-}
