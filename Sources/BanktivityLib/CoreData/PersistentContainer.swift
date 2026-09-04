@@ -26,10 +26,12 @@ public enum BanktivityError: Error, CustomStringConvertible {
 /// Loads and configures an NSPersistentContainer from a .bank8 bundle's compiled Core Data models.
 public enum PersistentContainerFactory {
 
-    /// Read the wrapper-supplied read-only intent.
+    /// Whether `BANKTIVITY_STORE_READ_ONLY` asks for a read-only store.
     ///
-    /// `scripts/mcp/run-banktivity-swift-cli.sh` already classifies every
-    /// invocation as read or write and exports this; the binary only honours it.
+    /// Intended for a caller that already knows an invocation only reads -- a
+    /// wrapper script, a CI step, an agent harness classifying its own commands.
+    /// The binary honours the variable; deciding which invocations are reads is
+    /// the caller's job.
     public static var readOnlyFromEnvironment: Bool {
         let raw = ProcessInfo.processInfo.environment["BANKTIVITY_STORE_READ_ONLY"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
