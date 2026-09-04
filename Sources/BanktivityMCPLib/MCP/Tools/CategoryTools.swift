@@ -78,6 +78,17 @@ func registerCategoryTools(registry: ToolRegistry, categories: CategoryRepositor
         return try ToolHelpers.jsonResponse(tree)
     }
 
+    // audit_category_entities
+    registry.register(
+        name: "audit_category_entities",
+        access: .read,
+        description: "Find income/expense category rows stored under the wrong Core Data entity",
+        inputSchema: ToolHelpers.schema(properties: [:])
+    ) { _ in
+        let results = try categories.auditCategoryEntities()
+        return try ToolHelpers.jsonResponse(results)
+    }
+
     // create_category
     registry.register(
         name: "create_category",
