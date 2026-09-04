@@ -235,7 +235,7 @@ public enum CapabilityRegistry {
             readMCP("plan_statement_visible_row_correction"),
             readMCP("review_categorizations"),
             readMCP("suggest_category_for_merchant"),
-            writeMCP("bulk_recategorize_by_payee"),
+            writeMCP("bulk_recategorize_by_payee", supportsDryRun: true),
             writeMCP("create_import_rule"),
             writeMCP("create_scheduled_transaction"),
             writeMCP("create_security_income"),
