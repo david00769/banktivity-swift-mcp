@@ -82,7 +82,9 @@ struct StatementRepositoryTests {
         vault: TestVaultHelper.TestVault,
         transactionId: Int,
         lineItemId: Int,
-        statementId: Int
+        statementId: Int,
+        includeStatementSyncRecord: Bool = true,
+        includeTransactionSyncRecord: Bool = true
     ) throws -> AtomicSyncFixture {
         struct Identities: Sendable {
             let transactionUUID: String
@@ -112,44 +114,48 @@ struct StatementRepositoryTests {
 
         _ = try TestVaultHelper.seedSyncedDocument(in: vault.container)
         let updater = SyncBlobUpdater(container: vault.container)
-        updater.createTransactionSyncRecord(
-            transactionUUID: identities.transactionUUID,
-            currencyUUID: UUID().uuidString,
-            date: "2026-04-10",
-            title: "Internal membership",
-            note: nil,
-            adjustment: false,
-            lineItems: [
-                SyncBlobUpdater.SyncLineItem(
-                    accountUUID: identities.accountUUID,
-                    accountAmount: 10,
-                    cleared: identities.cleared,
-                    identifier: identities.lineItemUUID,
-                    memo: nil,
-                    securityLineItem: nil,
-                    transactionAmount: 10
+        if includeTransactionSyncRecord {
+            updater.createTransactionSyncRecord(
+                transactionUUID: identities.transactionUUID,
+                currencyUUID: UUID().uuidString,
+                date: "2026-04-10",
+                title: "Internal membership",
+                note: nil,
+                adjustment: false,
+                lineItems: [
+                    SyncBlobUpdater.SyncLineItem(
+                        accountUUID: identities.accountUUID,
+                        accountAmount: 10,
+                        cleared: identities.cleared,
+                        identifier: identities.lineItemUUID,
+                        memo: nil,
+                        securityLineItem: nil,
+                        transactionAmount: 10
+                    )
+                ],
+                transactionTypeBaseType: "deposit",
+                transactionTypeUUID: UUID().uuidString
+            )
+            updater.updateTransactionBlob(transactionUUID: identities.transactionUUID) { xml in
+                updater.patchStatement(
+                    xml: xml,
+                    lineItemUUID: identities.lineItemUUID,
+                    statementUUID: identities.statementUUID
                 )
-            ],
-            transactionTypeBaseType: "deposit",
-            transactionTypeUUID: UUID().uuidString
-        )
-        updater.updateTransactionBlob(transactionUUID: identities.transactionUUID) { xml in
-            updater.patchStatement(
-                xml: xml,
-                lineItemUUID: identities.lineItemUUID,
-                statementUUID: identities.statementUUID
-            )
+            }
         }
-        try base.performWrite { ctx in
-            let record = NSEntityDescription.insertNewObject(
-                forEntityName: "SyncedHostedEntity",
-                into: ctx
-            )
-            record.setValue(identities.statementUUID, forKey: "pLocalID")
-            record.setValue(identities.statementUUID, forKey: "pRemoteID")
-            record.setValue("Statement", forKey: "pHostedEntityType")
-            record.setValue(Int16(0), forKey: "pSyncedState")
-            record.setValue(nil, forKey: "pSyncedModificationDate")
+        if includeStatementSyncRecord {
+            try base.performWrite { ctx in
+                let record = NSEntityDescription.insertNewObject(
+                    forEntityName: "SyncedHostedEntity",
+                    into: ctx
+                )
+                record.setValue(identities.statementUUID, forKey: "pLocalID")
+                record.setValue(identities.statementUUID, forKey: "pRemoteID")
+                record.setValue("Statement", forKey: "pHostedEntityType")
+                record.setValue(Int16(0), forKey: "pSyncedState")
+                record.setValue(nil, forKey: "pSyncedModificationDate")
+            }
         }
 
         return AtomicSyncFixture(
@@ -160,14 +166,12 @@ struct StatementRepositoryTests {
             ),
             transactionUUID: identities.transactionUUID,
             statementUUID: identities.statementUUID,
-            transactionBaseline: try syncSnapshot(
-                entityUUID: identities.transactionUUID,
-                in: vault.container
-            ),
-            statementBaseline: try syncSnapshot(
-                entityUUID: identities.statementUUID,
-                in: vault.container
-            )
+            transactionBaseline: includeTransactionSyncRecord
+                ? try syncSnapshot(entityUUID: identities.transactionUUID, in: vault.container)
+                : SyncSnapshot(state: -1, modificationDate: nil, remoteEntityData: nil),
+            statementBaseline: includeStatementSyncRecord
+                ? try syncSnapshot(entityUUID: identities.statementUUID, in: vault.container)
+                : SyncSnapshot(state: -1, modificationDate: nil, remoteEntityData: nil)
         )
     }
 
@@ -382,6 +386,146 @@ struct StatementRepositoryTests {
         #expect((try syncFixture.statements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == replayReplacement.id)
     }
 
+    @Test("Typed internal replacement round-trips without an individual statement sync record")
+    func typedInternalReplacementRoundTripsWithoutStatementSyncRecord() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let investment = try createInvestmentAccount(named: "Statement Sync Optional", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10", title: "Internal membership",
+            lineItems: [(accountId: investment.id, amount: 10, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: investment.id)
+        let internalStatement = try repos.statements.create(
+            accountId: investment.id, startDate: "2026-04-01", endDate: "2026-04-30",
+            beginningBalance: 0, endingBalance: 10
+        )
+        _ = try repos.statements.reconcileLineItems(
+            statementId: internalStatement.id, lineItemIds: [lineItemId], operatorConfirmedVisible: true
+        )
+        let inspection = try repos.statements.inspectMembership(lineItemId: lineItemId)
+        let preimage = try #require(inspection.statementPreimage)
+        let fixture = try seedAtomicSyncFixture(
+            vault: repos.vault,
+            transactionId: transaction.id,
+            lineItemId: lineItemId,
+            statementId: internalStatement.id,
+            includeStatementSyncRecord: false
+        )
+        #expect(SyncBlobUpdater(container: repos.vault.container)
+            .inspectSyncRecord(entityUUID: fixture.statementUUID) == nil)
+
+        let replacement = try fixture.statements.replaceInternalRowWithVisibleStatement(
+            sourceStatementId: internalStatement.id, accountId: investment.id,
+            startDate: "2026-04-01", endDate: "2026-04-30", beginningBalance: 0,
+            endingBalance: 10, name: "April 2026 provider statement", lineItemIds: [lineItemId],
+            preimageSha256: try #require(inspection.preimageSha256),
+            membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
+            replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
+            positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
+            beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+            afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+        )
+        let replacementHash = try #require(
+            fixture.statements.inspectMembership(lineItemId: lineItemId).preimageSha256
+        )
+        let restored = try fixture.statements.restoreInternalRowFromPreimage(
+            replacementStatementId: replacement.id, accountId: investment.id,
+            statementPreimage: preimage, memberships: inspection.lineItemMemberships,
+            preimageSha256: try #require(inspection.preimageSha256),
+            membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
+            replacementLineItemIds: [lineItemId],
+            replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
+            replacementPreimageSha256: replacementHash,
+            positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
+            beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+            afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+        )
+        #expect(restored.uniqueId == preimage.uniqueId)
+        #expect((try fixture.statements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == restored.id)
+        #expect(SyncBlobUpdater(container: repos.vault.container)
+            .inspectSyncRecord(entityUUID: fixture.statementUUID) == nil)
+        #expect(try syncSnapshot(entityUUID: fixture.transactionUUID, in: repos.vault.container)
+            == fixture.transactionBaseline)
+    }
+
+    @Test("Typed internal replacement round-trips without transaction sync metadata")
+    func typedInternalReplacementRoundTripsWithoutTransactionSyncRecord() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let investment = try createInvestmentAccount(named: "Transaction Sync Optional", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10", title: "Local-only internal membership",
+            lineItems: [(accountId: investment.id, amount: 10, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: investment.id)
+        let internalStatement = try repos.statements.create(
+            accountId: investment.id, startDate: "2026-04-01", endDate: "2026-04-30",
+            beginningBalance: 0, endingBalance: 10
+        )
+        _ = try repos.statements.reconcileLineItems(
+            statementId: internalStatement.id, lineItemIds: [lineItemId], operatorConfirmedVisible: true
+        )
+        let inspection = try repos.statements.inspectMembership(lineItemId: lineItemId)
+        let preimage = try #require(inspection.statementPreimage)
+        let fixture = try seedAtomicSyncFixture(
+            vault: repos.vault,
+            transactionId: transaction.id,
+            lineItemId: lineItemId,
+            statementId: internalStatement.id,
+            includeTransactionSyncRecord: false
+        )
+        let updater = SyncBlobUpdater(container: repos.vault.container)
+        #expect(updater.inspectSyncRecord(entityUUID: fixture.transactionUUID) == nil)
+
+        let replacement = try fixture.statements.replaceInternalRowWithVisibleStatement(
+            sourceStatementId: internalStatement.id, accountId: investment.id,
+            startDate: "2026-04-01", endDate: "2026-04-30", beginningBalance: 0,
+            endingBalance: 10, name: "April 2026 provider statement", lineItemIds: [lineItemId],
+            preimageSha256: try #require(inspection.preimageSha256),
+            membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
+            replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
+            positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
+            beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+            afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+        )
+        let replacementHash = try #require(
+            fixture.statements.inspectMembership(lineItemId: lineItemId).preimageSha256
+        )
+        let restored = try fixture.statements.restoreInternalRowFromPreimage(
+            replacementStatementId: replacement.id, accountId: investment.id,
+            statementPreimage: preimage, memberships: inspection.lineItemMemberships,
+            preimageSha256: try #require(inspection.preimageSha256),
+            membershipPreimageSha256: try #require(inspection.membershipPreimageSha256),
+            replacementLineItemIds: [lineItemId],
+            replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
+            replacementPreimageSha256: replacementHash,
+            positionIndex: try #require(inspection.positionAnchors["statement_index"] ?? nil),
+            beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+            afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+        )
+        #expect(restored.uniqueId == preimage.uniqueId)
+        #expect((try fixture.statements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == restored.id)
+        #expect(updater.inspectSyncRecord(entityUUID: fixture.transactionUUID) == nil)
+
+        let replayInspection = try fixture.statements.inspectMembership(lineItemId: lineItemId)
+        let replay = try fixture.statements.replaceInternalRowWithVisibleStatement(
+            sourceStatementId: restored.id, accountId: investment.id,
+            startDate: "2026-04-01", endDate: "2026-04-30", beginningBalance: 0,
+            endingBalance: 10, name: "April 2026 provider statement", lineItemIds: [lineItemId],
+            preimageSha256: try #require(replayInspection.preimageSha256),
+            membershipPreimageSha256: try #require(replayInspection.membershipPreimageSha256),
+            replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
+            positionIndex: try #require(replayInspection.positionAnchors["statement_index"] ?? nil),
+            beforeStatementId: replayInspection.positionAnchors["before_statement_id"] ?? nil,
+            afterStatementId: replayInspection.positionAnchors["after_statement_id"] ?? nil
+        )
+        #expect(replay.isVisibleNamedRow)
+        #expect(updater.inspectSyncRecord(entityUUID: fixture.transactionUUID) == nil)
+    }
+
     @Test("Typed restore rolls back the statement mutation when sync restoration fails")
     func typedInternalRestoreLeavesNoPartialStateWhenSyncFails() throws {
         let repos = try makeRepositories()
@@ -473,6 +617,20 @@ struct StatementRepositoryTests {
             operatorConfirmedVisible: true
         )
         let inspection = try strictStatements.inspectMembership(lineItemId: lineItemId)
+        let syncFixture = try seedAtomicSyncFixture(
+            vault: repos.vault,
+            transactionId: transaction.id,
+            lineItemId: lineItemId,
+            statementId: internalStatement.id
+        )
+        let base = BaseRepository(container: repos.vault.container)
+        try base.performWrite { ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
+            request.predicate = NSPredicate(format: "pLocalID == %@", syncFixture.transactionUUID)
+            let record = try #require(try ctx.fetch(request).first)
+            record.setValue(Int16(3), forKey: "pSyncedState")
+            record.setValue(Date(), forKey: "pSyncedModificationDate")
+        }
 
         #expect(throws: (any Error).self) {
             _ = try strictStatements.replaceInternalRowWithVisibleStatement(
@@ -653,6 +811,42 @@ struct StatementRepositoryTests {
         #expect(result.isBalanced)
     }
 
+    @Test("Explicit reconciliation preview computes advisory balance without writing")
+    func previewReconcileComputesAdvisoryBalanceWithoutWriting() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let card = try createCreditCard(named: "Synthetic Preview Account", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10",
+            title: "Preview Merchant",
+            lineItems: [(accountId: card.id, amount: -42.0, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: card.id)
+
+        let statement = try repos.statements.create(
+            accountId: card.id,
+            startDate: "2026-04-01",
+            endDate: "2026-04-30",
+            beginningBalance: 0,
+            endingBalance: -42.0,
+            name: "April preview statement"
+        )
+
+        let preview = try repos.statements.previewReconcileLineItems(
+            statementId: statement.id,
+            lineItemIds: [lineItemId]
+        )
+        let unchanged = try #require(try repos.statements.get(statementId: statement.id))
+
+        #expect(preview.statementId == statement.id)
+        #expect(preview.reconciledLineItemCount == 1)
+        #expect(abs(preview.reconciledBalance - -42.0) < 0.005)
+        #expect(preview.isBalancedAdvisory)
+        #expect(unchanged.reconciledLineItemCount == 0)
+        #expect(abs(unchanged.reconciledBalance) < 0.005)
+    }
+
     @Test("Explicit reconciliation accepts line items on visible statement end date")
     func reconcileAllowsVisibleEndDateLineItems() throws {
         let repos = try makeRepositories()
@@ -763,6 +957,7 @@ struct StatementRepositoryTests {
         let result = try #require(try repos.statements.get(statementId: statement.id))
         let lineItem = try #require(result.lineItems.first)
         #expect(abs(lineItem.amount - 100.0) < 0.005)
+        #expect(abs((lineItem.statementBalanceAmount ?? 0) - 150.0) < 0.005)
         #expect(abs(result.reconciledBalance - 150.0) < 0.005)
         #expect(abs(result.difference) < 0.005)
         #expect(result.isBalanced)
@@ -910,6 +1105,100 @@ struct StatementRepositoryTests {
         #expect(reconciled.isBalancedAdvisory)
         #expect(abs(reconciled.reconciledBalance) < 0.005)
         #expect(abs(reconciled.difference) < 0.005)
+        let statementBalanceAmounts = reconciled.lineItems
+            .map { $0.statementBalanceAmount ?? Double.nan }
+            .sorted()
+        #expect(statementBalanceAmounts.count == 3)
+        #expect(abs(statementBalanceAmounts[0] - -321.41) < 0.005)
+        #expect(abs(statementBalanceAmounts[1] - 0.0) < 0.005)
+        #expect(abs(statementBalanceAmounts[2] - 321.41) < 0.005)
+
+        let summary = try #require(try repos.statements.list(accountId: investment.id).first { $0.id == statement.id })
+        #expect(summary.cashLineBalanced)
+        #expect(summary.isBalancedAdvisory)
+    }
+
+    @Test("Investment statement advisory uses non-zero security cash line once")
+    func investmentStatementAdvisoryUsesNonZeroSecurityCashLineOnce() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let investment = try createInvestmentAccount(named: "Cash Buy Brokerage", using: repos.accounts)
+        let base = BaseRepository(container: repos.vault.container)
+        let lineItemId: Int = try base.performWriteReturning { ctx in
+            guard let accountObject = try base.fetchByPK(entityName: "Account", pk: investment.id, in: ctx) else {
+                throw ToolError.notFound("Account not found: \(investment.id)")
+            }
+            let currency = try #require(BaseRepository.relatedObject(accountObject, "currency"))
+
+            let security = BaseRepository.createObject(entityName: "Security", in: ctx)
+            security.setValue("LITE", forKey: "pSymbol")
+            security.setValue("Lumentum Holdings", forKey: "pName")
+            security.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            security.setValue(currency, forKey: "pCurrency")
+            security.setValue(false, forKey: "pExcludeFromQuoteUpdates")
+            security.setValue(false, forKey: "pIsIndex")
+            security.setValue(false, forKey: "pTradesInPence")
+            security.setValue(Int16(0), forKey: "pType")
+            security.setValue(Int16(0), forKey: "pRiskType")
+            security.setValue(NSDecimalNumber.one, forKey: "pContractSize")
+            security.setValue(NSDecimalNumber.zero, forKey: "pParValue")
+            BaseRepository.setNow(security, "pCreationTime")
+            BaseRepository.setNow(security, "pModificationDate")
+
+            let transaction = BaseRepository.createObject(entityName: "Transaction", in: ctx)
+            transaction.setValue("LITE buy", forKey: "pTitle")
+            transaction.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            transaction.setValue(false, forKey: "pCleared")
+            transaction.setValue(false, forKey: "pVoid")
+            transaction.setValue(false, forKey: "pAdjustment")
+            transaction.setValue(currency, forKey: "pCurrency")
+            BaseRepository.setDate(transaction, "pDate", isoString: "2026-06-05")
+            BaseRepository.setNow(transaction, "pCreationTime")
+            BaseRepository.setNow(transaction, "pModificationDate")
+
+            let lineItem = BaseRepository.createObject(entityName: "LineItem", in: ctx)
+            lineItem.setValue(-2700.0 as NSNumber, forKey: "pTransactionAmount")
+            lineItem.setValue(1.0 as NSNumber, forKey: "pExchangeRate")
+            lineItem.setValue(0.0 as NSNumber, forKey: "pRunningBalance")
+            lineItem.setValue(false, forKey: "pCleared")
+            lineItem.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            BaseRepository.setNow(lineItem, "pCreationTime")
+            lineItem.setValue(accountObject, forKey: "pAccount")
+            lineItem.setValue(transaction, forKey: "pTransaction")
+
+            let securityLineItem = BaseRepository.createObject(entityName: "SecurityLineItem", in: ctx)
+            securityLineItem.setValue(security, forKey: "pSecurity")
+            securityLineItem.setValue(lineItem, forKey: "pLineItem")
+            securityLineItem.setValue(3.0 as NSNumber, forKey: "pShares")
+            securityLineItem.setValue(-2700.0 as NSNumber, forKey: "pAmount")
+            securityLineItem.setValue(900.0 as NSNumber, forKey: "pPricePerShare")
+            securityLineItem.setValue(0.0 as NSNumber, forKey: "pCommission")
+            securityLineItem.setValue(0.0 as NSNumber, forKey: "pIncome")
+            securityLineItem.setValue(1.0 as NSNumber, forKey: "pPriceMultiplier")
+
+            try ctx.obtainPermanentIDs(for: [lineItem, securityLineItem])
+            return BaseRepository.extractPK(from: lineItem.objectID)
+        }
+
+        let statement = try repos.statements.create(
+            accountId: investment.id,
+            startDate: "2026-06-01",
+            endDate: "2026-06-30",
+            beginningBalance: 3129.74,
+            endingBalance: 429.74,
+            name: "June investment statement"
+        )
+
+        let reconciled = try repos.statements.reconcileLineItems(
+            statementId: statement.id,
+            lineItemIds: [lineItemId]
+        )
+        #expect(reconciled.cashLineBalanced)
+        #expect(reconciled.isBalancedAdvisory)
+        #expect(abs(reconciled.reconciledBalance - -2700.0) < 0.005)
+        let lineItem = try #require(reconciled.lineItems.first)
+        #expect(abs((lineItem.statementBalanceAmount ?? 0) - -2700.0) < 0.005)
 
         let summary = try #require(try repos.statements.list(accountId: investment.id).first { $0.id == statement.id })
         #expect(summary.cashLineBalanced)
@@ -933,6 +1222,7 @@ struct StatementRepositoryTests {
 
         let encoded = try JSONEncoder().encode(statement)
         let json = try #require(String(data: encoded, encoding: .utf8))
+        #expect(json.contains("\"statementId\""))
         #expect(json.contains("\"cashLineBalanced\""))
         #expect(json.contains("\"isBalancedAdvisory\""))
         #expect(json.contains("\"uiVerificationRequired\""))
@@ -1075,10 +1365,63 @@ struct StatementRepositoryTests {
             statementId: internalStatement.id,
             endingBalance: 0,
             beginningBalance: 0,
+            endDate: "2026-05-01",
             allowInternal: true
         )
         #expect(updated.beginningBalance == 0)
         #expect(updated.endingBalance == 0)
+        #expect(updated.endDate == "2026-05-01")
+
+        #expect(throws: (any Error).self) {
+            try repos.statements.delete(statementId: internalStatement.id)
+        }
+
+        #expect(try repos.statements.delete(statementId: internalStatement.id, allowInternal: true))
+        #expect(try repos.statements.get(statementId: internalStatement.id) == nil)
+        let detachedLineItem = try #require(
+            repos.statements.getUnreconciledLineItems(accountId: investment.id).first { $0.id == lineItemId }
+        )
+        #expect(detachedLineItem.statementId == nil)
+        #expect(detachedLineItem.cleared)
+    }
+
+    @Test("Internal statement inspection preimage is stable across read contexts")
+    func internalStatementInspectionPreimageIsStableAcrossReadContexts() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let investment = try createInvestmentAccount(named: "Stable preimage IRA", using: repos.accounts)
+        let lineItemIds = try [
+            ("2026-04-01", 9_007_199_254_740_992.0),
+            ("2026-04-02", -9_007_199_254_740_992.0),
+            ("2026-04-03", 0.01),
+        ].map { date, amount in
+            let transaction = try repos.transactions.create(
+                date: date,
+                title: "Preimage summation fixture",
+                lineItems: [(accountId: investment.id, amount: amount, memo: nil)]
+            )
+            return try accountLineItemId(in: transaction, accountId: investment.id)
+        }
+        let statement = try repos.statements.create(
+            accountId: investment.id,
+            startDate: "2026-04-01",
+            endDate: "2026-04-30",
+            beginningBalance: 0,
+            endingBalance: 0.01
+        )
+        _ = try repos.statements.reconcileLineItems(
+            statementId: statement.id,
+            lineItemIds: lineItemIds,
+            operatorConfirmedVisible: true
+        )
+
+        let first = try repos.statements.inspectMembership(lineItemId: lineItemIds[0])
+        let second = try repos.statements.inspectMembership(lineItemId: lineItemIds[0])
+
+        #expect(first.preimageSha256 == second.preimageSha256)
+        #expect(first.statementPreimage?.reconciledBalance == second.statementPreimage?.reconciledBalance)
+        #expect(first.statementPreimage?.difference == second.statementPreimage?.difference)
     }
 
     @Test("Explicit reconciliation still rejects line items from another account")
@@ -1287,102 +1630,5 @@ struct StatementRepositoryTests {
         let lineItem = try #require(repos.statements.getUnreconciledLineItems(accountId: card.id).first { $0.id == lineItemId })
         #expect(lineItem.statementId == nil)
         #expect(lineItem.cleared)
-    }
-
-    // MARK: - Guarded visible-row metadata update
-
-    @Test("Balance update refuses an unnamed investment row without confirmation")
-    func updateRefusesUnconfirmedInternalRow() throws {
-        let repos = try makeRepositories()
-        defer { TestVaultHelper.cleanup(repos.vault) }
-        let investment = try createInvestmentAccount(named: "Unconfirmed Update", using: repos.accounts)
-        let internalStatement = try repos.statements.create(
-            accountId: investment.id,
-            startDate: "2026-05-01",
-            endDate: "2026-05-31",
-            beginningBalance: 0,
-            endingBalance: 10
-        )
-
-        #expect(throws: (any Error).self) {
-            _ = try repos.statements.update(statementId: internalStatement.id, endingBalance: 99)
-        }
-
-        // The refusal must leave the row untouched, not partially written.
-        let after = try #require(try repos.statements.get(statementId: internalStatement.id))
-        #expect(after.endingBalance == 10)
-    }
-
-    @Test("Balance update proceeds on an unnamed row once the operator confirms it")
-    func updateAcceptsConfirmedInternalRow() throws {
-        let repos = try makeRepositories()
-        defer { TestVaultHelper.cleanup(repos.vault) }
-        let investment = try createInvestmentAccount(named: "Confirmed Update", using: repos.accounts)
-        let internalStatement = try repos.statements.create(
-            accountId: investment.id,
-            startDate: "2026-05-01",
-            endDate: "2026-05-31",
-            beginningBalance: 0,
-            endingBalance: 10
-        )
-
-        let updated = try repos.statements.update(
-            statementId: internalStatement.id,
-            endingBalance: 42.5,
-            operatorConfirmedVisible: true
-        )
-        #expect(updated.endingBalance == 42.5)
-        // Only the ending balance was asked for, so the beginning must not move.
-        #expect(updated.beginningBalance == 0)
-    }
-
-    @Test("allowInternal bypasses the visible-row guard")
-    func updateAllowInternalBypassesGuard() throws {
-        let repos = try makeRepositories()
-        defer { TestVaultHelper.cleanup(repos.vault) }
-        let investment = try createInvestmentAccount(named: "Allow Internal Update", using: repos.accounts)
-        let internalStatement = try repos.statements.create(
-            accountId: investment.id,
-            startDate: "2026-06-01",
-            endDate: "2026-06-30",
-            beginningBalance: 5,
-            endingBalance: 15
-        )
-
-        let updated = try repos.statements.update(
-            statementId: internalStatement.id,
-            endingBalance: 25,
-            beginningBalance: 7,
-            allowInternal: true
-        )
-        #expect(updated.endingBalance == 25)
-        #expect(updated.beginningBalance == 7)
-    }
-
-    @Test("Balance update on a named account statement needs no confirmation")
-    func updateVisibleStatementNeedsNoConfirmation() throws {
-        let repos = try makeRepositories()
-        defer { TestVaultHelper.cleanup(repos.vault) }
-        let checking = try createCheckingAccount(named: "Visible Update", using: repos.accounts)
-        let statement = try repos.statements.create(
-            accountId: checking.id,
-            startDate: "2026-05-01",
-            endDate: "2026-05-31",
-            beginningBalance: 100,
-            endingBalance: 200
-        )
-
-        let updated = try repos.statements.update(statementId: statement.id, endingBalance: 250)
-        #expect(updated.endingBalance == 250)
-        #expect(updated.beginningBalance == 100)
-    }
-
-    @Test("Balance update reports a missing statement instead of writing")
-    func updateMissingStatementThrows() throws {
-        let repos = try makeRepositories()
-        defer { TestVaultHelper.cleanup(repos.vault) }
-        #expect(throws: (any Error).self) {
-            _ = try repos.statements.update(statementId: 999_999, endingBalance: 1)
-        }
     }
 }

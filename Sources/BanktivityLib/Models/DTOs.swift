@@ -45,6 +45,7 @@ public struct LineItemDTO: Codable, Sendable {
     public let accountName: String
     public let amount: Double
     public let accountAmount: Double
+    public let statementBalanceAmount: Double?
     public let exchangeRate: Double
     public let memo: String?
     public let runningBalance: Double?
@@ -52,9 +53,10 @@ public struct LineItemDTO: Codable, Sendable {
     public let statementId: Int?
     public let tags: [TagDTO]?
 
-    public init(id: Int, accountId: Int, accountName: String, amount: Double, accountAmount: Double? = nil, exchangeRate: Double = 1.0, memo: String?, runningBalance: Double?, cleared: Bool = false, statementId: Int? = nil, tags: [TagDTO]? = nil) {
+    public init(id: Int, accountId: Int, accountName: String, amount: Double, accountAmount: Double? = nil, statementBalanceAmount: Double? = nil, exchangeRate: Double = 1.0, memo: String?, runningBalance: Double?, cleared: Bool = false, statementId: Int? = nil, tags: [TagDTO]? = nil) {
         self.id = id; self.accountId = accountId; self.accountName = accountName
         self.amount = amount; self.accountAmount = accountAmount ?? (amount * exchangeRate)
+        self.statementBalanceAmount = statementBalanceAmount
         self.exchangeRate = exchangeRate
         self.memo = memo; self.runningBalance = runningBalance
         self.cleared = cleared; self.statementId = statementId; self.tags = tags
@@ -331,6 +333,7 @@ public struct ReviewedTransactionDTO: Codable, Sendable {
 
 public struct StatementDTO: Codable, Sendable {
     public let id: Int
+    public let statementId: Int
     public let accountId: Int
     public let accountName: String
     public let accountClass: Int
@@ -362,6 +365,7 @@ public struct StatementDTO: Codable, Sendable {
 
     public init(id: Int, accountId: Int, accountName: String, accountClass: Int, accountType: String, uniqueId: String? = nil, rowKind: String = "visible_named", isVisibleNamedRow: Bool = true, isUnnamedInvestmentRow: Bool = false, isInternalRowCandidate: Bool = false, operatorConfirmedVisibleRequired: Bool = false, name: String?, note: String?, startDate: String, endDate: String, beginningBalance: Double, endingBalance: Double, reconciledLineItemCount: Int, reconciledBalance: Double, difference: Double, cashLineBalanced: Bool, isBalancedAdvisory: Bool, uiVerificationRequired: Bool, warnings: [String], lineItems: [LineItemDTO], createdAt: String?, modifiedAt: String?) {
         self.id = id; self.accountId = accountId; self.accountName = accountName
+        self.statementId = id
         self.accountClass = accountClass; self.accountType = accountType; self.uniqueId = uniqueId
         self.rowKind = rowKind
         self.isVisibleNamedRow = isVisibleNamedRow

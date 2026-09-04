@@ -206,12 +206,13 @@ func registerStatementTools(
     // delete_statement
     registry.register(
         name: "delete_statement",
-        description: "Delete a visible statement and remove statement links from its line items while preserving their cleared state. Rejects internal investment statement rows and requires backup plus post-write Banktivity UI verification.",
+        description: "Delete a visible statement and remove statement links from its line items while preserving their cleared state. Rejects internal investment statement rows unless allow_internal=true is supplied from a diagnostic repair plan; requires backup plus post-write Banktivity UI verification.",
         inputSchema: ToolHelpers.schema(
             properties: [
                 "statement_id": ToolHelpers.property(type: "number", description: "The statement ID to delete"),
                 "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Must be true after creating a fresh whole-vault backup"),
                 "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Must be true to acknowledge post-write Banktivity UI inspection is required"),
+                "allow_internal": ToolHelpers.property(type: "boolean", description: "Deliberately allow deleting an internal investment statement row after a diagnostic repair plan"),
             ],
             required: ["statement_id", "backup_confirmed", "post_ui_verification_required"]
         )
@@ -226,7 +227,10 @@ func registerStatementTools(
             return ToolHelpers.errorResponse("statement_id is required")
         }
 
-        let deleted = try statements.delete(statementId: statementId)
+        let deleted = try statements.delete(
+            statementId: statementId,
+            allowInternal: ToolHelpers.getBool(arguments, key: "allow_internal")
+        )
         if deleted {
             return ToolHelpers.successResponse("Statement \(statementId) deleted, line items unreconciled")
         }

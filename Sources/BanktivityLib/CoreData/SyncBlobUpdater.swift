@@ -127,6 +127,48 @@ public final class SyncBlobUpdater: @unchecked Sendable {
         log("Marked required sync record as deleted for UUID \(entityUUID)")
     }
 
+    /// Restore a Statement sync record only when the inspected preimage had
+    /// one. Statement membership itself is synchronised through every
+    /// affected transaction blob; historical vaults can legitimately have no
+    /// separate Statement `SyncedHostedEntity`. When a record is present, its
+    /// state remains a strict part of the atomic inverse contract.
+    public func restoreDeletedStatementSyncRecordIfPresent(
+        entityUUID: String,
+        in context: NSManagedObjectContext
+    ) throws -> Bool {
+        guard let record = try fetchSyncRecord(entityUUID: entityUUID, in: context) else {
+            return false
+        }
+        guard (record.value(forKey: "pSyncedState") as? NSNumber)?.intValue == 3 else {
+            throw ToolError.invalidInput("Statement sync record was not deleted by the forward operation")
+        }
+        record.setValue(Int16(0), forKey: "pSyncedState")
+        record.setValue(nil, forKey: "pSyncedModificationDate")
+        log("Restored deleted sync record for UUID \(entityUUID)")
+        return true
+    }
+
+    /// Mark the source Statement sync record as deleted only if it exists.
+    /// See `restoreDeletedStatementSyncRecordIfPresent`: an absent individual
+    /// Statement record is not synthesized because transaction blob patches
+    /// are the authoritative membership-sync preimage.
+    public func markStatementSyncRecordDeletedIfPresent(
+        entityUUID: String,
+        in context: NSManagedObjectContext
+    ) throws -> Bool {
+        guard let record = try fetchSyncRecord(entityUUID: entityUUID, in: context) else {
+            return false
+        }
+        guard (record.value(forKey: "pSyncedState") as? NSNumber)?.intValue == 0,
+              record.value(forKey: "pSyncedModificationDate") == nil else {
+            throw ToolError.invalidInput("Statement sync record is not in the canonical active preimage state")
+        }
+        record.setValue(Int16(3), forKey: "pSyncedState")
+        record.setValue(Date(), forKey: "pSyncedModificationDate")
+        log("Marked required sync record as deleted for UUID \(entityUUID)")
+        return true
+    }
+
     /// Patch a required transaction sync blob in a caller-owned transaction.
     /// Unlike the legacy best-effort updater, this is deliberately strict:
     /// absence, malformed data, or a no-op patch rejects the enclosing typed
@@ -162,6 +204,48 @@ public final class SyncBlobUpdater: @unchecked Sendable {
         }
         record.setValue(compressed, forKey: "pRemoteEntityData")
         record.setValue(nil, forKey: "pSyncedModificationDate")
+    }
+
+    // MARK: - Sync Record Creation
+
+    /// Patch a transaction sync blob in a caller-owned transaction when it
+    /// exists. An absent record is a valid preimage for a local-only
+    /// transaction: there is no remote blob to change. A present record is
+    /// still validated strictly, so malformed or non-canonical metadata rolls
+    /// back the enclosing typed statement mutation before its context saves.
+    @discardableResult
+    public func patchTransactionBlobIfPresent(
+        transactionUUID: String,
+        in context: NSManagedObjectContext,
+        using transform: @Sendable (String) -> String
+    ) throws -> Bool {
+        guard let record = try fetchSyncRecord(entityUUID: transactionUUID, in: context) else {
+            return false
+        }
+        guard (record.value(forKey: "pSyncedState") as? NSNumber)?.intValue == 0,
+              record.value(forKey: "pSyncedModificationDate") == nil else {
+            throw ToolError.invalidInput("Transaction sync record is not in the canonical active preimage state")
+        }
+        guard let blobData = record.value(forKey: "pRemoteEntityData") as? Data,
+              let decompressed = Self.decompressGzip(blobData),
+              let xml = String(data: decompressed, encoding: .utf8) else {
+            throw ToolError.invalidInput("Transaction sync metadata is unreadable for hash-bound statement mutation")
+        }
+        let patched = transform(xml)
+        guard patched != xml,
+              patched.hasPrefix("<entity") || patched.hasPrefix("<?xml"),
+              patched.hasSuffix("</entity>") || patched.hasSuffix("</entity>\n") else {
+            throw ToolError.invalidInput("Transaction sync metadata patch is incomplete for hash-bound statement mutation")
+        }
+        let ratio = Double(patched.utf8.count) / Double(xml.utf8.count)
+        guard ratio > 0.5 && ratio < 1.5,
+              let patchedData = patched.data(using: .utf8),
+              let compressed = Self.compressGzip(patchedData) else {
+            throw ToolError.invalidInput("Transaction sync metadata patch is invalid for hash-bound statement mutation")
+        }
+        record.setValue(compressed, forKey: "pRemoteEntityData")
+        record.setValue(nil, forKey: "pSyncedModificationDate")
+        return true
     }
 
     // MARK: - Sync Record Creation

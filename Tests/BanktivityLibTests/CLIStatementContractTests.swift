@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Steve Flinter. MIT License.
 
+import CryptoKit
 import Foundation
 import Testing
+@testable import BanktivityLib
 
 @Suite("CLIStatementContract", .serialized)
 struct CLIStatementContractTests {
@@ -11,6 +13,11 @@ struct CLIStatementContractTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let buildRoot = packageRoot.appendingPathComponent(".build")
+        #if DEBUG
+        let expectedBuildDirectory = "/debug/"
+        #else
+        let expectedBuildDirectory = "/release/"
+        #endif
         guard let enumerator = FileManager.default.enumerator(
             at: buildRoot,
             includingPropertiesForKeys: [.isRegularFileKey],
@@ -20,7 +27,7 @@ struct CLIStatementContractTests {
         }
         for case let candidate as URL in enumerator
         where candidate.lastPathComponent == "banktivity-cli"
-            && candidate.path.contains("/debug/")
+            && candidate.path.contains(expectedBuildDirectory)
             && !candidate.path.contains(".dSYM/") {
             if (try? candidate.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
                 return candidate
@@ -41,11 +48,86 @@ struct CLIStatementContractTests {
         return (process.terminationStatus, String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
     }
 
+    private func jsonObject(_ output: String) throws -> [String: Any] {
+        let jsonLine = try #require(
+            output.split(separator: "\n").reversed().first {
+                $0.trimmingCharacters(in: .whitespaces).hasPrefix("{")
+            }
+        )
+        return try #require(
+            JSONSerialization.jsonObject(with: Data(jsonLine.utf8)) as? [String: Any]
+        )
+    }
+
+    private func runSingleOperationBundle(
+        vaultPath: String,
+        phase: String,
+        operationId: String,
+        cliArgs: [String]
+    ) throws -> [String: Any] {
+        let bundle: [String: Any] = [
+            "schema_version": "banktivity_reconciliation_phase_bundle.v1",
+            "vault": vaultPath,
+            "phase": phase,
+            "plan_sha256": String(repeating: "a", count: 64),
+            "operations": [[
+                "operation_index": 0,
+                "operation_id": operationId,
+                "cli_args_template": cliArgs,
+            ]],
+        ]
+        let bundleData = try JSONSerialization.data(withJSONObject: bundle, options: [.sortedKeys])
+        let bundleURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("statement-phase-\(UUID().uuidString).json")
+        try bundleData.write(to: bundleURL)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let digest = SHA256.hash(data: bundleData).map { String(format: "%02x", $0) }.joined()
+
+        let process = Process()
+        let output = Pipe()
+        let input = Pipe()
+        process.executableURL = try cliURL()
+        process.arguments = [
+            "reconciliation", "execute-bundle",
+            "--bundle", bundleURL.path,
+            "--expected-sha256", digest,
+        ]
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = output
+        let request: [String: Any] = [
+            "operation_index": 0,
+            "operation_id": operationId,
+            "cli_args": cliArgs,
+        ]
+        let requestData = try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+        input.fileHandleForWriting.write(requestData)
+        input.fileHandleForWriting.write(Data("\n".utf8))
+        try input.fileHandleForWriting.close()
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+
+        let rows = (String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
+            .split(separator: "\n")
+            .filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("{") }
+        let envelopes = try rows.map { row in
+            try jsonObject(String(row))
+        }
+        let completed = try #require(envelopes.last)
+        #expect(completed["status"] as? String == "completed")
+        return try #require(completed["payload"] as? [String: Any])
+    }
+
     @Test("installed CLI exposes the explicit inspection and typed restore contracts")
     func statementCommandsAreAvailableAtTheProcessBoundary() throws {
         let inspection = try runCLI(["statements", "inspect-membership", "--help"])
         #expect(inspection.status == 0)
         #expect(inspection.output.contains("--line-item-id"))
+
+        let syncInspection = try runCLI(["statements", "inspect-sync-record", "--help"])
+        #expect(syncInspection.status == 0)
+        #expect(syncInspection.output.contains("<statement-id>"))
 
         let replacement = try runCLI(["statements", "replace-internal-row-with-visible-statement", "--help"])
         #expect(replacement.status == 0)
@@ -60,5 +142,9 @@ struct CLIStatementContractTests {
         #expect(restore.output.contains("--replacement-line-item-ids"))
         #expect(restore.output.contains("--replacement-membership-preimage-sha256"))
         #expect(restore.output.contains("--replacement-preimage-sha256"))
+
+        let create = try runCLI(["statements", "create", "--help"])
+        #expect(create.status == 0)
+        #expect(create.output.contains("--line-item-ids"))
     }
 }

@@ -250,8 +250,8 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         guard let updater = syncBlobUpdater else {
             throw ToolError.invalidInput("Internal statement replacement requires atomic sync metadata updates")
         }
-        guard let startTimestamp = DateConversion.fromISO(startDate),
-              let endTimestamp = DateConversion.fromISO(endDate),
+        guard let startTimestamp = DateConversion.fromISO(startDate, timeZone: DateConversion.dateOnlyTimeZone),
+              let endTimestamp = DateConversion.fromISO(endDate, timeZone: DateConversion.dateOnlyTimeZone),
               endTimestamp > startTimestamp else {
             throw ToolError.invalidInput("Replacement requires valid ordered statement dates")
         }
@@ -324,12 +324,12 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             for line in sourceLines where selectedIds.contains(Self.extractPK(from: line.objectID)) {
                 line.setValue(replacement, forKey: "pStatement"); line.setValue(true, forKey: "pCleared")
             }
-            try updater.markRequiredSyncRecordDeleted(
+            _ = try updater.markStatementSyncRecordDeletedIfPresent(
                 entityUUID: sourceStatementUUID,
                 in: ctx
             )
             for patch in syncPatches {
-                try updater.patchRequiredTransactionBlob(
+                _ = try updater.patchTransactionBlobIfPresent(
                     transactionUUID: patch.transactionUUID,
                     in: ctx
                 ) { xml in
@@ -446,9 +446,12 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             // strict context-local updates execute before the context save, so
             // any failure rolls back the restored row, memberships, and
             // replacement deletion together.
-            try updater.restoreDeletedSyncRecord(entityUUID: restoredUniqueId, in: ctx)
+            _ = try updater.restoreDeletedStatementSyncRecordIfPresent(
+                entityUUID: restoredUniqueId,
+                in: ctx
+            )
             for (_, patch) in membershipLinesAndPatches {
-                try updater.patchRequiredTransactionBlob(transactionUUID: patch.transactionUUID, in: ctx) { xml in
+                _ = try updater.patchTransactionBlobIfPresent(transactionUUID: patch.transactionUUID, in: ctx) { xml in
                     updater.patchCleared(
                         xml: updater.patchStatement(xml: xml, lineItemUUID: patch.lineItemUUID, statementUUID: restoredUniqueId),
                         lineItemUUID: patch.lineItemUUID,
@@ -513,7 +516,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         return result
     }
 
-    public func delete(statementId: Int) throws -> Bool {
+    public func delete(statementId: Int, allowInternal: Bool = false) throws -> Bool {
         // Gather UUID and blob-patch info on the context's thread
         struct PreReadData: Sendable {
             let statementUUID: String
@@ -522,7 +525,9 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         }
         let preRead: PreReadData? = try performRead { [self] ctx in
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else { return nil }
-            try validateVisibleStatement(statement, statementId: statementId)
+            if !allowInternal {
+                try validateVisibleStatement(statement, statementId: statementId)
+            }
             let statementUUID = Self.stringValue(statement, "pUniqueID")
             var txLineItems: [String: [String]] = [:]
             let lineItems = Self.relatedSet(statement, "pLineItems")
@@ -686,6 +691,54 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         return result
     }
 
+    public func previewReconcileLineItems(
+        statementId: Int,
+        lineItemIds: [Int],
+        operatorConfirmedVisible: Bool = false
+    ) throws -> StatementDTO {
+        try performRead { [self] ctx in
+            guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
+                throw ToolError.notFound("Statement not found: \(statementId)")
+            }
+            try validateVisibleStatement(
+                statement,
+                statementId: statementId,
+                operatorConfirmedVisible: operatorConfirmedVisible
+            )
+            guard let account = Self.relatedObject(statement, "pAccount") else {
+                throw ToolError.invalidInput("Statement has no associated account")
+            }
+            let statementAccountId = Self.extractPK(from: account.objectID)
+            var previewLineItems = Array(Self.relatedSet(statement, "pLineItems"))
+            var seen = Set(previewLineItems.map { Self.extractPK(from: $0.objectID) })
+
+            for liId in lineItemIds {
+                guard let li = try fetchByPK(entityName: "LineItem", pk: liId, in: ctx) else {
+                    throw ToolError.notFound("Line item not found: \(liId)")
+                }
+                guard let liAccount = Self.relatedObject(li, "pAccount") else {
+                    throw ToolError.invalidInput("Line item \(liId) has no account")
+                }
+                let liAccountId = Self.extractPK(from: liAccount.objectID)
+                guard liAccountId == statementAccountId else {
+                    throw ToolError.invalidInput("Line item \(liId) belongs to account \(liAccountId), not statement's account \(statementAccountId)")
+                }
+                if let existingStatement = Self.relatedObject(li, "pStatement") {
+                    let existingId = Self.extractPK(from: existingStatement.objectID)
+                    guard existingId == statementId else {
+                        throw ToolError.invalidInput("Line item \(liId) is already assigned to statement \(existingId)")
+                    }
+                }
+                if !seen.contains(liId) {
+                    previewLineItems.append(li)
+                    seen.insert(liId)
+                }
+            }
+
+            return self.mapToDTO(statement, lineItemsOverride: previewLineItems)
+        }
+    }
+
     public func unreconcileLineItems(
         statementId: Int,
         lineItemIds: [Int],
@@ -755,19 +808,12 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         return try get(statementId: statementId)
     }
 
-    /// Update a visible statement's balances.
-    ///
-    /// Unlike `replaceInternalRowWithVisibleStatement` and
-    /// `restoreInternalRowFromPreimage`, which fail closed without a
-    /// `SyncBlobUpdater`, this path does not touch the statement's own sync
-    /// record. A vault that already has a `SyncedHostedEntity` for the
-    /// statement will therefore keep the pre-update balances in that blob until
-    /// Banktivity rewrites it. Verify the statement in the Banktivity UI after
-    /// using this, which is what `--post-ui-verification-required` asserts.
     public func update(
         statementId: Int,
         endingBalance: Double,
         beginningBalance: Double? = nil,
+        startDate: String? = nil,
+        endDate: String? = nil,
         allowInternal: Bool = false,
         operatorConfirmedVisible: Bool = false
     ) throws -> StatementDTO {
@@ -784,6 +830,46 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             }
             if let beginningBalance {
                 statement.setValue(beginningBalance as NSNumber, forKey: "pBeginningBalance")
+            }
+            if startDate != nil || endDate != nil {
+                guard let account = Self.relatedObject(statement, "pAccount") else {
+                    throw ToolError.invalidInput("Statement \(statementId) is missing an account")
+                }
+                let accountId = Self.extractPK(from: account.objectID)
+                let currentStart = Self.dateValue(statement, "pStartDate")
+                let currentEnd = Self.dateValue(statement, "pEndDate")
+                let startTs: Double
+                if let startDate {
+                    guard let parsed = DateConversion.fromISO(startDate, timeZone: DateConversion.dateOnlyTimeZone) else {
+                        throw ToolError.invalidInput("Invalid start date: \(startDate)")
+                    }
+                    startTs = parsed
+                } else if let currentStart {
+                    startTs = currentStart
+                } else {
+                    throw ToolError.invalidInput("Statement \(statementId) is missing a start date")
+                }
+                let endTs: Double
+                if let endDate {
+                    guard let parsed = DateConversion.fromISO(endDate, timeZone: DateConversion.dateOnlyTimeZone) else {
+                        throw ToolError.invalidInput("Invalid end date: \(endDate)")
+                    }
+                    endTs = parsed
+                } else if let currentEnd {
+                    endTs = currentEnd
+                } else {
+                    throw ToolError.invalidInput("Statement \(statementId) is missing an end date")
+                }
+                guard endTs > startTs else {
+                    throw ToolError.invalidInput("End date must be after start date")
+                }
+                try validateNoOverlap(accountId: accountId, startTs: startTs, endTs: endTs, ignoringStatementId: statementId, in: ctx)
+                if startDate != nil {
+                    statement.setValue(DateConversion.toDate(startTs), forKey: "pStartDate")
+                }
+                if endDate != nil {
+                    statement.setValue(DateConversion.toDate(endTs), forKey: "pEndDate")
+                }
             }
             statement.setValue(endingBalance as NSNumber, forKey: "pEndingBalance")
             Self.setNow(statement, "pModificationDate")
@@ -846,7 +932,13 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
-    private func validateNoOverlap(accountId: Int, startTs: Double, endTs: Double, in ctx: NSManagedObjectContext) throws {
+    private func validateNoOverlap(
+        accountId: Int,
+        startTs: Double,
+        endTs: Double,
+        ignoringStatementId: Int? = nil,
+        in ctx: NSManagedObjectContext
+    ) throws {
         let request = NSFetchRequest<NSManagedObject>(entityName: "Statement")
         // Look up account using fetchByPK which handles entity inheritance
         guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
@@ -854,13 +946,19 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         }
 
         // Overlapping: existing.start < newEnd AND existing.end > newStart
-        request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+        var predicates: [NSPredicate] = [
             NSPredicate(format: "pAccount == %@", account),
             NSPredicate(format: "pStartDate < %@", DateConversion.toDate(endTs) as NSDate),
             NSPredicate(format: "pEndDate > %@", DateConversion.toDate(startTs) as NSDate),
-        ])
+        ]
+        request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
 
-        let count = try ctx.count(for: request)
+        let count: Int
+        if let ignoringStatementId {
+            count = try ctx.fetch(request).filter { Self.extractPK(from: $0.objectID) != ignoringStatementId }.count
+        } else {
+            count = try ctx.count(for: request)
+        }
         guard count == 0 else {
             throw ToolError.invalidInput("Date range overlaps with an existing statement for this account")
         }
@@ -878,7 +976,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
 
     // MARK: - DTO Mapping
 
-    private func mapToDTO(_ object: NSManagedObject) -> StatementDTO {
+    private func mapToDTO(_ object: NSManagedObject, lineItemsOverride: [NSManagedObject]? = nil) -> StatementDTO {
         let pk = Self.extractPK(from: object.objectID)
 
         let accountId: Int
@@ -900,7 +998,25 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         let beginningBalance = Self.doubleValue(object, "pBeginningBalance")
         let endingBalance = Self.doubleValue(object, "pEndingBalance")
 
-        let lineItems = Self.relatedSet(object, "pLineItems")
+        // ``pLineItems`` is a Core Data set.  The statement preimage includes
+        // the derived balance fields below, so calculate them from the same
+        // canonical order used by the DTO.  Otherwise an inspect in a read
+        // context can hash a different floating-point accumulation from the
+        // subsequent write context even when the membership is unchanged.
+        let lineItems = (lineItemsOverride ?? Array(Self.relatedSet(object, "pLineItems")))
+            .sorted { lhs, rhs in
+                let lhsTransaction = Self.relatedObject(lhs, "pTransaction")
+                let rhsTransaction = Self.relatedObject(rhs, "pTransaction")
+                let lhsDate = lhsTransaction.flatMap { Self.dateValue($0, "pDate") } ?? 0
+                let rhsDate = rhsTransaction.flatMap { Self.dateValue($0, "pDate") } ?? 0
+                if lhsDate != rhsDate { return lhsDate < rhsDate }
+
+                let lhsTransactionId = lhsTransaction.map { Self.extractPK(from: $0.objectID) } ?? 0
+                let rhsTransactionId = rhsTransaction.map { Self.extractPK(from: $0.objectID) } ?? 0
+                if lhsTransactionId != rhsTransactionId { return lhsTransactionId < rhsTransactionId }
+
+                return Self.extractPK(from: lhs.objectID) < Self.extractPK(from: rhs.objectID)
+            }
         let reconciledBalance = lineItems.reduce(0.0) { sum, li in
             sum + Self.statementBalanceAmount(for: li)
         }
@@ -935,21 +1051,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             modifiedAt = nil
         }
 
-        let lineItemDTOs = lineItems
-            .sorted { lhs, rhs in
-                let lhsTransaction = Self.relatedObject(lhs, "pTransaction")
-                let rhsTransaction = Self.relatedObject(rhs, "pTransaction")
-                let lhsDate = lhsTransaction.flatMap { Self.dateValue($0, "pDate") } ?? 0
-                let rhsDate = rhsTransaction.flatMap { Self.dateValue($0, "pDate") } ?? 0
-                if lhsDate != rhsDate { return lhsDate < rhsDate }
-
-                let lhsTransactionId = lhsTransaction.map { Self.extractPK(from: $0.objectID) } ?? 0
-                let rhsTransactionId = rhsTransaction.map { Self.extractPK(from: $0.objectID) } ?? 0
-                if lhsTransactionId != rhsTransactionId { return lhsTransactionId < rhsTransactionId }
-
-                return Self.extractPK(from: lhs.objectID) < Self.extractPK(from: rhs.objectID)
-            }
-            .map { lineItemRepo.mapToDTO($0) }
+        let lineItemDTOs = lineItems.map { lineItemRepo.mapToDTO($0) }
         let rowClassification = Self.statementRowClassification(object)
 
         return StatementDTO(
@@ -1040,6 +1142,9 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
     private static func statementBalanceAmount(for lineItem: NSManagedObject) -> Double {
         let cashAmount = doubleValue(lineItem, "pTransactionAmount") * doubleValue(lineItem, "pExchangeRate")
         if let securityLineItem = relatedObject(lineItem, "pSecurityLineItem") {
+            if abs(cashAmount) >= 0.005 {
+                return cashAmount
+            }
             if abs(cashAmount) < 0.005,
                let transaction = relatedObject(lineItem, "pTransaction"),
                stringValue(transaction, "pNote").localizedCaseInsensitiveContains("SECURITY ADJUSTMENT") {
