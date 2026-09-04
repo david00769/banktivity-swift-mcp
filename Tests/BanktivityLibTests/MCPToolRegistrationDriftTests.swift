@@ -101,4 +101,36 @@ struct MCPToolRegistrationDriftTests {
         #expect(result.isError == true)
         #expect(text.contains("write tool"), "expected a write refusal, got: \(text)")
     }
+
+    @Test("a declared dry-run is a dry-run the tool actually accepts")
+    func declaredDryRunMatchesToolSchema() throws {
+        let (registry, vault) = try makeRegistry()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        // supportsDryRun is a promise a caller plans around: an agent told a write
+        // previews first will run it expecting nothing to change. The declaration
+        // and the tool's own schema are written in different files by hand, so
+        // nothing but this stops them disagreeing.
+        let acceptsDryRun = Set(
+            registry.listTools()
+                .filter { tool in
+                    guard case let .object(schema) = tool.inputSchema,
+                          case let .object(properties)? = schema["properties"] else { return false }
+                    return properties["dry_run"] != nil
+                }
+                .map { $0.name }
+        )
+        let declaresDryRun = Set(
+            CapabilityRegistry.mcpCapabilities().filter { $0.supportsDryRun }.map { $0.name }
+        )
+
+        #expect(
+            declaresDryRun.subtracting(acceptsDryRun).isEmpty,
+            "declares dry-run but takes no dry_run argument: \(declaresDryRun.subtracting(acceptsDryRun).sorted())"
+        )
+        #expect(
+            acceptsDryRun.subtracting(declaresDryRun).isEmpty,
+            "takes dry_run but never declares it: \(acceptsDryRun.subtracting(declaresDryRun).sorted())"
+        )
+    }
 }
