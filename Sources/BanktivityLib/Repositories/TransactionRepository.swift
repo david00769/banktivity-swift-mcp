@@ -285,7 +285,7 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
             if let transactionType = transactionType {
                 let baseType = Self.transactionTypeBaseTypeCode(transactionType)
                 guard let baseType = baseType else {
-                    throw ToolError.invalidInput("Unknown transaction type: \(transactionType). Valid types: deposit, withdrawal, buy, sell, move-shares-in, move-shares-out, short-sell, buy-to-cover")
+                    throw ToolError.invalidInput("Unknown transaction type: \(transactionType). Valid types: \(Self.transactionTypeNames)")
                 }
                 let typeRequest = NSFetchRequest<NSManagedObject>(entityName: "TransactionType")
                 typeRequest.predicate = NSPredicate(format: "pBaseType == %d", baseType)
@@ -582,25 +582,64 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
 
     // MARK: - Transaction Type Mapping
 
+    /// Slug -> Core Data base type, and the ONLY statement of what
+    /// `--transaction-type` accepts.
+    ///
+    /// This was a `switch` with the accepted set restated by hand in the
+    /// caller's error message, and the two had drifted badly in both
+    /// directions: the message omitted `split-shares`, `transfer-shares`,
+    /// `dividend` and `transfer`, all of which worked, while advertising
+    /// `short-sell` and `buy-to-cover`, which were never accepted at all.
+    ///
+    /// The cost of a wrong error message is not a typo. Downstream, an agent
+    /// read the advertised list, concluded that retyping ~51 corporate-action
+    /// rows was impossible without changing this repository, and planned around
+    /// a limitation that did not exist. A capability nobody can discover is
+    /// indistinguishable from one that is missing.
+    public static let transactionTypeBaseTypes: [String: Int] = [
+        "deposit": 1,
+        "withdrawal": 2,
+        "transfer": 3,
+        "check": 4,
+        "buy": 100,
+        "sell": 101,
+        "buy-to-open": 102,
+        "buy-to-close": 103,
+        "sell-to-open": 104,
+        "sell-to-close": 105,
+        "move-shares-in": 210,
+        "move-shares-out": 211,
+        "transfer-shares": 212,
+        "split-shares": 250,
+        "investment-income": 300,
+        "dividend": 301,
+        "capital-gains-short": 302,
+        "capital-gains-long": 303,
+        "interest": 304,
+        // `transactionTypeBaseTypeName` renders 302, 303 and 304 as
+        // `cap-gains-short`, `cap-gains-long` and `interest-income`, while
+        // `SecurityRepository.incomeBaseTypes` spells them out in full. A value
+        // read back from one therefore could not be written through the other:
+        // read-then-write, the most ordinary thing a caller does, was refused.
+        // Both spellings are accepted rather than picking a winner, because
+        // changing what a read RETURNS would break consumers that store it.
+        "cap-gains-short": 302,
+        "cap-gains-long": 303,
+        "interest-income": 304,
+        // A spin-off apportions basis by releasing it through Return of
+        // Capital and spending it on the child. Without this the second leg
+        // cannot be written at all, so the apportionment cannot be recorded.
+        "return-of-capital": 310,
+    ]
+
+    /// The accepted slugs, sorted, for error messages. Derived rather than
+    /// restated so it cannot drift from what is actually accepted.
+    public static var transactionTypeNames: String {
+        transactionTypeBaseTypes.keys.sorted().joined(separator: ", ")
+    }
+
     static func transactionTypeBaseTypeCode(_ name: String) -> Int? {
-        switch name.lowercased() {
-        case "deposit": return 1
-        case "withdrawal": return 2
-        case "transfer": return 3
-        case "check": return 4
-        case "buy": return 100
-        case "sell": return 101
-        case "buy-to-open": return 102
-        case "buy-to-close": return 103
-        case "sell-to-open": return 104
-        case "sell-to-close": return 105
-        case "move-shares-in": return 210
-        case "move-shares-out": return 211
-        case "transfer-shares": return 212
-        case "split-shares": return 250
-        case "dividend": return 301
-        default: return nil
-        }
+        transactionTypeBaseTypes[name.lowercased()]
     }
 
     static func transactionTypeBaseTypeName(_ code: Int) -> String {
