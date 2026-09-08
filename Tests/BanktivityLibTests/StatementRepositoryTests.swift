@@ -133,7 +133,7 @@ struct StatementRepositoryTests {
                         transactionAmount: 10
                     )
                 ],
-                transactionTypeBaseType: "deposit",
+                transactionTypeBaseTypeCode: 1,
                 transactionTypeUUID: UUID().uuidString
             )
             updater.updateTransactionBlob(transactionUUID: identities.transactionUUID) { xml in
