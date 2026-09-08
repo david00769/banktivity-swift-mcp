@@ -147,6 +147,28 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
+    /// The share-movement types `ZTRANSACTIONTYPE` holds, by the slug
+    /// `--transaction-type` takes.
+    ///
+    /// `createShareAdjustment` chose `shares >= 0 ? Buy : Sell` and had no way to
+    /// say anything else, so a split, a merger leg or a share transfer could not
+    /// be written in its own shape through the one primitive that exists for
+    /// moving shares. Unknown names are refused rather than defaulted: a corporate
+    /// action written under the wrong type is not a visible error -- it reads as a
+    /// plausible transaction and quietly moves the position.
+    public static let shareMovementBaseTypes: [String: Int16] = [
+        "buy": 100, "sell": 101,
+        "split-shares": 250,
+        "move-shares-in": 210, "move-shares-out": 211,
+        "transfer-shares": 212,
+    ]
+
+    /// The accepted slugs, sorted, derived so help and errors cannot drift from
+    /// what is actually accepted.
+    public static var shareMovementTypeNames: String {
+        shareMovementBaseTypes.keys.sorted().joined(separator: ", ")
+    }
+
     public func createShareAdjustment(
         accountId: Int,
         symbol: String? = nil,
@@ -154,8 +176,20 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         shares: Double,
         date: String,
         title: String? = nil,
-        amount: Double? = nil
+        amount: Double? = nil,
+        transactionType: String? = nil
     ) throws -> SecurityTradeDTO {
+        // Resolved before the write closure so it can be captured as a constant:
+        // a `var` here is not Sendable into the background context.
+        let movementBaseType: Int16? = try {
+            guard let transactionType else { return nil }
+            guard let code = Self.shareMovementBaseTypes[transactionType.lowercased()] else {
+                throw ToolError.invalidInput(
+                    "Unknown transaction type '\(transactionType)'. Valid: \(Self.shareMovementTypeNames)")
+            }
+            return code
+        }()
+
         struct SecurityInfo: Sendable {
             let objectID: NSManagedObjectID
             let symbol: String
@@ -213,8 +247,10 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 throw ToolError.notFound("Account not found: \(accountId)")
             }
 
-            // Find the appropriate transaction type: Buy (100) or Sell (101)
-            let baseType: Int16 = shares >= 0 ? 100 : 101
+            // Buy (100) or Sell (101) by sign unless the caller named a movement
+            // type. The default is unchanged; what changes is that a split, a
+            // merger leg or a transfer can now be said at all.
+            let baseType: Int16 = movementBaseType ?? (shares >= 0 ? 100 : 101)
             let typeRequest = NSFetchRequest<NSManagedObject>(entityName: "TransactionType")
             typeRequest.predicate = NSPredicate(format: "pBaseType == %d", baseType)
             typeRequest.fetchLimit = 1

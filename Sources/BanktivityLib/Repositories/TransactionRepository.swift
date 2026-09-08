@@ -147,7 +147,11 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
             // type at all: Deposit is 1 and Withdrawal is 2.
             let txTypeBaseTypeCode: Int16 = {
                 guard let txType = txType else { return 1 }
-                return Int16(Self.intValue(txType, "pBaseType"))
+                // `Int16(_:)` traps out of range, and this value comes from the
+                // store rather than from us. 0 is not a base type, so an
+                // unreadable one resolves to no enum name and the sync record is
+                // skipped -- which is the same answer, without the crash.
+                return Int16(exactly: Self.intValue(txType, "pBaseType")) ?? 0
             }()
             let txTypeUUID = txType.map { Self.stringValue($0, "pUniqueID") } ?? ""
 

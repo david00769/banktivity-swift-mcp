@@ -145,4 +145,81 @@ struct TransactionTypeVocabularyTests {
         #expect(xml.contains("name=\"baseType\">withdrawal</field>"))
         #expect(!xml.contains("name=\"baseType\">deposit</field>"))
     }
+
+    // MARK: - The primitive that could not name its type
+
+    /// `createShareAdjustment` chose Buy or Sell by the sign of `shares` and had
+    /// no way to say anything else, so a split could not be written in its own
+    /// shape through the only primitive that moves shares. The sync value for 250
+    /// is `slpit-shares`, which is the enum's spelling, not the CLI's.
+    @Test("a share movement is written and synced as the type it was given")
+    func shareMovementNamesItsType() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        _ = try TestVaultHelper.seedSyncedDocument(in: vault.container)
+        let account = try TestVaultHelper.seedInvestmentAccount(in: vault.container, currency: eur)
+        let security = try TestVaultHelper.seedSecurity(in: vault.container, currency: eur)
+
+        let ctx = vault.container.viewContext
+        for (code, name) in [(Int16(100), "Buy"), (Int16(101), "Sell"), (Int16(250), "Split Shares")] {
+            let type = NSEntityDescription.insertNewObject(forEntityName: "TransactionType", into: ctx)
+            type.setValue(code, forKey: "pBaseType")
+            type.setValue(name, forKey: "pName")
+            type.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+            type.setValue(Date(), forKey: "pCreationTime")
+            type.setValue(Date(), forKey: "pModificationDate")
+        }
+        try ctx.save()
+
+        let repo = SecurityRepository(
+            container: vault.container, syncBlobUpdater: SyncBlobUpdater(container: vault.container)
+        )
+        let split = try repo.createShareAdjustment(
+            accountId: BaseRepository.extractPK(from: account.objectID),
+            symbol: BaseRepository.stringValue(security, "pSymbol"),
+            shares: 10, date: "2026-02-02", transactionType: "split-shares"
+        )
+
+        let rows = try ctx.fetch(NSFetchRequest<NSManagedObject>(entityName: "Transaction"))
+        let row = try #require(rows.first { BaseRepository.extractPK(from: $0.objectID) == split.id })
+        let type = try #require(BaseRepository.relatedObject(row, "pTransactionType"))
+        #expect(BaseRepository.intValue(type, "pBaseType") == 250)
+
+        let request = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
+        request.predicate = NSPredicate(format: "pLocalID == %@", BaseRepository.stringValue(row, "pUniqueID"))
+        let record = try #require(try ctx.fetch(request).first)
+        let blob = try #require(record.value(forKey: "pRemoteEntityData") as? Data)
+        let decompressed = try #require(SyncBlobUpdater.decompressGzip(blob))
+        let xml = try #require(String(data: decompressed, encoding: .utf8))
+        #expect(xml.contains("name=\"baseType\">slpit-shares</field>"))
+    }
+
+    @Test("an unknown movement type is refused rather than silently becoming a buy")
+    func unknownMovementTypeIsRefused() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        let account = try TestVaultHelper.seedInvestmentAccount(in: vault.container, currency: eur)
+        let security = try TestVaultHelper.seedSecurity(in: vault.container, currency: eur)
+
+        let repo = SecurityRepository(container: vault.container)
+        #expect(throws: ToolError.self) {
+            _ = try repo.createShareAdjustment(
+                accountId: BaseRepository.extractPK(from: account.objectID),
+                symbol: BaseRepository.stringValue(security, "pSymbol"),
+                shares: 1, date: "2026-02-02", transactionType: "reverse-split"
+            )
+        }
+    }
+
+    /// The base type is read from the store, so the conversion to `Int16` has to
+    /// be total: a trapping initialiser would turn unreadable data into a crash.
+    /// 0 is not a base type, so it resolves to no name and the record is skipped.
+    @Test("a base type outside the enum resolves to no name rather than trapping")
+    func outOfRangeBaseTypeHasNoName() {
+        #expect(SyncBlobUpdater.syncBaseTypeName(for: 0) == nil)
+        #expect(SyncBlobUpdater.syncBaseTypeName(for: Int16.max) == nil)
+        #expect(SyncBlobUpdater.syncBaseTypeName(for: -1) == nil)
+    }
 }
