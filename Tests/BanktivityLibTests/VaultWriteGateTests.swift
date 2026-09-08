@@ -15,7 +15,10 @@ import Testing
 ///
 /// `WriteGuardTests` has three tests and all three assert the *allowing* path, so
 /// nothing in this suite ever checked that the guard blocks anything.
+// Runs on the main actor: see TestVaultHelper for why every suite that
+// touches a view context has to.
 @Suite("Vault write gate", .serialized)
+@MainActor
 struct VaultWriteGateTests {
 
     private struct StubProbe: VaultHolderProbe {

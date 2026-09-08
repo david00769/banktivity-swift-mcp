@@ -16,7 +16,10 @@ import Testing
 /// The existing `CapabilityRegistryTests` could not catch either, because it
 /// asserted a count and spot-checked names. A count says something moved; it never
 /// says what, and it passes happily while a phantom name sits in the list.
+// Runs on the main actor: see TestVaultHelper for why every suite that
+// touches a view context has to.
 @Suite("MCP tool registration drift", .serialized)
+@MainActor
 struct MCPToolRegistrationDriftTests {
 
     private func makeRegistry() throws -> (ToolRegistry, TestVaultHelper.TestVault) {
