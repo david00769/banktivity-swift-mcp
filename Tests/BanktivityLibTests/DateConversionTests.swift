@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Steve Flinter. MIT License.
 
+import CoreData
 import Foundation
 import Testing
 @testable import BanktivityLib
@@ -160,12 +161,61 @@ struct DateConversionTests {
             DateConversion.fromISO(dateOnly, timeZone: DateConversion.dateOnlyTimeZone)
         )
 
-        let blob = DateConversion.syncBlobTimestamp(dateOnly: dateOnly)
+        let blob = try #require(DateConversion.syncBlobTimestamp(dateOnly: dateOnly))
         #expect(blob == "2026-06-08T10:00:00+0000")
 
         // Round-trip: the blob string must parse back to the very instant Core Data
         // holds. If these two ever disagree a sync can silently move the date.
         let reparsed = try #require(DateConversion.fromISO(blob))
         #expect(reparsed == stored)
+    }
+
+    /// The anchor used to be an argument every write path had to remember. One
+    /// that forgot compiled, passed its tests, and stored a host-local midnight.
+    @Test("fromDateOnly anchors without being asked to")
+    func fromDateOnlyIsAnchored() throws {
+        let viaHelper = try #require(DateConversion.fromDateOnly("2026-03-01"))
+        let viaExplicitZone = try #require(
+            DateConversion.fromISO("2026-03-01", timeZone: DateConversion.dateOnlyTimeZone)
+        )
+        #expect(viaHelper == viaExplicitZone)
+        #expect(DateConversion.toISODateTime(viaHelper).hasSuffix("T10:00:00Z"))
+    }
+
+    /// It returned the input unchanged, which put an unparseable string into the
+    /// blob's date field and called that success.
+    @Test("an unparseable label yields no sync timestamp rather than itself")
+    func syncBlobTimestampRefusesGarbage() {
+        #expect(DateConversion.syncBlobTimestamp(dateOnly: "not-a-date") == nil)
+        #expect(DateConversion.syncBlobTimestamp(dateOnly: "2026-13-45") == nil)
+        #expect(DateConversion.syncBlobTimestamp(dateOnly: "2026-03-01") != nil)
+    }
+
+    /// The fallback this replaced put the unparseable label straight into the
+    /// blob's `date` field. `create` does not validate its date either -- `setDate`
+    /// silently leaves `pDate` unset -- so the record would have claimed a date the
+    /// row does not have.
+    @Test("an unparseable date writes no sync record at all")
+    func unparseableDateWritesNoRecord() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+        let (usd, _) = try TestVaultHelper.seedCurrencies(in: vault.container)
+
+        let txUUID = UUID().uuidString
+        SyncBlobUpdater(container: vault.container).createTransactionSyncRecord(
+            transactionUUID: txUUID,
+            currencyUUID: BaseRepository.stringValue(usd, "pUniqueID"),
+            date: "not-a-date", title: "Undated", note: nil, adjustment: false,
+            lineItems: [SyncBlobUpdater.SyncLineItem(
+                accountUUID: UUID().uuidString, accountAmount: 1, cleared: false,
+                identifier: UUID().uuidString, memo: nil, securityLineItem: nil,
+                transactionAmount: 1
+            )],
+            transactionTypeBaseType: "deposit", transactionTypeUUID: UUID().uuidString
+        )
+
+        let request = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
+        request.predicate = NSPredicate(format: "pLocalID == %@", txUUID)
+        #expect(try vault.container.viewContext.fetch(request).isEmpty)
     }
 }

@@ -50,10 +50,10 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         name: String? = nil,
         note: String? = nil
     ) throws -> StatementDTO {
-        guard let startTs = DateConversion.fromISO(startDate, timeZone: DateConversion.dateOnlyTimeZone) else {
+        guard let startTs = DateConversion.fromDateOnly(startDate) else {
             throw ToolError.invalidInput("Invalid start date: \(startDate)")
         }
-        guard let endTs = DateConversion.fromISO(endDate, timeZone: DateConversion.dateOnlyTimeZone) else {
+        guard let endTs = DateConversion.fromDateOnly(endDate) else {
             throw ToolError.invalidInput("Invalid end date: \(endDate)")
         }
         guard endTs > startTs else {

@@ -105,7 +105,7 @@ open class BaseRepository: @unchecked Sendable {
         // Full ISO timestamps (creation/modification audit stamps) are unaffected --
         // fromISO only applies the zone to the 10-character date-only branch.
         guard let iso = isoString,
-              let ts = DateConversion.fromISO(iso, timeZone: DateConversion.dateOnlyTimeZone) else { return }
+              let ts = DateConversion.fromDateOnly(iso) else { return }
         object.setValue(DateConversion.toDate(ts), forKey: key)
     }
 
