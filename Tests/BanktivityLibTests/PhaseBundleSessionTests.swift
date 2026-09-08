@@ -22,7 +22,10 @@ import Testing
 ///
 /// Both were previously covered only by a single-operation test, which cannot
 /// observe either one.
+// Runs on the main actor: see TestVaultHelper for why every suite that
+// touches a view context has to.
 @Suite("Phase bundle session", .serialized)
+@MainActor
 struct PhaseBundleSessionTests {
 
     private func cliURL() throws -> URL {
