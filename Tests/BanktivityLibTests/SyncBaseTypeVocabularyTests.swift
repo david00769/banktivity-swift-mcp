@@ -20,7 +20,10 @@ import Testing
 /// -- `transactions get` reads the type through `pTransactionType` and reports it
 /// correctly. Only the record that describes the row to every other device
 /// disagreed.
+// Runs on the main actor: see TestVaultHelper for why every suite that
+// touches a view context has to.
 @Suite("Sync base type vocabulary", .serialized)
+@MainActor
 struct SyncBaseTypeVocabularyTests {
 
     /// Two of these are misspelled and both are load-bearing. They come from the
