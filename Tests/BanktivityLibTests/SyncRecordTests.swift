@@ -5,7 +5,10 @@ import Foundation
 import Testing
 @testable import BanktivityLib
 
+// Runs on the main actor: see TestVaultHelper for why every suite that
+// touches a view context has to.
 @Suite("SyncRecord", .serialized)
+@MainActor
 struct SyncRecordTests {
 
     @Test("gzip round-trip preserves data")
@@ -283,6 +286,15 @@ struct SyncRecordTests {
         )
         #expect(updated.amount == -125)
 
+        // The repository wrote on a background context, and
+        // `automaticallyMergesChangesFromParent` delivers that merge to the view
+        // context's queue asynchronously. This body now owns that queue, so the
+        // merge cannot run until the body yields: the read below has to refresh
+        // rather than hope the merge won a race. It saw the new values before
+        // only because the body ran on the wrong thread while the main runloop
+        // serviced the merge.
+        vault.container.viewContext.refreshAllObjects()
+
         let lineItems = try LineItemRepository(container: vault.container).getForTransactionPK(txPK)
         let accountLine = try #require(lineItems.first { $0.accountId == accountPK })
         let balancingLine = try #require(lineItems.first { $0.accountId == 0 })
@@ -408,6 +420,15 @@ struct SyncRecordTests {
             cashLineItemAmount: 596.06
         )
         #expect(updated.amount == 100)
+
+        // The repository wrote on a background context, and
+        // `automaticallyMergesChangesFromParent` delivers that merge to the view
+        // context's queue asynchronously. This body now owns that queue, so the
+        // merge cannot run until the body yields: the read below has to refresh
+        // rather than hope the merge won a race. It saw the new values before
+        // only because the body ran on the wrong thread while the main runloop
+        // serviced the merge.
+        vault.container.viewContext.refreshAllObjects()
 
         let lineItems = try LineItemRepository(container: vault.container).getForTransactionPK(txPK)
         let accountLine = try #require(lineItems.first { $0.accountId == accountPK })
