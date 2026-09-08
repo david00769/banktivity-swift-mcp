@@ -275,7 +275,7 @@ func registerSecurityTools(
                 "title": ToolHelpers.property(type: "string", description: "Transaction title"),
                 "memo": ToolHelpers.property(type: "string", description: "Cash line memo"),
                 "offset_category_id": ToolHelpers.property(type: "number", description: "Income/expense category ID for the balancing line. Omit to create an unknown balancing line"),
-                "income_type": ToolHelpers.property(type: "string", description: "Income type. Currently only dividend is supported"),
+                "income_type": ToolHelpers.property(type: "string", description: "Income type. Accepts: \(SecurityRepository.incomeTypeNames)"),
             ],
             required: ["account_id", "amount", "date"]
         )

@@ -472,7 +472,7 @@ struct Securities: AsyncParsableCommand {
         @Option(name: .long, help: "Income/expense category ID for the balancing line. Defaults to an unknown balancing line")
         var offsetCategoryId: Int?
 
-        @Option(name: .long, help: "Income type. Currently only dividend is supported")
+        @Option(name: .long, help: "Income type. Accepts: \(SecurityRepository.incomeTypeNames)")
         var incomeType: String = "dividend"
 
         @Option(name: .long, help: "Tax withheld at source. --amount stays the GROSS: the account receives the net, the income category is credited the gross, and this sits on its own line")

@@ -384,6 +384,59 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         )
     }
 
+    /// The income types `ZTRANSACTIONTYPE` holds, by the slug `--income-type` takes.
+    ///
+    /// `create-income` accepted only `dividend` until now, which meant a spin-off's
+    /// basis release had nowhere to go: it is recorded as Return of Capital, and
+    /// refusing 310 makes the second leg of the apportionment unwritable, so the
+    /// apportionment cannot be recorded at all. Unknown names are refused rather
+    /// than defaulted, because income written under the wrong type is not a visible
+    /// error -- it reads as a plausible transaction and quietly misstates the year.
+    public static let incomeBaseTypes: [String: Int16] = [
+        "investment-income": 300,
+        "dividend": 301,
+        "cap-gains-short": 302,
+        "cap-gains-long": 303,
+        "interest-income": 304,
+        // A spin-off apportions basis by releasing it through Return of Capital
+        // and spending it on the child. Without this the second leg cannot be
+        // written at all, so the apportionment cannot be recorded.
+        "return-of-capital": 310,
+        // Both spellings, rather than a winner. `securities income` reads these
+        // back as the vault's display names and callers spell them out in full
+        // when they write, so accepting only the short form would refuse the
+        // obvious guess and break a caller that had stored the long one.
+        "capital-gains-short": 302,
+        "capital-gains-long": 303,
+        "interest": 304,
+    ]
+
+    /// What the sync blob calls these, which is not what `--income-type` calls them.
+    ///
+    /// The wire enum is `IGGCSyncAccountingTransactionBaseType` and it spells 300
+    /// `misc-inv-income` and 304 `intrest-income` -- the second is misspelled and
+    /// is nonetheless the value the enum contains. Both spellings are confirmed
+    /// against the string table in `IGGSyncServices` and against a vault where
+    /// Banktivity wrote them itself. Writing the CLI slug here instead would put a
+    /// value in the record that the enum does not have.
+    ///
+    /// This is the income subset of the same table; if the general fix lands first
+    /// this map goes away in favour of it.
+    static let incomeSyncBaseTypeNames: [Int16: String] = [
+        300: "misc-inv-income",
+        301: "dividend",
+        302: "cap-gains-short",
+        303: "cap-gains-long",
+        304: "intrest-income",
+        310: "return-of-capital",
+    ]
+
+    /// The accepted slugs, sorted, derived so help and errors cannot drift from
+    /// what is actually accepted.
+    public static var incomeTypeNames: String {
+        incomeBaseTypes.keys.sorted().joined(separator: ", ")
+    }
+
     public func createSecurityIncome(
         accountId: Int,
         symbol: String? = nil,
@@ -424,8 +477,9 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         guard DateConversion.fromISO(date) != nil else {
             throw ToolError.invalidInput("date must be YYYY-MM-DD")
         }
-        guard incomeType.lowercased() == "dividend" else {
-            throw ToolError.invalidInput("Only dividend income is supported")
+        guard let incomeBaseType = Self.incomeBaseTypes[incomeType.lowercased()] else {
+            throw ToolError.invalidInput(
+                "Unknown income type '\(incomeType)'. Valid: \(Self.incomeTypeNames)")
         }
 
         struct SecurityInfo: Sendable {
@@ -475,6 +529,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let offsetAccountUUID: String?
             let currencyUUID: String
             let transactionTypeUUID: String
+            let transactionTypeName: String
         }
 
         let securityObjectID = secInfo.objectID
@@ -513,10 +568,11 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             }
 
             let typeRequest = NSFetchRequest<NSManagedObject>(entityName: "TransactionType")
-            typeRequest.predicate = NSPredicate(format: "pBaseType == %d", 301)
+            typeRequest.predicate = NSPredicate(format: "pBaseType == %d", incomeBaseType)
             typeRequest.fetchLimit = 1
             guard let txType = try ctx.fetch(typeRequest).first else {
-                throw ToolError.notFound("Transaction type not found for Dividend")
+                throw ToolError.notFound(
+                    "Transaction type not found for base type \(incomeBaseType) (\(incomeType))")
             }
 
             guard let currency = Self.relatedObject(account, "currency") else {
@@ -526,10 +582,15 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let accountName = Self.stringValue(account, "pName")
             let currencyUUID = Self.stringValue(currency, "pUniqueID")
             let txTypeUUID = Self.stringValue(txType, "pUniqueID")
+            // The label the vault stores. `ZTRANSACTIONTYPE` is Banktivity's own
+            // authority for it and every reader follows `pTransactionType` to get
+            // it, so a create that echoed anything else would contradict its own
+            // readback.
+            let txTypeName = Self.stringValue(txType, "pName")
             let offsetAccountUUID = offsetAccount.map { Self.stringValue($0, "pUniqueID") }
 
             let tx = Self.createObject(entityName: "Transaction", in: ctx)
-            let txTitle = title ?? "Dividend \(secInfo.symbol)"
+            let txTitle = title ?? "\(txTypeName) \(secInfo.symbol)"
             let txUUID = Self.generateUUID()
             tx.setValue(txTitle, forKey: "pTitle")
             tx.setValue(txUUID, forKey: "pUniqueID")
@@ -603,13 +664,16 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 accountName: accountName,
                 offsetAccountUUID: offsetAccountUUID,
                 currencyUUID: currencyUUID,
-                transactionTypeUUID: txTypeUUID
+                transactionTypeUUID: txTypeUUID,
+                transactionTypeName: txTypeName
             )
         }
 
         try LineItemRepository(container: container).recalculateRunningBalances(accountId: accountId)
 
-        if let updater = syncBlobUpdater {
+        // No name, no record. A fallback here would write `dividend` for a type
+        // that is not one, which is the defect this change removes.
+        if let updater = syncBlobUpdater, let syncBaseTypeName = Self.incomeSyncBaseTypeNames[incomeBaseType] {
             let syncSLI = SyncBlobUpdater.SyncSecurityLineItem(
                 amount: 0,
                 commission: 0,
@@ -658,7 +722,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 note: nil,
                 adjustment: false,
                 lineItems: syncLineItems,
-                transactionTypeBaseType: "dividend",
+                transactionTypeBaseType: syncBaseTypeName,
                 transactionTypeUUID: info.transactionTypeUUID
             )
         }
@@ -666,7 +730,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         return SecurityIncomeDTO(
             id: info.txPK,
             date: date,
-            type: "Dividend",
+            type: info.transactionTypeName,
             symbol: secInfo.symbol,
             securityName: secInfo.name,
             amount: amount,
