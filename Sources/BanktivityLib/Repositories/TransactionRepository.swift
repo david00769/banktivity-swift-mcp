@@ -124,7 +124,7 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
         struct SyncInfo: Sendable {
             let txUUID: String
             let currencyUUID: String
-            let transactionTypeBaseType: String
+            let transactionTypeBaseTypeCode: Int16
             let transactionTypeUUID: String
             let lineItems: [SyncBlobUpdater.SyncLineItem]
         }
@@ -151,14 +151,13 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                 tx.setValue(txType, forKey: "pTransactionType")
             }
 
-            let txTypeBaseType: String = {
-                guard let txType = txType else { return "deposit" }
-                let bt = Self.intValue(txType, "pBaseType")
-                switch bt {
-                case 0: return "withdrawal"
-                case 1: return "deposit"
-                default: return "deposit"
-                }
+            // Was a three-case switch over base types 0 and 1 that fell through to
+            // "deposit" for everything else -- so a withdrawal, a transfer or a
+            // check was described in its own sync record as a deposit. 0 is not a
+            // base type at all; Deposit is 1 and Withdrawal is 2.
+            let txTypeBaseTypeCode: Int16 = {
+                guard let txType = txType else { return 1 }
+                return Int16(Self.intValue(txType, "pBaseType"))
             }()
             let txTypeUUID = txType.map { Self.stringValue($0, "pUniqueID") } ?? ""
 
@@ -228,7 +227,7 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
 
             return SyncInfo(
                 txUUID: txUUID, currencyUUID: currencyUUID,
-                transactionTypeBaseType: txTypeBaseType,
+                transactionTypeBaseTypeCode: txTypeBaseTypeCode,
                 transactionTypeUUID: txTypeUUID,
                 lineItems: syncLineItems
             )
@@ -240,7 +239,7 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                 transactionUUID: syncInfo.txUUID, currencyUUID: syncInfo.currencyUUID,
                 date: date, title: title, note: note, adjustment: false,
                 lineItems: syncInfo.lineItems,
-                transactionTypeBaseType: syncInfo.transactionTypeBaseType,
+                transactionTypeBaseTypeCode: syncInfo.transactionTypeBaseTypeCode,
                 transactionTypeUUID: syncInfo.transactionTypeUUID
             )
         }
@@ -262,7 +261,7 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
         struct UpdateOutcome: Sendable {
             let txUUID: String
             let dateChanged: Bool
-            let newTxTypeBaseType: String?
+            let newTxTypeBaseTypeCode: Int16?
             let newTxTypeUUID: String?
         }
 
@@ -272,7 +271,7 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
             }
 
             var dateChanged = false
-            var newTxTypeBaseType: String?
+            var newTxTypeBaseTypeCode: Int16?
             var newTxTypeUUID: String?
 
             if let title = title { tx.setValue(title, forKey: "pTitle") }
@@ -294,7 +293,7 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                     throw ToolError.notFound("TransactionType entity not found for base type \(baseType)")
                 }
                 tx.setValue(txType, forKey: "pTransactionType")
-                newTxTypeBaseType = Self.transactionTypeBaseTypeName(baseType)
+                newTxTypeBaseTypeCode = Int16(baseType)
                 newTxTypeUUID = Self.stringValue(txType, "pUniqueID")
             }
             Self.setNow(tx, "pModificationDate")
@@ -302,7 +301,7 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
             return UpdateOutcome(
                 txUUID: Self.stringValue(tx, "pUniqueID"),
                 dateChanged: dateChanged,
-                newTxTypeBaseType: newTxTypeBaseType,
+                newTxTypeBaseTypeCode: newTxTypeBaseTypeCode,
                 newTxTypeUUID: newTxTypeUUID
             )
         }
@@ -324,8 +323,8 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                 if let t = title { result = updater.patchTransactionTitle(xml: result, title: t) }
                 if let n = note { result = updater.patchTransactionNote(xml: result, note: n) }
                 if let d = date { result = updater.patchTransactionDate(xml: result, date: DateConversion.syncBlobTimestamp(dateOnly: d)) }
-                if let bt = outcome.newTxTypeBaseType, let tu = outcome.newTxTypeUUID {
-                    result = updater.patchTransactionType(xml: result, baseType: bt, typeUUID: tu)
+                if let bt = outcome.newTxTypeBaseTypeCode, let tu = outcome.newTxTypeUUID {
+                    result = updater.patchTransactionType(xml: result, baseTypeCode: bt, typeUUID: tu)
                 }
                 return result
             }
