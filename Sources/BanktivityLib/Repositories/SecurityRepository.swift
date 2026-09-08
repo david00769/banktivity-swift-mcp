@@ -201,7 +201,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let liUUID: String
             let accountUUID: String
             let currencyUUID: String
-            let transactionTypeBaseType: String
+            let transactionTypeBaseTypeCode: Int16
             let transactionTypeUUID: String
         }
 
@@ -224,7 +224,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let currency = Self.relatedObject(account, "currency")
             let accountUUID = Self.stringValue(account, "pUniqueID")
             let currencyUUID = currency.map { Self.stringValue($0, "pUniqueID") } ?? ""
-            let txTypeBaseType = shares >= 0 ? "buy" : "sell"
+            let txTypeBaseTypeCode: Int16 = baseType
             let txTypeUUID = txType.map { Self.stringValue($0, "pUniqueID") } ?? ""
 
             // Create Transaction
@@ -271,7 +271,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 txPK: Self.extractPK(from: tx.objectID),
                 txUUID: txUUID, txTitle: txTitle, liUUID: liUUID,
                 accountUUID: accountUUID, currencyUUID: currencyUUID,
-                transactionTypeBaseType: txTypeBaseType, transactionTypeUUID: txTypeUUID
+                transactionTypeBaseTypeCode: txTypeBaseTypeCode, transactionTypeUUID: txTypeUUID
             )
         }
 
@@ -292,7 +292,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 transactionUUID: info.txUUID, currencyUUID: info.currencyUUID,
                 date: date, title: info.txTitle, note: nil, adjustment: false,
                 lineItems: [syncLI],
-                transactionTypeBaseType: info.transactionTypeBaseType,
+                transactionTypeBaseTypeCode: info.transactionTypeBaseTypeCode,
                 transactionTypeUUID: info.transactionTypeUUID
             )
         }

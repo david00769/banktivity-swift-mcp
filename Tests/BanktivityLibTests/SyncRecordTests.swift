@@ -40,7 +40,7 @@ struct SyncRecordTests {
             transactionUUID: txUUID, currencyUUID: eurUUID,
             date: "2026-01-15", title: "Test Sync", note: nil,
             adjustment: false, lineItems: [syncLI],
-            transactionTypeBaseType: "deposit", transactionTypeUUID: UUID().uuidString
+            transactionTypeBaseTypeCode: 1, transactionTypeUUID: UUID().uuidString
         )
 
         // Verify the record was created
@@ -82,7 +82,7 @@ struct SyncRecordTests {
             transactionUUID: txUUID, currencyUUID: eurUUID,
             date: "2026-03-01", title: "XML Test", note: "A note",
             adjustment: false, lineItems: [syncLI],
-            transactionTypeBaseType: "withdrawal", transactionTypeUUID: UUID().uuidString
+            transactionTypeBaseTypeCode: 2, transactionTypeUUID: UUID().uuidString
         )
 
         let request = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
@@ -272,7 +272,7 @@ struct SyncRecordTests {
             transactionUUID: txUUID, currencyUUID: eurUUID,
             date: "2026-03-01", title: "TEST BUY", note: nil,
             adjustment: false, lineItems: [cashSyncLI, offsetSyncLI],
-            transactionTypeBaseType: "buy", transactionTypeUUID: buyTypeUUID
+            transactionTypeBaseTypeCode: 100, transactionTypeUUID: buyTypeUUID
         )
 
         let repo = SecurityRepository(container: vault.container, syncBlobUpdater: updater)
@@ -323,7 +323,7 @@ struct SyncRecordTests {
             transactionUUID: txUUID, currencyUUID: BaseRepository.stringValue(eur, "pUniqueID"),
             date: "2026-01-01", title: "To Delete", note: nil,
             adjustment: false, lineItems: [syncLI],
-            transactionTypeBaseType: "deposit", transactionTypeUUID: UUID().uuidString
+            transactionTypeBaseTypeCode: 1, transactionTypeUUID: UUID().uuidString
         )
 
         // Verify exists with blob data and state=0
