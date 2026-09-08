@@ -148,4 +148,13 @@ struct SyncBaseTypeVocabularyTests {
         let xml = try syncXML(for: BaseRepository.stringValue(row, "pUniqueID"), in: seeded.vault.container)
         #expect(try baseTypeField(xml) == "return-of-capital")
     }
+
+    /// The base type is read from the store, so the conversion to `Int16` has to
+    /// be total: a trapping initialiser would turn unreadable data into a crash.
+    @Test("a base type outside the enum resolves to no name rather than trapping")
+    func outOfRangeBaseTypeHasNoName() {
+        #expect(SyncBlobUpdater.syncBaseTypeName(for: 0) == nil)
+        #expect(SyncBlobUpdater.syncBaseTypeName(for: Int16.max) == nil)
+        #expect(SyncBlobUpdater.syncBaseTypeName(for: -1) == nil)
+    }
 }
