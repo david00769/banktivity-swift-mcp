@@ -204,15 +204,69 @@ public final class SyncBlobUpdater: @unchecked Sendable {
         return true
     }
 
+    // MARK: - Transaction Base Type Vocabulary
+
+    /// The `IGGCSyncAccountingTransactionBaseType` enum, as Banktivity spells it.
+    ///
+    /// This is **not** the CLI's `--transaction-type` vocabulary and must never be
+    /// derived from it. They agree on most values and disagree on three, and every
+    /// disagreement writes a sync record that contradicts the row it describes:
+    ///
+    /// | base type | this enum | the CLI slug |
+    /// | --- | --- | --- |
+    /// | 250 | `slpit-shares` | `split-shares` |
+    /// | 300 | `misc-inv-income` | `investment-income` |
+    /// | 304 | `intrest-income` | `interest-income` |
+    ///
+    /// Yes, two of them are misspelled. They are Banktivity's spellings, taken from
+    /// the string table in `IGGSyncServices` next to the enum name itself, and
+    /// corroborated by this vault's own records: of 22,361 transaction sync blobs,
+    /// the ones Banktivity wrote for a share split say `slpit-shares` and the ones
+    /// for interest say `intrest-income`. Correcting the typos here would write a
+    /// value the enum does not contain.
+    ///
+    /// Callers pass the numeric base type they already fetched `TransactionType` by,
+    /// rather than a string of their own making. Five call sites made that string by
+    /// hand and three of them made it wrong -- income always said `dividend`, a share
+    /// adjustment always said `buy` or `sell`, and `create` said `deposit` for
+    /// everything but a deposit.
+    static let transactionBaseTypeNames: [Int16: String] = [
+        1: "deposit", 2: "withdrawal", 3: "transfer", 4: "check",
+        5: "charge", 6: "refund", 7: "payment",
+        100: "buy", 101: "sell",
+        102: "buy-to-open", 103: "buy-to-close",
+        104: "sell-to-open", 105: "sell-to-close",
+        210: "move-shares-in", 211: "move-shares-out",
+        212: "transfer-shares", 250: "slpit-shares",
+        300: "misc-inv-income", 301: "dividend",
+        302: "cap-gains-short", 303: "cap-gains-long",
+        304: "intrest-income", 310: "return-of-capital",
+    ]
+
+    /// The enum string for a base type, or `nil` when the vault holds a type this
+    /// enum has no name for. `nil` is deliberate: a caller must decide whether to
+    /// refuse the write or leave the record alone, because guessing a string the
+    /// enum does not contain is what this map exists to prevent.
+    public static func syncBaseTypeName(for baseType: Int16) -> String? {
+        transactionBaseTypeNames[baseType]
+    }
+
     // MARK: - Sync Record Creation
 
     public func createTransactionSyncRecord(
         transactionUUID: String, currencyUUID: String, date: String,
         title: String, note: String?, adjustment: Bool,
         lineItems: [SyncLineItem],
-        transactionTypeBaseType: String, transactionTypeUUID: String
+        transactionTypeBaseTypeCode: Int16, transactionTypeUUID: String
     ) {
         do {
+            // A base type the enum has no name for would otherwise be written as
+            // some caller's guess. Skip the record instead: an absent sync record
+            // is a known state the readers already handle, a wrong one is not.
+            guard let transactionTypeBaseType = Self.syncBaseTypeName(for: transactionTypeBaseTypeCode) else {
+                log("No sync base type name for \(transactionTypeBaseTypeCode); skipping sync record for \(transactionUUID)")
+                return
+            }
             let xml = buildTransactionXML(
                 transactionUUID: transactionUUID, currencyUUID: currencyUUID, date: date,
                 title: title, note: note, adjustment: adjustment,
@@ -475,7 +529,10 @@ public final class SyncBlobUpdater: @unchecked Sendable {
         replaceField(in: xml, name: "date", type: "date", newContent: date) ?? xml
     }
 
-    public func patchTransactionType(xml: String, baseType: String, typeUUID: String) -> String {
+    public func patchTransactionType(xml: String, baseTypeCode: Int16, typeUUID: String) -> String {
+        // Same rule as `createTransactionSyncRecord`: no name, no patch. Leaving
+        // the existing record alone is the safer of the two wrong answers.
+        guard let baseType = Self.syncBaseTypeName(for: baseTypeCode) else { return xml }
         // Replace the entire TransactionType record block
         guard let recordStart = xml.range(of: "<record type=\"TransactionType\" name=\"transactionType\">"),
               let recordEnd = xml.range(of: "</record>", range: recordStart.upperBound..<xml.endIndex) else {
