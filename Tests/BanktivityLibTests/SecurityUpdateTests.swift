@@ -74,7 +74,7 @@ struct SecurityUpdateTests {
             note: nil,
             adjustment: false,
             lineItems: [syncLI],
-            transactionTypeBaseType: "Sell",
+            transactionTypeBaseTypeCode: 101,
             transactionTypeUUID: BaseRepository.stringValue(sellType, "pUniqueID")
         )
 

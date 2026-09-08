@@ -328,12 +328,11 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let accountName: String
             let offsetAccountUUID: String?
             let currencyUUID: String
-            let transactionTypeBaseType: String
+            let transactionTypeBaseTypeCode: Int16
             let transactionTypeUUID: String
         }
 
         let tradeTypeName = shares < 0 ? "Sell" : "Buy"
-        let transactionTypeBaseType = shares < 0 ? "sell" : "buy"
         let transactionTypeCode: Int16 = shares < 0 ? 101 : 100
         let securityObjectID = secInfo.objectID
 
@@ -433,7 +432,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 accountName: accountName,
                 offsetAccountUUID: offsetAccountUUID,
                 currencyUUID: currencyUUID,
-                transactionTypeBaseType: transactionTypeBaseType,
+                transactionTypeBaseTypeCode: transactionTypeCode,
                 transactionTypeUUID: txTypeUUID
             )
         }
@@ -480,7 +479,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 note: nil,
                 adjustment: false,
                 lineItems: [cashSyncLI, offsetSyncLI],
-                transactionTypeBaseType: info.transactionTypeBaseType,
+                transactionTypeBaseTypeCode: info.transactionTypeBaseTypeCode,
                 transactionTypeUUID: info.transactionTypeUUID
             )
         }
@@ -593,6 +592,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let offsetAccountUUID: String?
             let currencyUUID: String
             let transactionTypeUUID: String
+            let transactionTypeName: String
         }
 
         let securityObjectID = secInfo.objectID
@@ -645,10 +645,15 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let accountName = Self.stringValue(account, "pName")
             let currencyUUID = Self.stringValue(currency, "pUniqueID")
             let txTypeUUID = Self.stringValue(txType, "pUniqueID")
+            // The label the vault stores, not one derived here. `ZTRANSACTIONTYPE`
+            // is Banktivity's own authority for it and the readers already follow
+            // `pTransactionType` to get it, so a create that echoed anything else
+            // would disagree with its own readback.
+            let txTypeName = Self.stringValue(txType, "pName")
             let offsetAccountUUID = offsetAccount.map { Self.stringValue($0, "pUniqueID") }
 
             let tx = Self.createObject(entityName: "Transaction", in: ctx)
-            let txTitle = title ?? "Dividend \(secInfo.symbol)"
+            let txTitle = title ?? "\(txTypeName) \(secInfo.symbol)"
             let txUUID = Self.generateUUID()
             tx.setValue(txTitle, forKey: "pTitle")
             tx.setValue(txUUID, forKey: "pUniqueID")
@@ -722,7 +727,8 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 accountName: accountName,
                 offsetAccountUUID: offsetAccountUUID,
                 currencyUUID: currencyUUID,
-                transactionTypeUUID: txTypeUUID
+                transactionTypeUUID: txTypeUUID,
+                transactionTypeName: txTypeName
             )
         }
 
@@ -777,7 +783,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 note: nil,
                 adjustment: false,
                 lineItems: syncLineItems,
-                transactionTypeBaseType: "dividend",
+                transactionTypeBaseTypeCode: incomeBaseType,
                 transactionTypeUUID: info.transactionTypeUUID
             )
         }
@@ -785,7 +791,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         return SecurityIncomeDTO(
             id: info.txPK,
             date: date,
-            type: "Dividend",
+            type: info.transactionTypeName,
             symbol: secInfo.symbol,
             securityName: secInfo.name,
             amount: amount,
@@ -860,7 +866,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let liUUID: String
             let accountUUID: String
             let currencyUUID: String
-            let transactionTypeBaseType: String
+            let transactionTypeBaseTypeCode: Int16
             let transactionTypeUUID: String
         }
 
@@ -885,7 +891,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let currency = Self.relatedObject(account, "currency")
             let accountUUID = Self.stringValue(account, "pUniqueID")
             let currencyUUID = currency.map { Self.stringValue($0, "pUniqueID") } ?? ""
-            let txTypeBaseType = shares >= 0 ? "buy" : "sell"
+            let txTypeBaseTypeCode: Int16 = baseType
             let txTypeUUID = txType.map { Self.stringValue($0, "pUniqueID") } ?? ""
 
             // Create Transaction
@@ -932,7 +938,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 txPK: Self.extractPK(from: tx.objectID),
                 txUUID: txUUID, txTitle: txTitle, liUUID: liUUID,
                 accountUUID: accountUUID, currencyUUID: currencyUUID,
-                transactionTypeBaseType: txTypeBaseType, transactionTypeUUID: txTypeUUID
+                transactionTypeBaseTypeCode: txTypeBaseTypeCode, transactionTypeUUID: txTypeUUID
             )
         }
 
@@ -953,7 +959,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 transactionUUID: info.txUUID, currencyUUID: info.currencyUUID,
                 date: date, title: info.txTitle, note: nil, adjustment: false,
                 lineItems: [syncLI],
-                transactionTypeBaseType: info.transactionTypeBaseType,
+                transactionTypeBaseTypeCode: info.transactionTypeBaseTypeCode,
                 transactionTypeUUID: info.transactionTypeUUID
             )
         }
