@@ -1028,7 +1028,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
     /// model and holds no rows, because gains are computed when a report is
     /// rendered and then discarded. So this recomputes them.
     ///
-    /// Five rules make the result match Banktivity's own capital-gains export,
+    /// Six rules make the result match Banktivity's own capital-gains export,
     /// each one established by diffing against that export row by row:
     ///
     /// 1. `Move Shares In` and `Transfer Shares` OPEN a lot, not only `Buy`.
@@ -1043,6 +1043,8 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
     ///    disagrees in the last cent.
     /// 5. Carry the UNROUNDED remainder on the lot. Rounding what stays behind,
     ///    rather than only what is reported, loses exactness on partial lots.
+    /// 6. `Move Shares Out` is a transfer, not a sale: proceeds equal the lot's
+    ///    basis, the gain is zero, and the term reads "Long" whatever the hold.
     ///
     /// Filters on the disposal date, since that is what a gains schedule reports.
     /// Throws `RealizedGainError.unsupportedCostBasisMethod` rather than guessing
@@ -1159,6 +1161,16 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                     guard closers.contains(event.type), event.shares < 0 else { continue }
 
                     let soldISO = DateConversion.toISO(event.date)
+                    // Rule 6: a transfer out is not a realisation. The lot moves
+                    // to another account at its carrying basis, so Banktivity
+                    // reports proceeds EQUAL to basis, a zero gain, and the term
+                    // as "Long" regardless of how long it was held -- a two-day
+                    // CCL holding transferred out reads "Long". That last part is
+                    // a quirk rather than a rule I can justify; it is reproduced
+                    // because the schedule has to match. Evidence is thin and
+                    // stated so: this vault holds five `Move Shares Out` rows,
+                    // four of which reach an export, and all four behave this way.
+                    let isTransferOut = event.type == "Move Shares Out"
                     var remaining = -event.shares
                     let disposalTotal = remaining
 
@@ -1167,9 +1179,11 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                         let basis = lots[0].shares > 0
                             ? Self.roundToCents(lots[0].basis * (take / lots[0].shares))
                             : 0
-                        let proceeds = disposalTotal > 0
-                            ? Self.roundToCents(event.amount * (take / disposalTotal))
-                            : 0
+                        let proceeds: Decimal = isTransferOut
+                            ? basis
+                            : (disposalTotal > 0
+                                ? Self.roundToCents(event.amount * (take / disposalTotal))
+                                : 0)
                         let acquiredISO = DateConversion.toISO(lots[0].date)
 
                         let held = (event.date - lots[0].date) / 86_400.0
@@ -1180,7 +1194,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                             accountName: Self.stringValue(event.account, "pName"),
                             shares: take, acquired: acquiredISO, sold: soldISO,
                             proceeds: proceeds, costBasis: basis, gain: proceeds - basis,
-                            term: held > 365 ? "Long" : "Short"))
+                            term: (isTransferOut || held > 365) ? "Long" : "Short"))
 
                         // Rule 5: what stays on the lot keeps full precision.
                         if lots[0].shares > 0 {
