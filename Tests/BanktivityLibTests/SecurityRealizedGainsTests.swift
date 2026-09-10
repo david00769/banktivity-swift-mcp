@@ -207,6 +207,29 @@ struct SecurityRealizedGainsTests {
         #expect(rows[0].gain == Decimal(125))
     }
 
+    @Test("A transfer out moves the lot at its basis and realises nothing")
+    func moveSharesOutRealisesNothing() throws {
+        let f = try makeFixture()
+        defer { TestVaultHelper.cleanup(f.vault) }
+        let moveOut = try seedType(f.container, name: "Move Shares Out", base: 211)
+
+        // The CCL shape: bought Tuesday, transferred out Thursday, and the export
+        // still reads proceeds == basis, gain 0.00, term "Long". The recorded
+        // amount on the row is ignored -- here it is deliberately not the basis,
+        // so a proceeds figure taken from `pAmount` would show up as a gain.
+        try seedEvent(f.container, type: f.buy, account: f.account, security: f.security,
+                      day: 0, shares: dec("7"), amount: dec("-182.32"))
+        try seedEvent(f.container, type: moveOut, account: f.account, security: f.security,
+                      day: 2, shares: dec("-7"), amount: dec("500"))
+
+        let rows = try SecurityRepository(container: f.container).getRealizedGains()
+        #expect(rows.count == 1)
+        #expect(rows[0].costBasis == Decimal(string: "182.32"))
+        #expect(rows[0].proceeds == Decimal(string: "182.32"))
+        #expect(rows[0].gain == 0)
+        #expect(rows[0].term == "Long", "held two days, but a transfer reads Long")
+    }
+
     @Test("The holding period is long only beyond 365 days")
     func termBoundary() throws {
         for (heldDays, expected) in [(365, "Short"), (366, "Long")] {
