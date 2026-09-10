@@ -86,6 +86,7 @@ Use `get_account_reconciliation_status` through MCP or `banktivity-cli statement
 | `get_security_prices` | `--symbol AAPL --start_date --end_date --limit N` | Price history; also accepts `--id N` |
 | `get_security_holdings` | `--symbol AAPL --account_id N` | Current positions with shares, cost basis, market value |
 | `get_security_trades` | `--symbol AAPL --account_id N --start_date --end_date --limit N` | Trade history (buys, sells, transfers) |
+| `get_security_realized_gains` | `--symbol AAPL --account_id N --start_date --end_date --limit N` | Realised gains per closed lot, FIFO. Dates filter the **disposal**. Refuses on a non-FIFO cost-basis method |
 | `get_security_income` | `--symbol AAPL --account_id N --start_date --end_date` | Dividends, interest, capital gains distributions |
 | `create_security_income` | `--account_id N --symbol AAPL --amount 12.34 --date YYYY-MM-DD --offset_category_id N` | Create native dividend income |
 | `create_share_adjustment` | `--account_id N --symbol SYM --shares=-10 --date YYYY-MM-DD` | Share adjustment (charges, splits); `--amount` for cash |

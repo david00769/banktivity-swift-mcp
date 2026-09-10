@@ -279,6 +279,7 @@ security-linked rows can carry separate security-line cash effects.
 - `get_security_prices` — Get price history for a security (by symbol or ID, optional date range/limit)
 - `get_security_holdings` — Get current holdings (positions) with shares, cost basis, and market value
 - `get_security_trades` — Get trade history (buys, sells, transfers) with shares, prices, and commissions
+- `get_security_realized_gains` — Get realised capital gains per closed lot (acquisition date, proceeds, cost basis, gain, short/long term)
 - `get_security_income` — Get investment income (dividends, interest, capital gains distributions)
 - `create_security_income` — Create native security income, currently dividend income
 - `create_share_adjustment` — Create a share adjustment (e.g. charges, stock splits, position corrections)
