@@ -48,7 +48,14 @@ public enum PersistentContainerFactory {
             options: .skipsHiddenFiles
         )
 
-        let momdURLs = contents.filter { $0.pathExtension == "momd" }
+        // Sort by filename so the merge order is deterministic. `contentsOfDirectory`
+        // returns entries in arbitrary order, and `NSManagedObjectModel(byMerging:)` can
+        // produce different entity version hashes depending on the order it sees them in.
+        // A model whose hashes drift between runs is what triggers Core Data to decide a
+        // migration is needed — see the migration flags in `create` below.
+        let momdURLs = contents
+            .filter { $0.pathExtension == "momd" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
         guard !momdURLs.isEmpty else {
             throw BanktivityError.noModelsFound(storeContentURL.path)
@@ -104,6 +111,22 @@ public enum PersistentContainerFactory {
         let description = NSPersistentStoreDescription(url: sqlURL)
         description.type = NSSQLiteStoreType
         description.isReadOnly = readOnly
+
+        // NEVER migrate this store. Both of these default to `true`, which is catastrophic
+        // here: the model is reconstructed by merging a dozen .momd bundles shipped inside
+        // someone else's app bundle (core.momd alone carries seven versions). If the merged
+        // model's entity hashes don't match what Banktivity itself wrote, Core Data silently
+        // performs a lightweight migration — which DROPS AND RECREATES the tables of entities
+        // it thinks changed, discarding every row. Observed 2026-07-28: a single
+        // `line-items update` emptied ZSECURITYPRICE (40,459 rows -> 0) while leaving all
+        // other tables intact, and reported success.
+        //
+        // With migration disabled a model mismatch fails loudly at store-load time instead,
+        // which is always the correct outcome: this tool is a guest in Banktivity's store and
+        // has no business rewriting its schema.
+        description.shouldMigrateStoreAutomatically = false
+        description.shouldInferMappingModelAutomatically = false
+
         // Do NOT enable persistent history tracking — Banktivity uses its own sync
         // mechanism (ZSYNCEDENTITY) rather than Core Data's built-in persistent history.
         // Enabling history tracking populates the ATRANSACTION/ACHANGE tables and adds
