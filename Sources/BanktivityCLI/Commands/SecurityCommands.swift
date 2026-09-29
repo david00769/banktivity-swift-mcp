@@ -7,7 +7,7 @@ import Foundation
 struct Securities: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Security and price history operations",
-        subcommands: [List.self, Create.self, Delete.self, Prices.self, ImportPrices.self, DeletePrices.self, FixPrices.self, Holdings.self, Trades.self, RealizedGains.self, Income.self, CreateTrade.self, CreateIncome.self, Adjust.self, UpdateTrade.self, Rename.self]
+        subcommands: [List.self, Create.self, Delete.self, Prices.self, ImportPrices.self, DeletePrices.self, FixPrices.self, Holdings.self, Trades.self, RealizedGains.self, Income.self, CreateTrade.self, CreateIncome.self, Adjust.self, UpdateTrade.self, Rename.self, LinkIncomeCategory.self]
     )
 
     struct Rename: AsyncParsableCommand {
@@ -53,6 +53,40 @@ struct Securities: AsyncParsableCommand {
             let result = try securities.renameSecurity(
                 symbol: symbol, id: id, newSymbol: newSymbol, newName: newName
             )
+            try outputJSON(result, format: parent.format)
+        }
+    }
+
+    struct LinkIncomeCategory: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "link-income-category",
+            abstract: "Point an income row's security leg at its income-category line",
+            discussion: """
+            Repairs income rows written by `create-income` before it set
+            `pIncomeCategoryLineItemID`: Banktivity reads the row's category
+            through that pointer and showed them "Uncategorized". The target line
+            is derived -- the one income-category line on the transaction -- and
+            zero or several are refused.
+            """
+        )
+
+        @OptionGroup var parent: GlobalOptions
+
+        @Option(name: .long, help: "Transaction ID of the income row")
+        var transactionId: Int
+
+        @Flag(name: .long, help: "Report what would change without writing")
+        var dryRun = false
+
+        func run() async throws {
+            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
+            let container = try BanktivityCLI.createContainer(vaultPath: path)
+            if !dryRun {
+                let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
+                try await guardWrite(writeGuard)
+            }
+            let securities = SecurityRepository(container: container)
+            let result = try securities.linkIncomeCategory(transactionId: transactionId, dryRun: dryRun)
             try outputJSON(result, format: parent.format)
         }
     }

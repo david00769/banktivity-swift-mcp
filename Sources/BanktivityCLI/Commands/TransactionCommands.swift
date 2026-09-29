@@ -370,6 +370,9 @@ struct Transactions: AsyncParsableCommand {
         @Argument(help: "Transaction ID")
         var id: Int
 
+        @Flag(name: .long, help: "Include the whole decompressed sync XML, not the 300-character preview")
+        var fullBlob = false
+
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
@@ -410,7 +413,39 @@ struct Transactions: AsyncParsableCommand {
                 "date": tx.date
             ]
 
-            if let syncInfo = syncBlobUpdater.inspectSyncRecord(entityUUID: uuid) {
+            // With --full-blob, also every stored Core Data attribute of each line
+            // and its security line item: the fields no DTO carries, which is where
+            // a row the CLI wrote and a row Banktivity wrote can still differ.
+            if fullBlob {
+                nonisolated(unsafe) var raw: [[String: Any]] = []
+                ctx.performAndWait {
+                    let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+                    request.predicate = NSPredicate(format: "pUniqueID == %@", uuid)
+                    guard let txObj = try? ctx.fetch(request).first,
+                          let lines = txObj.value(forKey: "lineItems") as? Set<NSManagedObject> else { return }
+                    func attrs(_ o: NSManagedObject) -> [String: Any] {
+                        var d: [String: Any] = [:]
+                        for name in o.entity.attributesByName.keys.sorted() {
+                            d[name] = o.value(forKey: name).map { "\($0)" } ?? "(nil)"
+                        }
+                        return d
+                    }
+                    for li in lines.sorted(by: { $0.objectID.uriRepresentation().absoluteString < $1.objectID.uriRepresentation().absoluteString }) {
+                        var entry = attrs(li)
+                        entry["objectID"] = li.objectID.uriRepresentation().lastPathComponent
+                        if let acct = li.value(forKey: "pAccount") as? NSManagedObject {
+                            entry["pAccount"] = acct.value(forKey: "pName") as? String ?? "?"
+                        }
+                        if let sli = li.value(forKey: "pSecurityLineItem") as? NSManagedObject {
+                            entry["securityLineItem"] = attrs(sli)
+                        }
+                        raw.append(entry)
+                    }
+                }
+                output["coreDataLineItems"] = raw
+            }
+
+            if let syncInfo = syncBlobUpdater.inspectSyncRecord(entityUUID: uuid, fullBlob: fullBlob) {
                 output["syncRecord"] = syncInfo
             } else {
                 output["syncRecord"] = "NOT FOUND — no SyncedHostedEntity for this UUID"

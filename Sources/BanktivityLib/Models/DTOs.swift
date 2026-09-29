@@ -552,11 +552,17 @@ public struct SecurityIncomeDTO: Codable, Sendable {
     public let amount: Double
     public let accountName: String
     public let accountId: Int
+    /// Whether the security leg names its income-category line
+    /// (`SecurityLineItem.pIncomeCategoryLineItemID`). Banktivity's register reads
+    /// an investment income row's category through that pointer, so an unlinked
+    /// row shows "Uncategorized" even when its category line is correct.
+    public let categoryLinked: Bool?
 
-    public init(id: Int, date: String, type: String, symbol: String, securityName: String, amount: Double, accountName: String, accountId: Int) {
+    public init(id: Int, date: String, type: String, symbol: String, securityName: String, amount: Double, accountName: String, accountId: Int, categoryLinked: Bool? = nil) {
         self.id = id; self.date = date; self.type = type; self.symbol = symbol
         self.securityName = securityName; self.amount = amount
         self.accountName = accountName; self.accountId = accountId
+        self.categoryLinked = categoryLinked
     }
 }
 

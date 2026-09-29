@@ -713,6 +713,15 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             sli.setValue(1.0 as NSNumber, forKey: "pPriceMultiplier")
             sli.setValue(securityInCtx, forKey: "pSecurity")
             sli.setValue(cashLI, forKey: "pLineItem")
+            // Banktivity's register finds an income row's category through this
+            // pointer, not by inspecting the other line. Left nil, every row this
+            // wrote read "Uncategorized" although its category line was right
+            // (9617's 21 restored dividends, 2026-09-29). Distribution type 1 is
+            // "deposit", the value this already writes to the sync record.
+            sli.setValue(Self.distributionTypeDeposit as NSNumber, forKey: "pDistributionType")
+            if offsetAccount != nil {
+                sli.setValue(offsetLIUUID, forKey: "pIncomeCategoryLineItemID")
+            }
 
             try ctx.obtainPermanentIDs(for: [tx, cashLI, offsetLI, sli])
             return SyncInfo(
@@ -2187,6 +2196,9 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                     return ""
                 }()
 
+                let linkedID = sli.value(forKey: "pIncomeCategoryLineItemID") as? String
+                let siblingIDs = Self.relatedSet(transaction, "lineItems")
+                    .map { Self.stringValue($0, "pUniqueID") }
                 incomes.append(SecurityIncomeDTO(
                     id: Self.extractPK(from: transaction.objectID),
                     date: dateStr,
@@ -2195,12 +2207,81 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                     securityName: Self.stringValue(security, "pName"),
                     amount: Self.doubleValue(sli, "pIncome"),
                     accountName: Self.stringValue(account, "pName"),
-                    accountId: acctPK
+                    accountId: acctPK,
+                    categoryLinked: linkedID.map { !$0.isEmpty && siblingIDs.contains($0) } ?? false
                 ))
             }
 
             return incomes.sorted { $0.date > $1.date }
         }
+    }
+
+    /// `SecurityLineItem.pDistributionType` for cash income: "deposit", the value
+    /// the sync record carries as `distributionType`.
+    public static let distributionTypeDeposit: Int16 = 1
+
+    /// Point an existing income row's security leg at its income-category line.
+    ///
+    /// Repairs rows `create-income` wrote before it set the pointer. The target is
+    /// derived, never supplied: the one line on the transaction, other than the
+    /// security leg's own, whose account is an income category. Zero or two such
+    /// lines is refused -- which line is the income is then a judgement, not a
+    /// fact. Changes nothing a sync record carries, so no blob is rewritten.
+    public func linkIncomeCategory(transactionId: Int, dryRun: Bool = false) throws -> [String: String] {
+        struct Outcome: Sendable { let result: [String: String] }
+        let outcome: Outcome = try performWriteReturning { [self] ctx in
+            guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
+                throw ToolError.notFound("Transaction not found: \(transactionId)")
+            }
+            let lines = Self.relatedSet(tx, "lineItems")
+            let legs = lines.compactMap { li -> (NSManagedObject, NSManagedObject)? in
+                guard let sli = Self.relatedObject(li, "pSecurityLineItem") else { return nil }
+                return (li, sli)
+            }
+            guard legs.count == 1, let (cashLine, sli) = legs.first else {
+                throw ToolError.invalidInput(
+                    "transaction \(transactionId) has \(legs.count) security legs; expected exactly one")
+            }
+            guard Self.doubleValue(sli, "pIncome") != 0 else {
+                throw ToolError.invalidInput("transaction \(transactionId) is not an income row")
+            }
+            let incomeLines = lines.filter { li in
+                guard li != cashLine, let acct = Self.relatedObject(li, "pAccount") else { return false }
+                return Self.intValue(acct, "pAccountClass") == AccountClass.income
+            }
+            guard incomeLines.count == 1, let target = incomeLines.first else {
+                throw ToolError.invalidInput(
+                    "transaction \(transactionId) has \(incomeLines.count) income-category lines; expected exactly one")
+            }
+            let targetID = Self.stringValue(target, "pUniqueID")
+            let before = (sli.value(forKey: "pIncomeCategoryLineItemID") as? String) ?? ""
+            let beforeType = (sli.value(forKey: "pDistributionType") as? NSNumber)?.int16Value ?? 0
+            // A row that already names a line is Banktivity's, or already repaired:
+            // never re-point it. A reinvested dividend carries distribution type 3
+            // and points at its category deliberately; overwriting either would
+            // corrupt a correct row (cold review, 2026-09-29).
+            if !before.isEmpty && before != targetID {
+                throw ToolError.invalidInput(
+                    "transaction \(transactionId) already points at line \(before), not the derived "
+                    + "income line \(targetID); refusing to re-point a linked row")
+            }
+            let setPointer = before.isEmpty
+            let setType = beforeType == 0
+            let changed = setPointer || setType
+            if changed && !dryRun {
+                if setPointer { sli.setValue(targetID, forKey: "pIncomeCategoryLineItemID") }
+                if setType { sli.setValue(Self.distributionTypeDeposit as NSNumber, forKey: "pDistributionType") }
+                Self.setNow(tx, "pModificationDate")
+            }
+            return Outcome(result: [
+                "transactionId": String(transactionId),
+                "incomeCategoryLineItemId": String(Self.extractPK(from: target.objectID)),
+                "before": before.isEmpty ? "(nil)" : before,
+                "after": targetID,
+                "status": !changed ? "already_linked" : (dryRun ? "would_link" : "linked"),
+            ])
+        }
+        return outcome.result
     }
 
     // MARK: - CSV Parsing

@@ -860,16 +860,16 @@ public final class SyncBlobUpdater: @unchecked Sendable {
 
     /// Inspect a sync record for diagnostic purposes.
     /// Returns a dictionary of key fields, or nil if no record found.
-    public func inspectSyncRecord(entityUUID: String) -> [String: Any]? {
+    public func inspectSyncRecord(entityUUID: String, fullBlob: Bool = false) -> [String: Any]? {
         let ctx = container.newBackgroundContext()
         nonisolated(unsafe) var result: [String: Any]?
         ctx.performAndWait {
-            result = self._inspectSyncRecord(entityUUID: entityUUID, in: ctx)
+            result = self._inspectSyncRecord(entityUUID: entityUUID, fullBlob: fullBlob, in: ctx)
         }
         return result
     }
 
-    private func _inspectSyncRecord(entityUUID: String, in ctx: NSManagedObjectContext) -> [String: Any]? {
+    private func _inspectSyncRecord(entityUUID: String, fullBlob: Bool = false, in ctx: NSManagedObjectContext) -> [String: Any]? {
         let request = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
         request.predicate = NSPredicate(format: "pLocalID == %@", entityUUID)
         request.fetchLimit = 1
@@ -894,6 +894,10 @@ public final class SyncBlobUpdater: @unchecked Sendable {
            let xml = String(data: decompressed, encoding: .utf8) {
             let preview = String(xml.prefix(300))
             result["blobPreview"] = preview
+            // The whole record, for comparing a row the CLI wrote with one
+            // Banktivity wrote: the 300-character preview stops before the
+            // line items, which is where they differ.
+            if fullBlob { result["blobXML"] = xml }
         }
 
         return result
