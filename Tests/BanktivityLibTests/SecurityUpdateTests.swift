@@ -10,7 +10,7 @@ import Testing
 @Suite("Security updates", .serialized)
 @MainActor
 struct SecurityUpdateTests {
-    @Test("updateSecurityLineItem updates commission and sync blob")
+    @Test("updateSecurityLineItem updates commission and marks the transaction modified")
     func updateTradeCommission() throws {
         let vault = try TestVaultHelper.createFreshVault()
         defer { TestVaultHelper.cleanup(vault) }
@@ -51,37 +51,11 @@ struct SecurityUpdateTests {
         sli.setValue(1.0 as NSNumber, forKey: "pPriceMultiplier")
         try ctx.save()
 
-        let syncLI = SyncBlobUpdater.SyncLineItem(
-            accountUUID: BaseRepository.stringValue(account, "pUniqueID"),
-            accountAmount: 100.0,
-            cleared: false,
-            identifier: liUUID,
-            memo: nil,
-            securityLineItem: SyncBlobUpdater.SyncSecurityLineItem(
-                amount: 100.0,
-                commission: 100.0,
-                pricePerShare: 100.0,
-                priceMultiplier: 1.0,
-                securityUUID: BaseRepository.stringValue(security, "pUniqueID"),
-                shares: -1.0,
-                hasDistributionType: false
-            ),
-            transactionAmount: 100.0
-        )
-        let updater = SyncBlobUpdater(container: vault.container)
-        updater.createTransactionSyncRecord(
-            transactionUUID: txUUID,
-            currencyUUID: BaseRepository.stringValue(eur, "pUniqueID"),
-            date: "2026-01-01",
-            title: "Test sell",
-            note: nil,
-            adjustment: false,
-            lineItems: [syncLI],
-            transactionTypeBaseTypeCode: 101,
-            transactionTypeUUID: BaseRepository.stringValue(sellType, "pUniqueID")
-        )
+        try TestVaultHelper.seedSyncRecord(uuid: txUUID, entityType: "Transaction", in: vault.container)
+        try TestVaultHelper.pinModificationDate(entityName: "Transaction", uuid: txUUID, in: vault.container)
+        let baseline = try #require(TestVaultHelper.syncRecordSnapshot(uuid: txUUID, in: vault.container))
 
-        let repo = SecurityRepository(container: vault.container, syncBlobUpdater: updater)
+        let repo = SecurityRepository(container: vault.container)
         let txPK = BaseRepository.extractPK(from: tx.objectID)
         let result = try repo.updateSecurityLineItem(
             transactionId: txPK,
@@ -99,15 +73,11 @@ struct SecurityUpdateTests {
         let updatedSLI = try #require(try ctx.fetch(sliRequest).first)
         #expect(BaseRepository.doubleValue(updatedSLI, "pCommission") == 0.0)
 
-        let syncRequest = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
-        syncRequest.predicate = NSPredicate(format: "pLocalID == %@", txUUID)
-        let record = try #require(try ctx.fetch(syncRequest).first)
-        let blobData = try #require(record.value(forKey: "pRemoteEntityData") as? Data)
-        let decompressed = try #require(SyncBlobUpdater.decompressGzip(blobData))
-        let xml = try #require(String(data: decompressed, encoding: .utf8))
-
-        #expect(xml.contains("name=\"commission\""))
-        #expect(xml.contains("<field type=\"decimal\" name=\"commission\">0</field>"))
+        // An update marks the transaction modified and leaves Banktivity's
+        // merge base -- blob, state and synced date -- byte-identical.
+        #expect(TestVaultHelper.syncRecordSnapshot(uuid: txUUID, in: vault.container) == baseline)
+        let modified = try #require(TestVaultHelper.modificationDate(entityName: "Transaction", uuid: txUUID, in: vault.container))
+        #expect(modified > TestVaultHelper.pinnedModificationDate)
     }
 
     @Test("basis-only transfer update requires zero cash line")
@@ -314,7 +284,7 @@ struct SecurityUpdateTests {
         #expect(trade.amount == 500.0)
     }
 
-    @Test("createSecurityTrade creates sell with category offset and sync blob")
+    @Test("createSecurityTrade creates sell with category offset and no sync record")
     func createSecurityTradeSellWithCategoryOffset() throws {
         let vault = try TestVaultHelper.createFreshVault()
         defer { TestVaultHelper.cleanup(vault) }
@@ -336,8 +306,7 @@ struct SecurityUpdateTests {
         BaseRepository.setNow(category, "pModificationDate")
         try ctx.save()
 
-        let updater = SyncBlobUpdater(container: vault.container)
-        let repo = SecurityRepository(container: vault.container, syncBlobUpdater: updater)
+        let repo = SecurityRepository(container: vault.container)
         let accountPK = BaseRepository.extractPK(from: account.objectID)
         let categoryPK = BaseRepository.extractPK(from: category.objectID)
         let result = try repo.createSecurityTrade(
@@ -380,21 +349,11 @@ struct SecurityUpdateTests {
         txRequest.predicate = NSPredicate(format: "pTitle == %@", "TEST SELL CREATE")
         let tx = try #require(try ctx.fetch(txRequest).first)
         let txUUID = BaseRepository.stringValue(tx, "pUniqueID")
-        let syncRequest = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
-        syncRequest.predicate = NSPredicate(format: "pLocalID == %@", txUUID)
-        let record = try #require(try ctx.fetch(syncRequest).first)
-        let blobData = try #require(record.value(forKey: "pRemoteEntityData") as? Data)
-        let decompressed = try #require(SyncBlobUpdater.decompressGzip(blobData))
-        let xml = try #require(String(data: decompressed, encoding: .utf8))
-
-        #expect(xml.contains("<field enum=\"IGGCSyncAccountingTransactionBaseType\" name=\"baseType\">sell</field>"))
-        #expect(xml.contains("<field type=\"decimal\" name=\"shares\">-2.5</field>"))
-        #expect(xml.contains("<field type=\"decimal\" name=\"pricePerShare\">12.34</field>"))
-        #expect(xml.contains("<field type=\"decimal\" name=\"cost\">30.85</field>"))
-        #expect(xml.contains("<field type=\"decimal\" name=\"commission\">1.23</field>"))
-        #expect(xml.contains("<field type=\"decimal\" name=\"accountAmount\">596.06</field>"))
-        #expect(xml.contains("<field type=\"decimal\" name=\"accountAmount\">-596.06</field>"))
-        #expect(xml.contains("Account:\(BaseRepository.stringValue(category, "pUniqueID"))"))
+        // Banktivity inserts the sync record when it uploads the new row;
+        // the CLI writes none and stamps the row's dates instead.
+        #expect(TestVaultHelper.syncRecordSnapshot(uuid: txUUID, in: vault.container) == nil)
+        #expect(tx.value(forKey: "pCreationTime") as? Date != nil)
+        #expect(tx.value(forKey: "pModificationDate") as? Date != nil)
     }
 
     @Test("createSecurityIncome creates native dividend income")
@@ -425,8 +384,7 @@ struct SecurityUpdateTests {
         BaseRepository.setNow(category, "pModificationDate")
         try ctx.save()
 
-        let updater = SyncBlobUpdater(container: vault.container)
-        let repo = SecurityRepository(container: vault.container, syncBlobUpdater: updater)
+        let repo = SecurityRepository(container: vault.container)
         let accountPK = BaseRepository.extractPK(from: account.objectID)
         let categoryPK = BaseRepository.extractPK(from: category.objectID)
         let result = try repo.createSecurityIncome(
@@ -473,19 +431,11 @@ struct SecurityUpdateTests {
         txRequest.predicate = NSPredicate(format: "pTitle == %@", "Qualified Dividend TEST")
         let tx = try #require(try ctx.fetch(txRequest).first)
         let txUUID = BaseRepository.stringValue(tx, "pUniqueID")
-        let syncRequest = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
-        syncRequest.predicate = NSPredicate(format: "pLocalID == %@", txUUID)
-        let record = try #require(try ctx.fetch(syncRequest).first)
-        let blobData = try #require(record.value(forKey: "pRemoteEntityData") as? Data)
-        let decompressed = try #require(SyncBlobUpdater.decompressGzip(blobData))
-        let xml = try #require(String(data: decompressed, encoding: .utf8))
-
-        #expect(xml.contains("<field enum=\"IGGCSyncAccountingTransactionBaseType\" name=\"baseType\">dividend</field>"))
-        #expect(xml.contains("<field enum=\"IGGCSyncAccountingSecurityLineItemDistrbutionType\" name=\"distributionType\">deposit</field>"))
-        #expect(xml.contains("<field type=\"decimal\" name=\"income\">93.07</field>"))
-        #expect(xml.contains("<field type=\"decimal\" name=\"accountAmount\">93.07</field>"))
-        #expect(xml.contains("<field type=\"decimal\" name=\"accountAmount\">-93.07</field>"))
-        #expect(xml.contains("Account:\(BaseRepository.stringValue(category, "pUniqueID"))"))
+        // Banktivity inserts the sync record when it uploads the new row;
+        // the CLI writes none and stamps the row's dates instead.
+        #expect(TestVaultHelper.syncRecordSnapshot(uuid: txUUID, in: vault.container) == nil)
+        #expect(tx.value(forKey: "pCreationTime") as? Date != nil)
+        #expect(tx.value(forKey: "pModificationDate") as? Date != nil)
     }
 
     // MARK: - Security deletion
@@ -686,9 +636,7 @@ struct SecurityUpdateTests {
         try ctx.save()
 
         let repo = SecurityRepository(
-            container: vault.container,
-            syncBlobUpdater: SyncBlobUpdater(container: vault.container)
-        )
+            container: vault.container)
         #expect(try repo.deleteSecurity(symbol: "TEST") == 1)
 
         ctx.refreshAllObjects()

@@ -47,7 +47,7 @@ Three-target package structure:
 
 ```
 BanktivityLib        ← Pure domain library (no MCP dependency)
-  CoreData/          PersistentContainer, DateConversion, WriteGuard, SyncBlobUpdater
+  CoreData/          PersistentContainer, DateConversion, WriteGuard, SyncRecords
   Repositories/      BaseRepository + 10 domain repositories
   Models/            DTOs, Constants, Errors, Formatting
   Export/            RDF export: TurtleWriter, TurtleSerializer, VaultExporter
@@ -96,7 +96,7 @@ Property names are prefixed with `p` (e.g., `pName`, `pDate`, `pAccountClass`, `
 
 **Transactions require balancing offset line items.** Every transaction must have line items that sum to zero (double-entry). When `TransactionRepository.create()` receives line items that don't sum to zero, it automatically creates a balancing offset line item with no account (uncategorized). Without this, Opening Balance transactions won't affect the account's running cash balance in Banktivity.
 
-**Security prices must set `pClosePrice`.** Some price records (from older imports or Banktivity itself) have `pClosePrice=0` with the actual value only in `pAdjustedClosePrice`. The sync blob embeds only `closePrice`, so the mobile app shows 0. Security price history does **not** sync via CloudKit — only the `latestSecurityPrice` embedded in the Security entity's sync blob propagates. Use `securities fix-prices` to repair broken records and update sync blobs.
+**Security prices must set `pClosePrice`.** Some price records (from older imports or Banktivity itself) have `pClosePrice=0` with the actual value only in `pAdjustedClosePrice`. The sync blob embeds only `closePrice`, so the mobile app shows 0. Security price history does **not** sync via CloudKit — only the `latestSecurityPrice` embedded in the Security entity's sync record propagates. Use `securities fix-prices` to repair broken records; it marks each affected Security modified (as do `import-prices` and `delete-prices`). Whether Banktivity's upload then carries the corrected `latestSecurityPrice` is **unverified**.
 
 **WriteGuard before mutations.** All write tools check `WriteGuard.guardWriteAccess()` first. If Banktivity.app has the SQLite file open (detected via `lsof`), writes are blocked to prevent corruption.
 
@@ -109,26 +109,25 @@ before write runs, and re-resolve account, transaction, statement, and category
 IDs after Banktivity 10 restore/import/migration because local numeric IDs can
 change.
 
-### Sync Blob Updates (SyncBlobUpdater)
+### Sync Bookkeeping (SyncRecords)
 
-Banktivity's CloudKit sync uses `ZSYNCEDENTITY` records with gzipped XML blobs (`pRemoteEntityData`) representing each entity's last-synced state. When CLI/MCP tools modify transactions, the `SyncBlobUpdater` patches these blobs so Banktivity recognizes the changes and pushes them to CloudKit.
+Banktivity's CloudKit sync keeps a `SyncedHostedEntity` (`ZSYNCEDENTITY`) record per synced entity. Measured against Banktivity 10 on 2026-09-30:
 
-**How it works**: After a Core Data write succeeds, `SyncBlobUpdater` fetches the `SyncedHostedEntity` by the transaction's `pUniqueID`, decompresses the gzip blob, applies XML string patches to the relevant fields, validates the result, saves the compressed blob back, and nulls `pSyncedModificationDate` so Banktivity re-checks the record on next sync.
+- **Upload detection is by modification date.** `IGGSyncServices` uploads entities whose `pModificationDate` / `pCreationTime` is later than the sync document's last sync date (`fetchSyncEntityIDsOfType:modifiedAfterDate:`).
+- **`pRemoteEntityData` is the merge base** — a gzipped XML record of what the server holds, used as the base of a three-way merge (`mergedFieldFromBase:remote:local:`). Banktivity inserts the `SyncedHostedEntity` itself when it uploads a new row (`insertNewSyncedHostedEntityOfType:`), and only its sync writes the blob.
+- **`pSyncedState` is only for deletion**: 0 = normal, 3 = pending delete.
 
-**Operations patched**:
-- Reconcile/unreconcile: patches `cleared` and `statement` fields on line items in the blob
-- Recategorize: patches `account` reference on the category line item
-- Tag/untag: patches `tags` collection on line items
-- Transaction update: patches `title`, `note`, `date` at the transaction level
-- Transaction delete: keeps the `SyncedHostedEntity` record, sets `pSyncedState = 3` and `pSyncedModificationDate` to the current timestamp — Banktivity recognises state 3 as "deleted" and pushes the deletion to CloudKit. The blob (`pRemoteEntityData`) is preserved so Banktivity knows what to delete.
+The write model:
 
-**Non-fatal by design**: All blob updates are wrapped in try/catch. If a sync record is missing, decompression fails, or the XML can't be patched, the Core Data write still succeeds — only the sync push is skipped. Failures log to stderr.
+- **Inserts and updates: the modification date is the only upload signal.** A create sets `pCreationTime` and `pModificationDate` to now; an update sets `pModificationDate` to now — in the same context and save as the edit, as a Banktivity UI edit does. Line items (and statement membership, tags, security legs) travel inside their Transaction's record, so any change to them stamps the parent Transaction. The CLI writes no `SyncedHostedEntity` on create.
+- **Deletes use Banktivity's pending-delete mark** (what `markSyncedHostedEntitiesOfType:forDeletionWithLocalIDs:` does): keep the record, set `pSyncedState = 3` and `pSyncedModificationDate` to now, in the same context and save as the entity delete (`SyncRecords.markDeletedIfPresent`). A row with no record never synced, so it is simply deleted; a record already pending deletion is left as it is. Transaction, Statement, Security and Tag deletes mark this way, including the replacement statement a typed restore removes (Tag is a synced entity: `IGGCSyncAccountingTag` in IGGSyncServices).
+- **The CLI never writes `pRemoteEntityData`.** Earlier versions hand-built it on create and patched it on update; patching told Banktivity the server already held the edit, so a stale server copy won the merge and CLI trade repairs on ten accounts were reverted (2026-09-30).
 
-**`pSyncedModificationDate` must be NULL** for Banktivity to check a sync record during sync. Non-NULL means "already synced, skip". All blob patches must null this field after saving, otherwise changes made after the initial sync won't propagate to CloudKit.
+Evidence on inserts: CLI creates did reach the cloud under the old model (a CLI-created cash leg appeared on the iPhone; every CLI create survived the 2026-09-30 server re-serve that reverted updates). That the modification date alone uploads an insert follows from the measured predicate but has not yet been observed end to end.
 
-**LineItems have no separate sync records** — they're serialized inside the parent Transaction's blob. The `identifier` field in the XML maps to `pUniqueID` in Core Data. A Statement `SyncedHostedEntity` can exist, but historical vaults can legitimately omit an individual Statement record; typed statement replacement must never synthesize one. Its authoritative membership synchronization remains the strict transaction-blob patch for every affected line item. When an individual Statement record is present, its deleted/restore state is still a strict part of the atomic forward/inverse contract.
+**LineItems have no separate sync records.** A Statement `SyncedHostedEntity` can exist, but historical vaults can legitimately omit an individual Statement record; typed statement replacement must never synthesize one. When an individual Statement record is present, its deleted/restore state is a strict part of the atomic forward/inverse contract: the inspection preimage records its `pSyncedModificationDate` (`syncedModificationTimestamp`) and restore puts back exactly that value. Replace/restore refuses a record already pending deletion.
 
-**`pSyncedState` values**: 0 = normal/synced, 3 = deleted. For deletions, set state to 3 and `pSyncedModificationDate` to the current timestamp (preserving the blob). For modifications, null `pSyncedModificationDate` (keeping state at 0).
+`SyncRecords` is the only code that touches `SyncedHostedEntity`: static helpers that run inside the caller's context and never save on their own (`markDeletedIfPresent`, `requireNotPendingDelete`, `syncedModificationDate`, `restoreDeletedStatementRecordIfPresent`), plus the read-only `inspect` behind `transactions sync-info` and `statements inspect-sync-record`. Repositories take no sync dependency.
 
 ---
 

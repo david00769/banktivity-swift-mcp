@@ -152,20 +152,4 @@ struct DateConversionTests {
         #expect(parts.hour == 10)
         #expect(parts.minute == 0)
     }
-
-    @Test("the sync blob timestamp describes the same instant as the Core Data write")
-    func syncBlobTimestampMatchesTheStoredInstant() throws {
-        let dateOnly = "2026-06-08"
-        let stored = try #require(
-            DateConversion.fromISO(dateOnly, timeZone: DateConversion.dateOnlyTimeZone)
-        )
-
-        let blob = DateConversion.syncBlobTimestamp(dateOnly: dateOnly)
-        #expect(blob == "2026-06-08T10:00:00+0000")
-
-        // Round-trip: the blob string must parse back to the very instant Core Data
-        // holds. If these two ever disagree a sync can silently move the date.
-        let reparsed = try #require(DateConversion.fromISO(blob))
-        #expect(reparsed == stored)
-    }
 }

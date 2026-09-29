@@ -6,11 +6,9 @@ import Foundation
 /// Repository for transaction operations using Core Data
 public final class TransactionRepository: BaseRepository, @unchecked Sendable {
     private let lineItemRepo: LineItemRepository
-    private let syncBlobUpdater: SyncBlobUpdater?
 
-    public init(container: NSPersistentContainer, lineItemRepo: LineItemRepository, syncBlobUpdater: SyncBlobUpdater? = nil) {
+    public init(container: NSPersistentContainer, lineItemRepo: LineItemRepository) {
         self.lineItemRepo = lineItemRepo
-        self.syncBlobUpdater = syncBlobUpdater
         super.init(container: container)
     }
 
@@ -121,16 +119,11 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
         note: String? = nil,
         lineItems: [(accountId: Int, amount: Double, memo: String?)]
     ) throws -> TransactionDTO {
-        struct SyncInfo: Sendable {
-            let txUUID: String
-            let currencyUUID: String
-            let transactionTypeBaseTypeCode: Int16
-            let transactionTypeUUID: String
-            let lineItems: [SyncBlobUpdater.SyncLineItem]
-        }
-
-        // Create the transaction and line items in a background context
-        let syncInfo: SyncInfo = try performWriteReturning { [self] ctx in
+        // Create the transaction and line items in a background context.
+        // `pCreationTime` and `pModificationDate` = now are the whole upload
+        // signal: Banktivity inserts its own SyncedHostedEntity when it
+        // uploads the new row.
+        let txUUID: String = try performWriteReturning { [self] ctx in
             let tx = Self.createObject(entityName: "Transaction", in: ctx)
             let txUUID = Self.generateUUID()
             tx.setValue(title, forKey: "pTitle")
@@ -151,24 +144,8 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                 tx.setValue(txType, forKey: "pTransactionType")
             }
 
-            // Was a three-case switch over base types 0 and 1 that fell through to
-            // "deposit" for everything else -- so a withdrawal, a transfer or a
-            // check was described in its own sync record as a deposit. 0 is not a
-            // base type at all; Deposit is 1 and Withdrawal is 2.
-            let txTypeBaseTypeCode: Int16 = {
-                guard let txType = txType else { return 1 }
-                // `Int16(_:)` traps out of range, and this value comes from the
-                // store rather than from us. 0 is not a base type, so an
-                // unreadable one resolves to no enum name and the sync record is
-                // skipped -- which is the same answer, without the crash.
-                return Int16(exactly: Self.intValue(txType, "pBaseType")) ?? 0
-            }()
-            let txTypeUUID = txType.map { Self.stringValue($0, "pUniqueID") } ?? ""
-
             // Create line items
             var currencySet = false
-            var currencyUUID = ""
-            var syncLineItems: [SyncBlobUpdater.SyncLineItem] = []
 
             var totalAmount = 0.0
 
@@ -177,20 +154,16 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                     throw ToolError.notFound("Account not found: \(liInput.accountId)")
                 }
 
-                let accountUUID = Self.stringValue(account, "pUniqueID")
-
                 // Use the first account's currency for the transaction
                 if !currencySet, let currency = Self.relatedObject(account, "currency") {
                     tx.setValue(currency, forKey: "pCurrency")
-                    currencyUUID = Self.stringValue(currency, "pUniqueID")
                     currencySet = true
                 }
 
                 let li = Self.createObject(entityName: "LineItem", in: ctx)
-                let liUUID = Self.generateUUID()
                 li.setValue(liInput.amount as NSNumber, forKey: "pTransactionAmount")
                 li.setValue(liInput.memo, forKey: "pMemo")
-                li.setValue(liUUID, forKey: "pUniqueID")
+                li.setValue(Self.generateUUID(), forKey: "pUniqueID")
                 li.setValue(1.0 as NSNumber, forKey: "pExchangeRate")
                 li.setValue(0.0 as NSNumber, forKey: "pRunningBalance")
                 li.setValue(false, forKey: "pCleared")
@@ -199,12 +172,6 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                 li.setValue(tx, forKey: "pTransaction")
 
                 totalAmount += liInput.amount
-
-                syncLineItems.append(SyncBlobUpdater.SyncLineItem(
-                    accountUUID: accountUUID, accountAmount: liInput.amount,
-                    cleared: false, identifier: liUUID, memo: liInput.memo,
-                    securityLineItem: nil, transactionAmount: liInput.amount
-                ))
             }
 
             // Create balancing offset line item if the explicit line items don't sum to zero.
@@ -212,40 +179,17 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
             // the transaction won't affect the account's running cash balance.
             if abs(totalAmount) > 0.001 {
                 let offsetLi = Self.createObject(entityName: "LineItem", in: ctx)
-                let offsetUUID = Self.generateUUID()
                 offsetLi.setValue(-totalAmount as NSNumber, forKey: "pTransactionAmount")
-                offsetLi.setValue(offsetUUID, forKey: "pUniqueID")
+                offsetLi.setValue(Self.generateUUID(), forKey: "pUniqueID")
                 offsetLi.setValue(1.0 as NSNumber, forKey: "pExchangeRate")
                 offsetLi.setValue(0.0 as NSNumber, forKey: "pRunningBalance")
                 offsetLi.setValue(false, forKey: "pCleared")
                 Self.setNow(offsetLi, "pCreationTime")
                 // No pAccount — this is an uncategorized offset
                 offsetLi.setValue(tx, forKey: "pTransaction")
-
-                syncLineItems.append(SyncBlobUpdater.SyncLineItem(
-                    accountUUID: "", accountAmount: -totalAmount,
-                    cleared: false, identifier: offsetUUID, memo: nil,
-                    securityLineItem: nil, transactionAmount: -totalAmount
-                ))
             }
 
-            return SyncInfo(
-                txUUID: txUUID, currencyUUID: currencyUUID,
-                transactionTypeBaseTypeCode: txTypeBaseTypeCode,
-                transactionTypeUUID: txTypeUUID,
-                lineItems: syncLineItems
-            )
-        }
-
-        // Create sync record (non-fatal)
-        if let updater = syncBlobUpdater {
-            updater.createTransactionSyncRecord(
-                transactionUUID: syncInfo.txUUID, currencyUUID: syncInfo.currencyUUID,
-                date: date, title: title, note: note, adjustment: false,
-                lineItems: syncInfo.lineItems,
-                transactionTypeBaseTypeCode: syncInfo.transactionTypeBaseTypeCode,
-                transactionTypeUUID: syncInfo.transactionTypeUUID
-            )
+            return txUUID
         }
 
         // Recalculate running balances for all affected accounts
@@ -254,7 +198,7 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
             try lineItemRepo.recalculateRunningBalances(accountId: accountId)
         }
 
-        guard let created = try get(uniqueID: syncInfo.txUUID) else {
+        guard let created = try get(uniqueID: txUUID) else {
             throw ToolError.notFound("Failed to retrieve created transaction")
         }
         return created
@@ -262,21 +206,12 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
 
     /// Update an existing transaction
     public func update(transactionId: Int, title: String? = nil, note: String? = nil, date: String? = nil, cleared: Bool? = nil, transactionType: String? = nil) throws -> TransactionDTO? {
-        struct UpdateOutcome: Sendable {
-            let txUUID: String
-            let dateChanged: Bool
-            let newTxTypeBaseTypeCode: Int16?
-            let newTxTypeUUID: String?
-        }
-
-        let outcome: UpdateOutcome = try performWriteReturning { [self] ctx in
+        let dateChanged: Bool = try performWriteReturning { [self] ctx in
             guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
                 throw ToolError.notFound("Transaction not found: \(transactionId)")
             }
 
             var dateChanged = false
-            var newTxTypeBaseTypeCode: Int16?
-            var newTxTypeUUID: String?
 
             if let title = title { tx.setValue(title, forKey: "pTitle") }
             if let note = note { tx.setValue(note, forKey: "pNote") }
@@ -297,21 +232,14 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                     throw ToolError.notFound("TransactionType entity not found for base type \(baseType)")
                 }
                 tx.setValue(txType, forKey: "pTransactionType")
-                newTxTypeBaseTypeCode = Int16(baseType)
-                newTxTypeUUID = Self.stringValue(txType, "pUniqueID")
             }
             Self.setNow(tx, "pModificationDate")
 
-            return UpdateOutcome(
-                txUUID: Self.stringValue(tx, "pUniqueID"),
-                dateChanged: dateChanged,
-                newTxTypeBaseTypeCode: newTxTypeBaseTypeCode,
-                newTxTypeUUID: newTxTypeUUID
-            )
+            return dateChanged
         }
 
         // If date changed, recalculate running balances for affected accounts
-        if outcome.dateChanged {
+        if dateChanged {
             if let lineItems = try? lineItemRepo.getForTransactionPK(transactionId) {
                 let accountIds = Set(lineItems.map(\.accountId))
                 for accountId in accountIds {
@@ -320,19 +248,6 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
             }
         }
 
-        // Patch sync blob (non-fatal)
-        if let updater = syncBlobUpdater {
-            updater.updateTransactionBlob(transactionUUID: outcome.txUUID) { xml in
-                var result = xml
-                if let t = title { result = updater.patchTransactionTitle(xml: result, title: t) }
-                if let n = note { result = updater.patchTransactionNote(xml: result, note: n) }
-                if let d = date { result = updater.patchTransactionDate(xml: result, date: DateConversion.syncBlobTimestamp(dateOnly: d)) }
-                if let bt = outcome.newTxTypeBaseTypeCode, let tu = outcome.newTxTypeUUID {
-                    result = updater.patchTransactionType(xml: result, baseTypeCode: bt, typeUUID: tu)
-                }
-                return result
-            }
-        }
 
         return try get(transactionId: transactionId)
     }
@@ -371,13 +286,7 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
             )
         }
 
-        struct RepairInfo: Sendable {
-            let txUUID: String
-            let affectedAccountIds: [Int]
-            let syncLineItems: [SyncBlobUpdater.SyncLineItem]
-        }
-
-        let syncInfo = try performWriteReturning { [self] ctx -> RepairInfo in
+        let affectedAccountIds = try performWriteReturning { [self] ctx -> [Int] in
             guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
                 throw ToolError.notFound("Transaction not found: \(transactionId)")
             }
@@ -391,10 +300,6 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                 throw ToolError.notFound("Fee category not found: \(feeCategoryId)")
             }
 
-            let sourceUUID = Self.stringValue(sourceAccount, "pUniqueID")
-            let targetUUID = Self.stringValue(targetAccount, "pUniqueID")
-            let feeUUID = Self.stringValue(feeCategory, "pUniqueID")
-            let txUUID = Self.stringValue(tx, "pUniqueID")
 
             if let title = title { tx.setValue(title, forKey: "pTitle") }
             if let note = note { tx.setValue(note, forKey: "pNote") }
@@ -430,13 +335,10 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                 throw ToolError.invalidInput("Transaction has unmanaged extra line items: \(ids)")
             }
 
-            func ensureUUID(_ line: NSManagedObject) -> String {
-                let existingUUID = Self.stringValue(line, "pUniqueID")
-                if !existingUUID.isEmpty { return existingUUID }
-                let uuid = Self.generateUUID()
-                line.setValue(uuid, forKey: "pUniqueID")
+            func ensureUUID(_ line: NSManagedObject) {
+                guard Self.stringValue(line, "pUniqueID").isEmpty else { return }
+                line.setValue(Self.generateUUID(), forKey: "pUniqueID")
                 Self.setNow(line, "pCreationTime")
-                return uuid
             }
 
             func configure(
@@ -447,8 +349,8 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                 memo: String?,
                 sortIndex: Int16,
                 defaultCleared: Bool
-            ) -> String {
-                let uuid = ensureUUID(line)
+            ) {
+                ensureUUID(line)
                 line.setValue(account, forKey: "pAccount")
                 line.setValue(tx, forKey: "pTransaction")
                 line.setValue(amount as NSNumber, forKey: "pTransactionAmount")
@@ -458,53 +360,25 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                 if line.value(forKey: "pCleared") == nil {
                     line.setValue(defaultCleared, forKey: "pCleared")
                 }
-                return uuid
             }
 
-            let sourceLineUUID = configure(
+            configure(
                 sourceLine, account: sourceAccount, amount: -grossSourceAmount,
                 rate: 1.0, memo: sourceMemo, sortIndex: 0, defaultCleared: false
             )
-            let targetLineUUID = configure(
+            configure(
                 targetLine, account: targetAccount, amount: sourceAfterFee,
                 rate: exchangeRate, memo: targetMemo, sortIndex: 1, defaultCleared: false
             )
-            let feeLineUUID = configure(
+            configure(
                 feeLine, account: feeCategory, amount: sourceFeeAmount,
                 rate: 1.0, memo: feeMemo, sortIndex: 2, defaultCleared: false
             )
 
-            return RepairInfo(
-                txUUID: txUUID,
-                affectedAccountIds: [sourceAccountId, targetAccountId, feeCategoryId],
-                syncLineItems: [
-                    SyncBlobUpdater.SyncLineItem(
-                        accountUUID: sourceUUID, accountAmount: -grossSourceAmount,
-                        cleared: Self.boolValue(sourceLine, "pCleared"),
-                        identifier: sourceLineUUID, memo: sourceMemo,
-                        securityLineItem: nil, transactionAmount: -grossSourceAmount
-                    ),
-                    SyncBlobUpdater.SyncLineItem(
-                        accountUUID: targetUUID, accountAmount: targetAmount,
-                        cleared: Self.boolValue(targetLine, "pCleared"),
-                        identifier: targetLineUUID, memo: targetMemo,
-                        securityLineItem: nil, transactionAmount: sourceAfterFee
-                    ),
-                    SyncBlobUpdater.SyncLineItem(
-                        accountUUID: feeUUID, accountAmount: sourceFeeAmount,
-                        cleared: Self.boolValue(feeLine, "pCleared"),
-                        identifier: feeLineUUID, memo: feeMemo,
-                        securityLineItem: nil, transactionAmount: sourceFeeAmount
-                    ),
-                ]
-            )
+            return [sourceAccountId, targetAccountId, feeCategoryId]
         }
 
-        if let updater = syncBlobUpdater {
-            updater.replaceTransactionLineItems(transactionUUID: syncInfo.txUUID, lineItems: syncInfo.syncLineItems)
-        }
-
-        for accountId in syncInfo.affectedAccountIds {
+        for accountId in affectedAccountIds {
             try lineItemRepo.recalculateRunningBalances(accountId: accountId)
         }
 
@@ -514,12 +388,6 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
 
     /// Delete a transaction and its line items
     public func delete(transactionId: Int) throws -> Bool {
-        // Get UUID and affected account IDs on the context's thread before deletion
-        let txUUID: String? = try performRead { [self] ctx in
-            guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else { return nil }
-            return Self.stringValue(tx, "pUniqueID")
-        }
-
         let lineItems = try lineItemRepo.getForTransactionPK(transactionId)
         let affectedAccountIds = Set(lineItems.map(\.accountId))
 
@@ -534,6 +402,10 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                 ctx.delete(li)
             }
 
+            // Banktivity's pending-delete mark, in the same save as the delete.
+            try SyncRecords.markDeletedIfPresent(
+                entityUUID: Self.stringValue(tx, "pUniqueID"), in: ctx
+            )
             ctx.delete(tx)
             return true
         }
@@ -542,10 +414,6 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
         if deleted {
             for accountId in affectedAccountIds {
                 try lineItemRepo.recalculateRunningBalances(accountId: accountId)
-            }
-            // Delete sync record (non-fatal)
-            if let updater = syncBlobUpdater, let uuid = txUUID {
-                updater.deleteSyncRecord(entityUUID: uuid)
             }
         }
 

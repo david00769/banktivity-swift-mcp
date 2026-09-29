@@ -5,16 +5,6 @@ import Foundation
 
 /// Repository for line item operations using Core Data
 public final class LineItemRepository: BaseRepository, @unchecked Sendable {
-    private let syncBlobUpdater: SyncBlobUpdater?
-
-    public init(
-        container: NSPersistentContainer,
-        syncBlobUpdater: SyncBlobUpdater? = nil
-    ) {
-        self.syncBlobUpdater = syncBlobUpdater
-        super.init(container: container)
-    }
-
     public static let writeConfirmations = [
         "operator_reviewed_target",
         "post_ui_verification_required",
@@ -117,6 +107,8 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
             Self.setNow(li, "pCreationTime")
             li.setValue(account, forKey: "pAccount")
             li.setValue(tx, forKey: "pTransaction")
+            // Line items travel inside the Transaction's sync record.
+            Self.setNow(tx, "pModificationDate")
 
             return Self.extractPK(from: li.objectID)
         }
@@ -130,13 +122,7 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
         memo: String? = nil,
         cleared: Bool? = nil
     ) throws -> Set<Int> {
-        struct UpdateOutcome: Sendable {
-            let affectedAccountIds: Set<Int>
-            let transactionUUID: String?
-            let lineItemUUID: String
-        }
-
-        let outcome: UpdateOutcome = try performWriteReturning { [self] ctx in
+        try performWriteReturning { [self] ctx in
             guard let li = try fetchByPK(entityName: "LineItem", pk: lineItemId, in: ctx) else {
                 throw ToolError.notFound("Line item not found: \(lineItemId)")
             }
@@ -172,34 +158,13 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
                 li.setValue(cleared, forKey: "pCleared")
             }
 
-            let transaction = Self.relatedObject(li, "pTransaction")
             if accountId != nil || amount != nil || memo != nil || cleared != nil,
-               let transaction {
+               let transaction = Self.relatedObject(li, "pTransaction") {
                 Self.setNow(transaction, "pModificationDate")
             }
 
-            return UpdateOutcome(
-                affectedAccountIds: affectedAccountIds,
-                transactionUUID: transaction.map { Self.stringValue($0, "pUniqueID") },
-                lineItemUUID: Self.stringValue(li, "pUniqueID")
-            )
+            return affectedAccountIds
         }
-
-        if let cleared,
-           let transactionUUID = outcome.transactionUUID,
-           !transactionUUID.isEmpty,
-           !outcome.lineItemUUID.isEmpty,
-           let updater = syncBlobUpdater {
-            updater.updateTransactionBlob(transactionUUID: transactionUUID) { xml in
-                updater.patchCleared(
-                    xml: xml,
-                    lineItemUUID: outcome.lineItemUUID,
-                    cleared: cleared
-                )
-            }
-        }
-
-        return outcome.affectedAccountIds
     }
 
     /// Delete a line item
@@ -217,6 +182,8 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
             }
             if let tx = Self.relatedObject(li, "pTransaction") {
                 transactionId = Self.extractPK(from: tx.objectID)
+                // Line items travel inside the Transaction's sync record.
+                Self.setNow(tx, "pModificationDate")
             }
 
             ctx.delete(li)

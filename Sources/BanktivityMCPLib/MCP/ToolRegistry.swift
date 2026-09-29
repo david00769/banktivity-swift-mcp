@@ -139,15 +139,11 @@ public final class ToolRegistry: @unchecked Sendable {
     public func registerAllTools() {
         registerDiagnosticTools()
 
-        // Create sync blob updater and repositories
-        let syncBlobUpdater = SyncBlobUpdater(container: container)
-        let lineItemRepo = LineItemRepository(
-            container: container,
-            syncBlobUpdater: syncBlobUpdater
-        )
+        // Create repositories
+        let lineItemRepo = LineItemRepository(container: container)
         let accountRepo = AccountRepository(container: container)
-        let transactionRepo = TransactionRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: syncBlobUpdater)
-        let tagRepo = TagRepository(container: container, syncBlobUpdater: syncBlobUpdater)
+        let transactionRepo = TransactionRepository(container: container, lineItemRepo: lineItemRepo)
+        let tagRepo = TagRepository(container: container)
         let categoryRepo = CategoryRepository(container: container)
         let templateRepo = TemplateRepository(container: container)
         let importRuleRepo = ImportRuleRepository(container: container)
@@ -155,8 +151,7 @@ public final class ToolRegistry: @unchecked Sendable {
         let categorizationRepo = CategorizationRepository(
             container: container,
             categoryRepo: categoryRepo,
-            importRuleRepo: importRuleRepo,
-            syncBlobUpdater: syncBlobUpdater
+            importRuleRepo: importRuleRepo
         )
 
         // Account tools
@@ -199,14 +194,14 @@ public final class ToolRegistry: @unchecked Sendable {
         )
 
         // Statement tools (read + write)
-        let statementRepo = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: syncBlobUpdater)
+        let statementRepo = StatementRepository(container: container, lineItemRepo: lineItemRepo)
         registerStatementTools(
             registry: self, statements: statementRepo,
             accounts: accountRepo, lineItems: lineItemRepo, writeGuard: writeGuard
         )
 
         // Security tools (read + write)
-        let securityRepo = SecurityRepository(container: container, syncBlobUpdater: syncBlobUpdater)
+        let securityRepo = SecurityRepository(container: container)
         registerSecurityTools(registry: self, securities: securityRepo, writeGuard: writeGuard)
 
         // Export tools (read-only)

@@ -38,6 +38,12 @@ struct PhaseBundleSessionTests {
         #else
         let expectedBuildDirectory = "/release/"
         #endif
+        // Newer toolchains build into .build/out/Products/<Config> and leave
+        // .build/debug as a symlink, which the enumeration below skips.
+        let direct = packageRoot.appendingPathComponent(".build")
+            .appendingPathComponent(expectedBuildDirectory.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+            .appendingPathComponent("banktivity-cli").resolvingSymlinksInPath()
+        if FileManager.default.isExecutableFile(atPath: direct.path) { return direct }
         guard let enumerator = FileManager.default.enumerator(
             at: packageRoot.appendingPathComponent(".build"),
             includingPropertiesForKeys: [.isRegularFileKey],

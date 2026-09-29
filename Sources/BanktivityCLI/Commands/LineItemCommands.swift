@@ -147,10 +147,7 @@ struct LineItems: AsyncParsableCommand {
                 resolvedAccountId = nil
             }
 
-            let lineItems = LineItemRepository(
-                container: container,
-                syncBlobUpdater: SyncBlobUpdater(container: container)
-            )
+            let lineItems = LineItemRepository(container: container)
             if dryRun {
                 try outputJSON(try lineItems.validateUpdate(
                     lineItemId: id,

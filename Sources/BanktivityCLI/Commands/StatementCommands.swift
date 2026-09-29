@@ -143,8 +143,7 @@ struct Statements: AsyncParsableCommand {
                 "statementUUID": statementUUID,
                 "statementName": statement.name as Any,
             ]
-            if let syncInfo = SyncBlobUpdater(container: container)
-                .inspectSyncRecord(entityUUID: statementUUID) {
+            if let syncInfo = SyncRecords.inspect(entityUUID: statementUUID, in: container) {
                 output["syncRecord"] = syncInfo
             } else {
                 output["syncRecord"] = "NOT FOUND — no SyncedHostedEntity for this statement UUID"
@@ -187,7 +186,7 @@ struct Statements: AsyncParsableCommand {
             guard !ids.isEmpty, ids.count == rawIds.count else {
                 throw ToolError.invalidInput("Replacement line-item IDs must be a comma-separated integer list")
             }
-            let repo = StatementRepository(container: container, lineItemRepo: LineItemRepository(container: container), syncBlobUpdater: SyncBlobUpdater(container: container))
+            let repo = StatementRepository(container: container, lineItemRepo: LineItemRepository(container: container))
             let result = try repo.replaceInternalRowWithVisibleStatement(sourceStatementId: sourceStatementId, accountId: accountId, startDate: startDate, endDate: endDate, beginningBalance: beginningBalance, endingBalance: endingBalance, name: name, lineItemIds: ids, preimageSha256: preimageSha256, membershipPreimageSha256: membershipPreimageSha256, replacementMembershipPreimageSha256: replacementMembershipPreimageSha256, positionIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId)
             try outputJSON(result, format: parent.format)
         }
@@ -223,7 +222,7 @@ struct Statements: AsyncParsableCommand {
             let container = try BanktivityCLI.createContainer(vaultPath: path)
             let guarder = BanktivityCLI.createWriteGuard(vaultPath: path); try await guardWrite(guarder)
             try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
-            let repo = StatementRepository(container: container, lineItemRepo: LineItemRepository(container: container), syncBlobUpdater: SyncBlobUpdater(container: container))
+            let repo = StatementRepository(container: container, lineItemRepo: LineItemRepository(container: container))
             let result = try repo.restoreInternalRowFromPreimage(replacementStatementId: replacementStatementId, accountId: accountId, statementPreimage: preimage, memberships: memberships, preimageSha256: preimageSha256, membershipPreimageSha256: membershipPreimageSha256, replacementLineItemIds: replacementIds, replacementMembershipPreimageSha256: replacementMembershipPreimageSha256, replacementPreimageSha256: replacementPreimageSha256, positionIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId)
             try outputJSON(result, format: parent.format)
         }
@@ -313,9 +312,8 @@ struct Statements: AsyncParsableCommand {
             try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
 
             let accountRepo = AccountRepository(container: container)
-            let syncBlobUpdater = SyncBlobUpdater(container: container)
             let lineItemRepo = LineItemRepository(container: container)
-            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: syncBlobUpdater)
+            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
 
             let rawIds = lineItemIds?.split(separator: ",", omittingEmptySubsequences: false).map {
                 $0.trimmingCharacters(in: .whitespaces)
@@ -443,9 +441,8 @@ struct Statements: AsyncParsableCommand {
             try await guardWrite(writeGuard)
             try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
 
-            let syncBlobUpdater = SyncBlobUpdater(container: container)
             let lineItemRepo = LineItemRepository(container: container)
-            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: syncBlobUpdater)
+            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
 
             let deleted = try statements.delete(statementId: statementId, allowInternal: allowInternal)
             if deleted {
@@ -483,9 +480,8 @@ struct Statements: AsyncParsableCommand {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
 
-            let syncBlobUpdater = SyncBlobUpdater(container: container)
             let lineItemRepo = LineItemRepository(container: container)
-            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: syncBlobUpdater)
+            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
 
             let ids = lineItemIds.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
             guard !ids.isEmpty else {
@@ -542,9 +538,8 @@ struct Statements: AsyncParsableCommand {
             try await guardWrite(writeGuard)
             try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
 
-            let syncBlobUpdater = SyncBlobUpdater(container: container)
             let lineItemRepo = LineItemRepository(container: container)
-            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: syncBlobUpdater)
+            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
 
             let ids = lineItemIds.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
             guard !ids.isEmpty else {

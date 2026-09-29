@@ -159,27 +159,6 @@ public enum DateConversion {
         return next.timeIntervalSinceReferenceDate
     }
 
-    /// Render a date-only label as the sync-blob timestamp for the same instant
-    /// the Core Data write uses.
-    ///
-    /// The blob and Core Data must describe the same moment. When they disagreed,
-    /// a row could be written correctly and then described as UTC midnight in the
-    /// blob, letting a sync round-trip move the date.
-    ///
-    /// This runs the *same* conversion the Core Data write runs and formats the
-    /// result, rather than deriving an hour arithmetically -- so the two cannot
-    /// drift apart, and the result stays correct if `dateOnlyTimeZone` is ever
-    /// changed to a positive or half-hour offset.
-    public static func syncBlobTimestamp(dateOnly: String) -> String {
-        guard let ts = fromISO(dateOnly, timeZone: dateOnlyTimeZone) else { return dateOnly }
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZZZ"
-        return formatter.string(from: Date(timeIntervalSinceReferenceDate: ts))
-    }
-
     /// Convert a Date to Core Data timestamp
     public static func fromDate(_ date: Date) -> Double {
         date.timeIntervalSinceReferenceDate

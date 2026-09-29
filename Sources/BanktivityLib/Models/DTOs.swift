@@ -379,6 +379,12 @@ public struct StatementDTO: Codable, Sendable {
     public let lineItems: [LineItemDTO]
     public let createdAt: String?
     public let modifiedAt: String?
+    /// The statement's sync record `pSyncedModificationDate`, as Core Data's
+    /// seconds since the reference date. Set only on an inspection preimage,
+    /// so a restore can put the exact prior value back; `nil` (and absent from
+    /// the JSON, so existing preimage hashes are unchanged) when there is no
+    /// record or no date.
+    public var syncedModificationTimestamp: Double?
 
     public var isBalanced: Bool { isBalancedAdvisory }
 
