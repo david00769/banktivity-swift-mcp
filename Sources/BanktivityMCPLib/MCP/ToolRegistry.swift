@@ -135,8 +135,39 @@ public final class ToolRegistry: @unchecked Sendable {
         }
     }
 
+    /// The five statement WRITE tools: `create_statement`, `update_statement`,
+    /// `delete_statement`, `reconcile_line_items` and `unreconcile_line_items`.
+    public static let statementWriteToolNames: Set<String> = [
+        "create_statement", "update_statement", "delete_statement",
+        "reconcile_line_items", "unreconcile_line_items",
+    ]
+
+    /// Whether the statement write tools are registered, from
+    /// `BANKTIVITY_MCP_STATEMENT_WRITES`.
+    ///
+    /// Unset means yes, so the upstream default is unchanged. `0`, `false`,
+    /// `no` or `off` leave the five tools out of the registry entirely -- not
+    /// refused at dispatch but absent from `tools/list`, so a client never
+    /// sees them. A deployment that plans and writes statements through a
+    /// separate, reviewed route sets it to keep the MCP surface read-only for
+    /// statements. The statement read tools are unaffected.
+    public static func statementWritesEnabled(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        let raw = environment["BANKTIVITY_MCP_STATEMENT_WRITES"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        switch raw {
+        case "0", "false", "no", "off": return false
+        default: return true
+        }
+    }
+
     /// Register all tools. Called during server initialization.
-    public func registerAllTools() {
+    ///
+    /// `statementWrites` defaults to `BANKTIVITY_MCP_STATEMENT_WRITES`; see
+    /// `statementWritesEnabled(environment:)`.
+    public func registerAllTools(statementWrites: Bool = ToolRegistry.statementWritesEnabled()) {
         registerDiagnosticTools()
 
         // Create repositories
@@ -197,7 +228,8 @@ public final class ToolRegistry: @unchecked Sendable {
         let statementRepo = StatementRepository(container: container, lineItemRepo: lineItemRepo)
         registerStatementTools(
             registry: self, statements: statementRepo,
-            accounts: accountRepo, lineItems: lineItemRepo, writeGuard: writeGuard
+            accounts: accountRepo, lineItems: lineItemRepo, writeGuard: writeGuard,
+            includeWrites: statementWrites
         )
 
         // Security tools (read + write)
