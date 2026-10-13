@@ -1327,6 +1327,106 @@ struct StatementRepositoryTests {
         #expect(detachedLineItem.cleared)
     }
 
+    @Test("Statement update sets a trimmed name alone, keeping balances, and the row then classifies named")
+    func updateNameAloneNamesUnnamedInvestmentRow() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let investment = try createInvestmentAccount(named: "Name Alone Brokerage", using: repos.accounts)
+        let statement = try repos.statements.create(
+            accountId: investment.id,
+            startDate: "2026-04-01",
+            endDate: "2026-04-30",
+            beginningBalance: 1,
+            endingBalance: 10
+        )
+        let before = try #require(try repos.statements.get(statementId: statement.id))
+        #expect(before.rowKind == "unnamed_investment_requires_operator_confirmation")
+
+        let named = try repos.statements.update(
+            statementId: statement.id,
+            name: "  JPMS statement 2026-04-30  ",
+            operatorConfirmedVisible: true
+        )
+        #expect(named.name == "JPMS statement 2026-04-30")
+        #expect(named.endingBalance == 10)
+        #expect(named.beginningBalance == 1)
+
+        let readback = try #require(try repos.statements.get(statementId: statement.id))
+        #expect(readback.name == "JPMS statement 2026-04-30")
+        #expect(readback.rowKind == "visible_named_investment")
+        #expect(!readback.isUnnamedInvestmentRow)
+        #expect(!readback.operatorConfirmedVisibleRequired)
+        #expect(try repos.statements.list(accountId: investment.id).contains { $0.id == statement.id })
+
+        // Once named, later updates no longer need the visible attestation.
+        let rebalanced = try repos.statements.update(statementId: statement.id, endingBalance: 12)
+        #expect(rebalanced.endingBalance == 12)
+        #expect(rebalanced.name == "JPMS statement 2026-04-30")
+    }
+
+    @Test("Statement update sets name together with ending balance")
+    func updateNameWithEndingBalance() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let investment = try createInvestmentAccount(named: "Name Balance Brokerage", using: repos.accounts)
+        let statement = try repos.statements.create(
+            accountId: investment.id,
+            startDate: "2026-05-01",
+            endDate: "2026-05-31",
+            beginningBalance: 0,
+            endingBalance: 10
+        )
+        let updated = try repos.statements.update(
+            statementId: statement.id,
+            endingBalance: 25,
+            name: "JPMS statement 2026-05-31",
+            operatorConfirmedVisible: true
+        )
+        #expect(updated.endingBalance == 25)
+        #expect(updated.name == "JPMS statement 2026-05-31")
+        let readback = try #require(try repos.statements.get(statementId: statement.id))
+        #expect(readback.rowKind == "visible_named_investment")
+    }
+
+    @Test("Statement update refuses a blank name, an empty update, and naming an unnamed row without the gate flag")
+    func updateNameGuards() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let investment = try createInvestmentAccount(named: "Name Guard Brokerage", using: repos.accounts)
+        let statement = try repos.statements.create(
+            accountId: investment.id,
+            startDate: "2026-06-01",
+            endDate: "2026-06-30",
+            beginningBalance: 0,
+            endingBalance: 10
+        )
+        #expect(throws: (any Error).self) {
+            try repos.statements.update(statementId: statement.id, name: "   ", operatorConfirmedVisible: true)
+        }
+        #expect(throws: (any Error).self) {
+            try repos.statements.update(statementId: statement.id, name: "", operatorConfirmedVisible: true)
+        }
+        #expect(throws: (any Error).self) {
+            try repos.statements.update(statementId: statement.id, operatorConfirmedVisible: true)
+        }
+        // Naming does not bypass the unnamed-investment gate for the write that names it.
+        #expect(throws: (any Error).self) {
+            try repos.statements.update(statementId: statement.id, name: "JPMS statement 2026-06-30")
+        }
+        #expect(throws: (any Error).self) {
+            try repos.statements.update(
+                statementId: statement.id, endingBalance: 11, name: "JPMS statement 2026-06-30"
+            )
+        }
+        let unchanged = try #require(try repos.statements.get(statementId: statement.id))
+        #expect((unchanged.name ?? "").isEmpty)
+        #expect(unchanged.endingBalance == 10)
+        #expect(unchanged.rowKind == "unnamed_investment_requires_operator_confirmation")
+    }
+
     @Test("Internal statement inspection preimage is stable across read contexts")
     func internalStatementInspectionPreimageIsStableAcrossReadContexts() throws {
         let repos = try makeRepositories()

@@ -152,6 +152,11 @@ struct CLIStatementContractTests {
         #expect(restore.output.contains("--replacement-membership-preimage-sha256"))
         #expect(restore.output.contains("--replacement-preimage-sha256"))
 
+        let update = try runCLI(["statements", "update", "--help"])
+        #expect(update.status == 0)
+        #expect(update.output.contains("--name"))
+        #expect(update.output.contains("--operator-confirmed-visible"))
+
         let create = try runCLI(["statements", "create", "--help"])
         #expect(create.status == 0)
         #expect(create.output.contains("--line-item-ids"))

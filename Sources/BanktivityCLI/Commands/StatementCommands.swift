@@ -369,7 +369,7 @@ struct Statements: AsyncParsableCommand {
         var statementId: Int
 
         @Option(name: .long, parsing: .unconditional, help: "Corrected ending balance")
-        var endingBalance: Double
+        var endingBalance: Double?
 
         @Option(name: .long, parsing: .unconditional, help: "Corrected beginning balance for an explicit internal-row repair")
         var beginningBalance: Double?
@@ -379,6 +379,9 @@ struct Statements: AsyncParsableCommand {
 
         @Option(name: .long, help: "Corrected statement end date, YYYY-MM-DD")
         var endDate: String?
+
+        @Option(name: .long, help: "Statement display name (trimmed, non-empty); does not bypass the unnamed-row gate for this write")
+        var name: String?
 
         @Flag(name: .long, help: "Confirm a fresh whole-vault backup exists for this write session")
         var backupConfirmed: Bool = false
@@ -407,6 +410,7 @@ struct Statements: AsyncParsableCommand {
                 beginningBalance: beginningBalance,
                 startDate: startDate,
                 endDate: endDate,
+                name: name,
                 allowInternal: allowInternal,
                 operatorConfirmedVisible: operatorConfirmedVisible
             )

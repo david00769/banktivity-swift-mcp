@@ -683,13 +683,24 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
 
     public func update(
         statementId: Int,
-        endingBalance: Double,
+        endingBalance: Double? = nil,
         beginningBalance: Double? = nil,
         startDate: String? = nil,
         endDate: String? = nil,
+        name: String? = nil,
         allowInternal: Bool = false,
         operatorConfirmedVisible: Bool = false
     ) throws -> StatementDTO {
+        // A name is display metadata: trimmed, never blank. Naming a row does not
+        // lift the unnamed-investment gate for the very write that names it.
+        let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmedName, trimmedName.isEmpty {
+            throw ToolError.invalidInput("Statement name must not be empty")
+        }
+        guard endingBalance != nil || beginningBalance != nil || startDate != nil
+            || endDate != nil || trimmedName != nil else {
+            throw ToolError.invalidInput("Statement update requires at least one field to change")
+        }
         try performWrite { [self] ctx in
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
                 throw ToolError.notFound("Statement not found: \(statementId)")
@@ -744,7 +755,12 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                     statement.setValue(DateConversion.toDate(endTs), forKey: "pEndDate")
                 }
             }
-            statement.setValue(endingBalance as NSNumber, forKey: "pEndingBalance")
+            if let endingBalance {
+                statement.setValue(endingBalance as NSNumber, forKey: "pEndingBalance")
+            }
+            if let trimmedName {
+                statement.setValue(trimmedName, forKey: "pName")
+            }
             Self.setNow(statement, "pModificationDate")
         }
 
