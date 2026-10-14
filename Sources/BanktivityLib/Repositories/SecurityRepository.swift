@@ -1583,6 +1583,39 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
+    /// Rule 2a: all `Split Shares` legs of one security on one day are ONE
+    /// corporate action, applied as their NET share change.
+    ///
+    /// A split that changes the CUSIP arrives as two legs on the same day -- the
+    /// old shares out (-2.53) and the new shares in (+10), 9615's ANET 4-for-1 on
+    /// 2024-12-04. Sorting by date alone left them in fetch order, and a
+    /// decrease applied first empties the lots, so the increase then opened a
+    /// fresh lot at ZERO cost and every later sale of those shares realised its
+    /// whole proceeds as gain. Netting (+7.47 here) is order-independent and is
+    /// exactly what the documented procedure records for a split ("enter the
+    /// DELTA"); applying increases before decreases would also preserve basis but
+    /// still depends on two legs agreeing to be read as one event. Only splits
+    /// are netted: a `Move Shares In/Out` carries its own basis and stays a
+    /// separate opener/closer. The netted event takes the first leg's place, so
+    /// its position among the day's other events is unchanged.
+    static func nettingSameDaySplits<E>(_ events: [E], isSplit: (E) -> Bool, day: (E) -> Int,
+                                        shares: (E) -> Decimal,
+                                        withShares: (E, Decimal) -> E) -> [E] {
+        var out: [E] = []
+        var firstSplitIndex: [Int: Int] = [:]
+        for e in events {
+            guard isSplit(e) else { out.append(e); continue }
+            let d = day(e)
+            if let i = firstSplitIndex[d] {
+                out[i] = withShares(out[i], shares(out[i]) + shares(e))
+            } else {
+                firstSplitIndex[d] = out.count
+                out.append(e)
+            }
+        }
+        return out
+    }
+
     /// Compute realised capital gains by matching disposals to opening lots.
     ///
     /// Banktivity does NOT persist its lot matching — `SecurityLot` exists in the
@@ -1596,7 +1629,8 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
     ///    Treating them otherwise corrupts every later lot in that holding.
     /// 2. `Split Shares` adjusts share counts pro rata and leaves total basis
     ///    alone. The row carries the adjustment in `pShares`, with amount and
-    ///    price both zero.
+    ///    price both zero. Same-day split legs are one event, netted (rule 2a,
+    ///    `nettingSameDaySplits`).
     /// 3. `Return Of Capital` reduces basis pro rata; its amount is in `pIncome`
     ///    and `pShares` is zero.
     /// 4. Apportion the recorded `pAmount`, never price x multiplier. `pAmount`
@@ -1685,7 +1719,15 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
 
             var results: [SecurityRealizedGainDTO] = []
             for (_, unsorted) in books {
-                let events = unsorted.sorted { $0.date < $1.date }
+                let events = Self.nettingSameDaySplits(unsorted.sorted { $0.date < $1.date },
+                                                       isSplit: { $0.type == "Split Shares" },
+                                                       day: { Int(($0.date / 86_400).rounded(.down)) },
+                                                       shares: { $0.shares },
+                                                       withShares: { e, n in
+                                                           Event(type: e.type, shares: n, amount: e.amount,
+                                                                 income: e.income, date: e.date,
+                                                                 security: e.security, account: e.account)
+                                                       })
                 var lots: [Lot] = []
 
                 for event in events {
