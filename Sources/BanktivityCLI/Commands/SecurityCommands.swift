@@ -114,8 +114,7 @@ struct Securities: AsyncParsableCommand {
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
 
-            let syncBlobUpdater = SyncBlobUpdater(container: container)
-            let securities = SecurityRepository(container: container, syncBlobUpdater: syncBlobUpdater)
+            let securities = SecurityRepository(container: container)
             let result = try securities.importPricesFromCSV(
                 filePath: file,
                 symbol: symbol, id: id,
@@ -178,8 +177,7 @@ struct Securities: AsyncParsableCommand {
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
 
-            let syncBlobUpdater = SyncBlobUpdater(container: container)
-            let securities = SecurityRepository(container: container, syncBlobUpdater: syncBlobUpdater)
+            let securities = SecurityRepository(container: container)
             let results = try securities.fixBrokenPrices(symbol: symbol)
 
             let total = results.reduce(0) { $0 + $1.fixed }
@@ -318,8 +316,7 @@ struct Securities: AsyncParsableCommand {
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
 
-            let syncBlobUpdater = SyncBlobUpdater(container: container)
-            let securities = SecurityRepository(container: container, syncBlobUpdater: syncBlobUpdater)
+            let securities = SecurityRepository(container: container)
             let result = try securities.createShareAdjustment(
                 accountId: accountId, symbol: symbol, id: id,
                 shares: shares, date: date, title: title, amount: amount
@@ -363,8 +360,7 @@ struct Securities: AsyncParsableCommand {
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
 
-            let syncBlobUpdater = SyncBlobUpdater(container: container)
-            let securities = SecurityRepository(container: container, syncBlobUpdater: syncBlobUpdater)
+            let securities = SecurityRepository(container: container)
             let result = try securities.updateSecurityLineItem(
                 transactionId: transactionId,
                 shares: shares, pricePerShare: pricePerShare, amount: amount,
