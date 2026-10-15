@@ -98,26 +98,35 @@ struct NetWorthReportingCurrencyTests {
         let usAccount = try accounts.create(name: "US Checking", accountClass: AccountClass.checking, currencyCode: "USD")
         let euAccount = try accounts.create(name: "EU Savings", accountClass: AccountClass.savings, currencyCode: "EUR")
 
-        let ctx = vault.container.viewContext
-        for (pk, amount) in [(usAccount.id, 1000.0), (euAccount.id, 500.0)] {
-            let account = try #require(try BaseRepository(container: vault.container).fetchByPK(entityName: "Account", pk: pk, in: ctx))
-            let line = NSEntityDescription.insertNewObject(forEntityName: "LineItem", into: ctx)
-            line.setValue(NSDecimalNumber(value: amount), forKey: "pTransactionAmount")
-            line.setValue(NSDecimalNumber.one, forKey: "pExchangeRate")
-            line.setValue(UUID().uuidString, forKey: "pUniqueID")
-            line.setValue(false, forKey: "pCleared")
-            BaseRepository.setNow(line, "pCreationTime")
-            line.setValue(account, forKey: "pAccount")
+        // Written through a background context, like the repositories do,
+        // rather than the view context (see TestVaultHelper).
+        let usdID = usd.objectID, eurID = eur.objectID
+        let usPK = usAccount.id, euPK = euAccount.id
+        let base = BaseRepository(container: vault.container)
+        try base.performWrite { ctx in
+            for (pk, amount) in [(usPK, 1000.0), (euPK, 500.0)] {
+                guard let account = try base.fetchByPK(entityName: "Account", pk: pk, in: ctx) else {
+                    throw ToolError.notFound("Account not found: \(pk)")
+                }
+                let line = NSEntityDescription.insertNewObject(forEntityName: "LineItem", into: ctx)
+                line.setValue(NSDecimalNumber(value: amount), forKey: "pTransactionAmount")
+                line.setValue(NSDecimalNumber.one, forKey: "pExchangeRate")
+                line.setValue(UUID().uuidString, forKey: "pUniqueID")
+                line.setValue(false, forKey: "pCleared")
+                BaseRepository.setNow(line, "pCreationTime")
+                line.setValue(account, forKey: "pAccount")
+            }
+            // The vault stores currencies by unique ID; 1 EUR = 1.1 USD.
+            let usd = try ctx.existingObject(with: usdID)
+            let eur = try ctx.existingObject(with: eurID)
+            let rate = NSEntityDescription.insertNewObject(forEntityName: "ExchangeRate", into: ctx)
+            rate.setValue(eur.value(forKey: "pUniqueID"), forKey: "pSourceCurrencyID")
+            rate.setValue(usd.value(forKey: "pUniqueID"), forKey: "pDestinationCurrencyID")
+            rate.setValue(NSDecimalNumber(string: "1.1"), forKey: "pExchangeRate")
+            rate.setValue(Date(), forKey: "pEffectiveDate")
+            rate.setValue(Date(), forKey: "pCreationTime")
+            rate.setValue(Date(), forKey: "pModificationDate")
         }
-        // The vault stores currencies by unique ID; 1 EUR = 1.1 USD.
-        let rate = NSEntityDescription.insertNewObject(forEntityName: "ExchangeRate", into: ctx)
-        rate.setValue(eur.value(forKey: "pUniqueID"), forKey: "pSourceCurrencyID")
-        rate.setValue(usd.value(forKey: "pUniqueID"), forKey: "pDestinationCurrencyID")
-        rate.setValue(NSDecimalNumber(string: "1.1"), forKey: "pExchangeRate")
-        rate.setValue(Date(), forKey: "pEffectiveDate")
-        rate.setValue(Date(), forKey: "pCreationTime")
-        rate.setValue(Date(), forKey: "pModificationDate")
-        try ctx.save()
 
         let netWorth = try accounts.getNetWorth()
         // Unchanged: the plain sum of both accounts, labelled as before.

@@ -12,7 +12,7 @@ import Testing
 struct HoldingsValueTests {
 
     /// Insert one trade: a transaction, its cash line and its security line.
-    private func insertTrade(
+    nonisolated private static func insertTrade(
         ctx: NSManagedObjectContext,
         account: NSManagedObject,
         security: NSManagedObject,
@@ -51,7 +51,7 @@ struct HoldingsValueTests {
         sli.setValue(lineItem, forKey: "pLineItem")
     }
 
-    private func insertClose(ctx: NSManagedObjectContext, security: NSManagedObject, day: Int32, close: Double) {
+    nonisolated private static func insertClose(ctx: NSManagedObjectContext, security: NSManagedObject, day: Int32, close: Double) {
         let uniqueId = BaseRepository.stringValue(security, "pUniqueID")
         let request = NSFetchRequest<NSManagedObject>(entityName: "SecurityPriceItem")
         request.predicate = NSPredicate(format: "pSecurityID == %@", uniqueId)
@@ -76,19 +76,30 @@ struct HoldingsValueTests {
         let security = try TestVaultHelper.seedSecurity(in: vault.container, symbol: "HOLD", currency: usd)
         let other = try TestVaultHelper.seedSecurity(in: vault.container, symbol: "GONE", currency: usd)
 
-        let ctx = vault.container.viewContext
+        // The seed helper's account class is not an investment class; fix it
+        // where the account was created, in the view context.
         account.setValue(Int16(AccountClass.investment), forKey: "pAccountClass")
-        // HOLD: buy 10, buy 5, sell 3 -> 12 shares; the latest trade's multiplier (2) applies.
-        insertTrade(ctx: ctx, account: account, security: security, date: "2026-01-02", cash: -1000, shares: 10, multiplier: 1)
-        insertTrade(ctx: ctx, account: account, security: security, date: "2026-02-02", cash: -500, shares: 5, multiplier: 1)
-        insertTrade(ctx: ctx, account: account, security: security, date: "2026-03-02", cash: 330, shares: -3, multiplier: 2)
-        // GONE: bought and fully sold, so it contributes nothing even with a price.
-        insertTrade(ctx: ctx, account: account, security: other, date: "2026-01-05", cash: -50, shares: 1, multiplier: 1)
-        insertTrade(ctx: ctx, account: account, security: other, date: "2026-01-06", cash: 60, shares: -1, multiplier: 1)
-        insertClose(ctx: ctx, security: security, day: 20_000, close: 90)
-        insertClose(ctx: ctx, security: security, day: 20_100, close: 110.25)
-        insertClose(ctx: ctx, security: other, day: 20_100, close: 70)
-        try ctx.save()
+        try vault.container.viewContext.save()
+
+        // Written through a background context, like the repositories do,
+        // rather than the view context (see TestVaultHelper).
+        let accountID = account.objectID, securityID = security.objectID, otherID = other.objectID
+        let base = BaseRepository(container: vault.container)
+        try base.performWrite { ctx in
+            let account = try ctx.existingObject(with: accountID)
+            let security = try ctx.existingObject(with: securityID)
+            let other = try ctx.existingObject(with: otherID)
+            // HOLD: buy 10, buy 5, sell 3 -> 12 shares; the latest trade's multiplier (2) applies.
+            Self.insertTrade(ctx: ctx, account: account, security: security, date: "2026-01-02", cash: -1000, shares: 10, multiplier: 1)
+            Self.insertTrade(ctx: ctx, account: account, security: security, date: "2026-02-02", cash: -500, shares: 5, multiplier: 1)
+            Self.insertTrade(ctx: ctx, account: account, security: security, date: "2026-03-02", cash: 330, shares: -3, multiplier: 2)
+            // GONE: bought and fully sold, so it contributes nothing even with a price.
+            Self.insertTrade(ctx: ctx, account: account, security: other, date: "2026-01-05", cash: -50, shares: 1, multiplier: 1)
+            Self.insertTrade(ctx: ctx, account: account, security: other, date: "2026-01-06", cash: 60, shares: -1, multiplier: 1)
+            Self.insertClose(ctx: ctx, security: security, day: 20_000, close: 90)
+            Self.insertClose(ctx: ctx, security: security, day: 20_100, close: 110.25)
+            Self.insertClose(ctx: ctx, security: other, day: 20_100, close: 70)
+        }
 
         let accounts = AccountRepository(container: vault.container)
         let accountId = BaseRepository.extractPK(from: account.objectID)
