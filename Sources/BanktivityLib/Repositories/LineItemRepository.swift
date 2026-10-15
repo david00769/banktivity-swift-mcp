@@ -211,8 +211,7 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
 
             for li in lineItems {
                 let amount = Self.doubleValue(li, "pTransactionAmount")
-                let exchangeRate = Self.doubleValue(li, "pExchangeRate")
-                runningBalance += amount * exchangeRate
+                runningBalance += amount * Self.effectiveExchangeRate(li)
                 li.setValue(runningBalance as NSNumber, forKey: "pRunningBalance")
             }
         }
@@ -304,6 +303,7 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
             accountId: accountId,
             accountName: accountName,
             amount: Self.doubleValue(object, "pTransactionAmount"),
+            accountAmount: Self.doubleValue(object, "pTransactionAmount") * Self.effectiveExchangeRate(object),
             statementBalanceAmount: Self.statementBalanceAmount(for: object),
             exchangeRate: Self.doubleValue(object, "pExchangeRate"),
             memo: Self.string(object, "pMemo"),
@@ -315,7 +315,7 @@ public final class LineItemRepository: BaseRepository, @unchecked Sendable {
     }
 
     private static func statementBalanceAmount(for lineItem: NSManagedObject) -> Double {
-        let cashAmount = doubleValue(lineItem, "pTransactionAmount") * doubleValue(lineItem, "pExchangeRate")
+        let cashAmount = doubleValue(lineItem, "pTransactionAmount") * effectiveExchangeRate(lineItem)
         if let securityLineItem = relatedObject(lineItem, "pSecurityLineItem") {
             if abs(cashAmount) >= 0.005 {
                 return cashAmount

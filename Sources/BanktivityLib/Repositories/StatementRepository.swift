@@ -1039,7 +1039,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
     }
 
     private static func statementBalanceAmount(for lineItem: NSManagedObject) -> Double {
-        let cashAmount = doubleValue(lineItem, "pTransactionAmount") * doubleValue(lineItem, "pExchangeRate")
+        let cashAmount = doubleValue(lineItem, "pTransactionAmount") * effectiveExchangeRate(lineItem)
         if let securityLineItem = relatedObject(lineItem, "pSecurityLineItem") {
             if abs(cashAmount) >= 0.005 {
                 return cashAmount

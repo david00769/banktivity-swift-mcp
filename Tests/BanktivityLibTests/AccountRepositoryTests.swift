@@ -72,6 +72,74 @@ struct AccountRepositoryTests {
         #expect(abs(balance - 125.0) < 0.005)
     }
 
+    @Test("A zero or missing exchange rate counts as 1 instead of dropping the line")
+    func zeroOrMissingExchangeRateCountsAsOne() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        _ = try TestVaultHelper.seedCurrencies(in: vault.container)
+
+        let accounts = AccountRepository(container: vault.container)
+        let account = try accounts.create(
+            name: "Rate Guard",
+            accountClass: AccountClass.checking,
+            currencyCode: "USD"
+        )
+        let base = BaseRepository(container: vault.container)
+
+        // 100 at rate 0, 40 with no rate, 10 at rate 2.
+        let lines: [(Double, Double?)] = [(100, 0), (40, nil), (10, 2)]
+        try base.performWrite { ctx in
+            guard let accountObject = try base.fetchByPK(entityName: "Account", pk: account.id, in: ctx) else {
+                throw ToolError.notFound("Account not found: \(account.id)")
+            }
+            for (index, line) in lines.enumerated() {
+                let transaction = BaseRepository.createObject(entityName: "Transaction", in: ctx)
+                transaction.setValue("Line \(index)", forKey: "pTitle")
+                transaction.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+                transaction.setValue(false, forKey: "pCleared")
+                transaction.setValue(false, forKey: "pVoid")
+                transaction.setValue(false, forKey: "pAdjustment")
+                transaction.setValue(BaseRepository.relatedObject(accountObject, "currency"), forKey: "pCurrency")
+                BaseRepository.setNow(transaction, "pCreationTime")
+                BaseRepository.setNow(transaction, "pModificationDate")
+                BaseRepository.setDate(transaction, "pDate", isoString: "2026-05-2\(index)")
+
+                let lineItem = BaseRepository.createObject(entityName: "LineItem", in: ctx)
+                lineItem.setValue(line.0 as NSNumber, forKey: "pTransactionAmount")
+                if let rate = line.1 {
+                    lineItem.setValue(rate as NSNumber, forKey: "pExchangeRate")
+                } else {
+                    lineItem.setValue(nil, forKey: "pExchangeRate")
+                }
+                lineItem.setValue(0.0 as NSNumber, forKey: "pRunningBalance")
+                lineItem.setValue(false, forKey: "pCleared")
+                lineItem.setValue(BaseRepository.generateUUID(), forKey: "pUniqueID")
+                BaseRepository.setNow(lineItem, "pCreationTime")
+                lineItem.setValue(accountObject, forKey: "pAccount")
+                lineItem.setValue(transaction, forKey: "pTransaction")
+            }
+        }
+
+        let balance = try accounts.getBalance(accountId: account.id)
+        #expect(abs(balance - 160.0) < 0.005)
+
+        let netWorth = try accounts.getNetWorth()
+        #expect(abs(netWorth.assets - 160.0) < 0.005)
+
+        // The running balance written by recalculation applies the same guard.
+        let lineItems = LineItemRepository(container: vault.container)
+        try lineItems.recalculateRunningBalances(accountId: account.id)
+        let last = try base.performRead { ctx -> Double in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "LineItem")
+            request.sortDescriptors = [NSSortDescriptor(key: "pTransaction.pDate", ascending: false)]
+            request.fetchLimit = 1
+            guard let li = try ctx.fetch(request).first else { return .nan }
+            return BaseRepository.doubleValue(li, "pRunningBalance")
+        }
+        #expect(abs(last - 160.0) < 0.005)
+    }
+
     @Test("Missing account IDs fail instead of resolving to zero-balance unknown accounts")
     func missingAccountIdsFailLoudly() throws {
         let vault = try TestVaultHelper.createFreshVault()

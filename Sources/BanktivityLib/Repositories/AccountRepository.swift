@@ -241,8 +241,7 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
         var total = 0.0
         for lineItem in lineItems {
             let amount = Self.doubleValue(lineItem, "pTransactionAmount")
-            let exchangeRate = Self.doubleValue(lineItem, "pExchangeRate")
-            total += amount * exchangeRate
+            total += amount * Self.effectiveExchangeRate(lineItem)
         }
         return total
     }

@@ -184,6 +184,18 @@ open class BaseRepository: @unchecked Sendable {
         return (object.value(forKey: key) as? Double) ?? 0.0
     }
 
+    /// The line item's exchange rate, with a missing or zero rate read as 1.
+    ///
+    /// `pTransactionAmount * pExchangeRate` is the account-currency amount. A
+    /// line with no rate, or a stored 0, would otherwise contribute nothing to
+    /// a balance -- the line silently drops out of the total. Banktivity
+    /// writes 1 for a same-currency line, so 1 is the neutral reading
+    /// (upstream #27 and #19 apply the same guard).
+    public static func effectiveExchangeRate(_ lineItem: NSManagedObject) -> Double {
+        let rate = doubleValue(lineItem, "pExchangeRate")
+        return rate == 0 ? 1.0 : rate
+    }
+
     /// Read a decimal attribute WITHOUT going through `Double`.
     ///
     /// Money and share columns are `NSDecimalNumber` in the store, and
