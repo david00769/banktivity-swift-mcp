@@ -187,6 +187,48 @@ struct SecurityRealizedGainsTests {
         #expect(rows[0].gain == Decimal(200))
     }
 
+    /// A split that changes the CUSIP arrives as two same-day legs (old shares
+    /// out, new shares in). Whichever is fetched first, the lot keeps its basis.
+    @Test("Two same-day split legs net to one change, in either fetch order",
+          arguments: [true, false])
+    func sameDaySplitLegsNet(decreaseFirst: Bool) throws {
+        let f = try makeFixture()
+        defer { TestVaultHelper.cleanup(f.vault) }
+        let split = try seedType(f.container, name: "Split Shares", base: 250)
+
+        try seedEvent(f.container, type: f.buy, account: f.account, security: f.security,
+                      day: 0, shares: dec("2.5"), amount: dec("-1000"))
+        // 4-for-1 with a CUSIP change: 2.5 out, 10 in, on one day.
+        let legs: [(String)] = decreaseFirst ? ["-2.5", "10"] : ["10", "-2.5"]
+        for leg in legs {
+            try seedEvent(f.container, type: split, account: f.account, security: f.security,
+                          day: 5, shares: dec(leg), amount: .zero)
+        }
+        try seedEvent(f.container, type: f.sell, account: f.account, security: f.security,
+                      day: 10, shares: dec("-4"), amount: dec("500"))
+
+        let rows = try SecurityRepository(container: f.container).getRealizedGains()
+        #expect(rows.count == 1)
+        #expect(rows[0].shares == Decimal(4))
+        // 4 of the 10 post-split shares carry 4/10 of the original 1,000.
+        #expect(rows[0].costBasis == Decimal(400))
+        #expect(rows[0].gain == Decimal(100))
+        #expect(rows[0].acquired == DateConversion.toISO(0.0))   // the original lot, not a split-day lot
+    }
+
+    @Test("Netting leaves other events and other days alone")
+    func nettingIsScoped() {
+        struct E: Equatable { let split: Bool; let day: Int; let shares: Decimal }
+        let input = [E(split: false, day: 1, shares: 5), E(split: true, day: 2, shares: -2),
+                     E(split: false, day: 2, shares: 1), E(split: true, day: 2, shares: 8),
+                     E(split: true, day: 3, shares: 4)]
+        let out = SecurityRepository.nettingSameDaySplits(
+            input, isSplit: { $0.split }, day: { $0.day }, shares: { $0.shares },
+            withShares: { E(split: $0.split, day: $0.day, shares: $1) })
+        #expect(out == [E(split: false, day: 1, shares: 5), E(split: true, day: 2, shares: 6),
+                        E(split: false, day: 2, shares: 1), E(split: true, day: 3, shares: 4)])
+    }
+
     @Test("Return of capital reduces basis, and its amount is in pIncome")
     func returnOfCapitalReducesBasis() throws {
         let f = try makeFixture()
