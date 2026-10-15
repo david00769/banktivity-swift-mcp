@@ -57,6 +57,27 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
+    /// Market value of an investment account's open security positions.
+    ///
+    /// For each security: shares held x latest close x the price multiplier of
+    /// the most recent trade, summed in `Decimal`. The price multiplier is how
+    /// Banktivity converts a security priced in another currency into the
+    /// account's currency (1 when they match). A security with no price
+    /// contributes 0.
+    ///
+    /// This is reported beside the cash balance and never folded into it:
+    /// `getBalance` stays the sum of the account's cash lines. Returns nil for
+    /// an account that is not an investment account.
+    public func holdingsValue(accountId: Int) throws -> Double? {
+        try performRead { [self] ctx in
+            guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
+                throw ToolError.notFound("Account not found: \(accountId)")
+            }
+            guard Self.isInvestmentAccountClass(Self.intValue(account, "pAccountClass")) else { return nil }
+            return NSDecimalNumber(decimal: try self.holdingsValue(account: account, in: ctx)).doubleValue
+        }
+    }
+
     /// Get net worth using efficient aggregate queries
     public func getNetWorth() throws -> NetWorthDTO {
         try performRead { [self] ctx in
@@ -136,6 +157,7 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
         }
         return try accountList.map { account in
             let balance = try getBalance(accountId: account.id)
+            let holdings = try holdingsValue(accountId: account.id)
             return AccountDTO(
                 id: account.id,
                 name: account.name,
@@ -145,7 +167,9 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
                 hidden: account.hidden,
                 currency: account.currency,
                 balance: balance,
-                formattedBalance: formatCurrency(balance, currency: account.currency ?? "EUR")
+                formattedBalance: formatCurrency(balance, currency: account.currency ?? "EUR"),
+                holdingsValue: holdings,
+                formattedHoldingsValue: holdings.map { formatCurrency($0, currency: account.currency ?? "EUR") }
             )
         }
     }
@@ -244,6 +268,66 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
             total += amount * Self.effectiveExchangeRate(lineItem)
         }
         return total
+    }
+
+    static func isInvestmentAccountClass(_ accountClass: Int) -> Bool {
+        (AccountClass.investment...AccountClass.hsaInvestment).contains(accountClass)
+    }
+
+    /// Holdings market value for one account, in the account's currency.
+    /// Ported from upstream #19's `holdingsValue` (also proposed in #33).
+    private func holdingsValue(account: NSManagedObject, in ctx: NSManagedObjectContext) throws -> Decimal {
+        struct Position {
+            var shares = Decimal(0)
+            var multiplier = Decimal(1)
+            var multiplierDate = -Double.greatestFiniteMagnitude
+            var security: NSManagedObject?
+        }
+
+        let request = NSFetchRequest<NSManagedObject>(entityName: "SecurityLineItem")
+        request.predicate = NSPredicate(format: "pLineItem.pAccount == %@ AND pShares != nil", account)
+
+        var positions: [Int: Position] = [:]
+        for sli in try ctx.fetch(request) {
+            guard let security = Self.relatedObject(sli, "pSecurity") else { continue }
+            let key = Self.extractPK(from: security.objectID)
+            var position = positions[key] ?? Position()
+            position.shares += Self.decimalValue(sli, "pShares")
+            position.security = security
+
+            // The multiplier of the most recent trade wins.
+            let date = Self.relatedObject(sli, "pLineItem")
+                .flatMap { Self.relatedObject($0, "pTransaction") }
+                .flatMap { Self.dateValue($0, "pDate") } ?? -Double.greatestFiniteMagnitude
+            if date >= position.multiplierDate {
+                position.multiplierDate = date
+                let multiplier = Self.decimalValue(sli, "pPriceMultiplier")
+                position.multiplier = multiplier == 0 ? 1 : multiplier
+            }
+            positions[key] = position
+        }
+
+        var total = Decimal(0)
+        for position in positions.values {
+            guard position.shares != 0, let security = position.security,
+                  let close = try latestClosePrice(for: security, in: ctx) else { continue }
+            total += position.shares * close * position.multiplier
+        }
+        return total
+    }
+
+    private func latestClosePrice(for security: NSManagedObject, in ctx: NSManagedObjectContext) throws -> Decimal? {
+        let priceItemRequest = NSFetchRequest<NSManagedObject>(entityName: "SecurityPriceItem")
+        priceItemRequest.predicate = NSPredicate(format: "pSecurityID == %@", Self.stringValue(security, "pUniqueID"))
+        priceItemRequest.fetchLimit = 1
+        guard let priceItem = try ctx.fetch(priceItemRequest).first else { return nil }
+
+        let priceRequest = NSFetchRequest<NSManagedObject>(entityName: "SecurityPrice")
+        priceRequest.predicate = NSPredicate(format: "pSecurityPriceItem == %@", priceItem)
+        priceRequest.sortDescriptors = [NSSortDescriptor(key: "pDate", ascending: false)]
+        priceRequest.fetchLimit = 1
+        guard let price = try ctx.fetch(priceRequest).first else { return nil }
+        return Self.decimalValue(price, "pClosePrice")
     }
 
     /// Count line items matching a predicate (used as a proxy for transaction count)
