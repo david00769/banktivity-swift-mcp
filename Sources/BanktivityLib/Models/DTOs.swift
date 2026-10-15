@@ -140,11 +140,80 @@ public struct NetWorthDTO: Codable, Sendable {
     public let formattedAssets: String?
     public let formattedLiabilities: String?
     public let formattedNetWorth: String?
+    /// The fields above add every account's cash in its own currency, with no
+    /// conversion, and are kept exactly as they always were. The fields below
+    /// are additive: the same totals converted into the reporting currency.
+    public let reportingCurrency: String?
+    public let converted: ConvertedNetWorthDTO?
+    /// Per account currency: what it held and how it was converted.
+    public let currencyBreakdown: [String: CurrencyBreakdownDTO]?
+    public let warnings: [String]?
 
-    public init(assets: Double, liabilities: Double, netWorth: Double, formattedAssets: String?, formattedLiabilities: String?, formattedNetWorth: String?) {
+    public init(
+        assets: Double, liabilities: Double, netWorth: Double,
+        formattedAssets: String?, formattedLiabilities: String?, formattedNetWorth: String?,
+        reportingCurrency: String? = nil, converted: ConvertedNetWorthDTO? = nil,
+        currencyBreakdown: [String: CurrencyBreakdownDTO]? = nil, warnings: [String]? = nil
+    ) {
         self.assets = assets; self.liabilities = liabilities; self.netWorth = netWorth
         self.formattedAssets = formattedAssets; self.formattedLiabilities = formattedLiabilities
         self.formattedNetWorth = formattedNetWorth
+        self.reportingCurrency = reportingCurrency; self.converted = converted
+        self.currencyBreakdown = currencyBreakdown; self.warnings = warnings
+    }
+}
+
+/// Net worth converted into the reporting currency.
+///
+/// `assets`, `liabilities` and `netWorth` are cash only, the same basis as the
+/// unconverted fields. `holdingsValue` is the market value of investment
+/// holdings, and `netWorthWithHoldings` adds it in. An account whose currency
+/// has no exchange rate is left out and named in `warnings`.
+public struct ConvertedNetWorthDTO: Codable, Sendable {
+    public let currency: String
+    public let assets: Double
+    public let liabilities: Double
+    public let netWorth: Double
+    public let holdingsValue: Double
+    public let netWorthWithHoldings: Double
+    public let formattedAssets: String
+    public let formattedLiabilities: String
+    public let formattedNetWorth: String
+    public let formattedHoldingsValue: String
+    public let formattedNetWorthWithHoldings: String
+
+    public init(currency: String, assets: Double, liabilities: Double, holdingsValue: Double) {
+        self.currency = currency
+        self.assets = assets; self.liabilities = liabilities
+        self.netWorth = assets + liabilities
+        self.holdingsValue = holdingsValue
+        self.netWorthWithHoldings = assets + liabilities + holdingsValue
+        self.formattedAssets = formatCurrency(assets, currency: currency)
+        self.formattedLiabilities = formatCurrency(liabilities, currency: currency)
+        self.formattedNetWorth = formatCurrency(netWorth, currency: currency)
+        self.formattedHoldingsValue = formatCurrency(holdingsValue, currency: currency)
+        self.formattedNetWorthWithHoldings = formatCurrency(netWorthWithHoldings, currency: currency)
+    }
+}
+
+public struct CurrencyBreakdownDTO: Codable, Sendable {
+    /// Cash in this currency, before conversion.
+    public let cash: Double
+    /// Holdings market value in this currency, before conversion.
+    public let holdingsValue: Double
+    /// Multiply by this to convert into the reporting currency.
+    public let rate: Double
+    public let rateDate: String?
+    public let convertedCash: Double
+    public let convertedHoldingsValue: Double
+    public let hops: Int
+    public let path: [String]
+
+    public init(cash: Double, holdingsValue: Double, rate: Double, rateDate: String?, convertedCash: Double, convertedHoldingsValue: Double, hops: Int, path: [String]) {
+        self.cash = cash; self.holdingsValue = holdingsValue
+        self.rate = rate; self.rateDate = rateDate
+        self.convertedCash = convertedCash; self.convertedHoldingsValue = convertedHoldingsValue
+        self.hops = hops; self.path = path
     }
 }
 

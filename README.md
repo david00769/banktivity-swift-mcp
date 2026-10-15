@@ -48,6 +48,30 @@ One caveat: SQLite may still open `core.sql-shm` for writing on its own account.
 The default remains read/write and the write guard is unchanged, so treat this as
 a second layer rather than a substitute for backups.
 
+## Reporting currency and holdings
+
+Net worth (`accounts net-worth`, `get_net_worth`, and the `netWorth` inside
+`summary`) keeps its original fields: `assets`, `liabilities` and `netWorth`
+add every account's cash in its own currency, with no conversion. Beside them
+it now also reports:
+
+- `reportingCurrency` and `converted`: the same totals converted into one
+  currency, plus `holdingsValue` (market value of investment holdings) and
+  `netWorthWithHoldings`.
+- `currencyBreakdown`: per account currency, the cash, holdings, rate used and
+  converted amounts.
+- `warnings`: for example an account left out because the vault has no
+  exchange rate for its currency.
+
+Set `BANKTIVITY_REPORTING_CURRENCY` (an ISO code such as `USD`) to choose the
+reporting currency. Unset, it is EUR, the label aggregates always used. Rates
+come from the vault's own ExchangeRate table: the latest direct rate, else the
+inverse of the latest reverse rate, else a route through USD.
+
+Investment accounts in `accounts list` / `accounts balance` (and the matching
+MCP tools) also carry `holdingsValue`: shares held x latest close x price
+multiplier. It is reported beside `balance` and never added to it.
+
 ## Installation
 
 ### Homebrew (recommended)

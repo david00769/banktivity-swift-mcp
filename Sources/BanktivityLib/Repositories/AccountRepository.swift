@@ -5,6 +5,23 @@ import Foundation
 
 /// Repository for account operations using Core Data
 public final class AccountRepository: BaseRepository, @unchecked Sendable {
+    /// Currency that converted aggregates (net worth, summary) are reported in.
+    public let reportingCurrency: String
+    private let reportingCurrencyWarning: String?
+
+    /// - Parameter reportingCurrency: ISO code for converted totals. When nil,
+    ///   read from `BANKTIVITY_REPORTING_CURRENCY`, falling back to EUR.
+    public init(container: NSPersistentContainer, reportingCurrency: String? = nil) {
+        if let reportingCurrency {
+            self.reportingCurrency = ReportingCurrency.resolve(reportingCurrency)
+            self.reportingCurrencyWarning = nil
+        } else {
+            let configured = ReportingCurrency.fromEnvironment()
+            self.reportingCurrency = configured.code
+            self.reportingCurrencyWarning = configured.warning
+        }
+        super.init(container: container)
+    }
 
     /// List all accounts, optionally including hidden ones
     public func list(includeHidden: Bool = false) throws -> [AccountDTO] {
@@ -84,13 +101,19 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
             let assets = try self.sumByAccountClasses(Array(assetClasses), in: ctx)
             let liabilities = try self.sumByAccountClasses(Array(liabilityClasses), in: ctx)
 
+            let conversion = try self.convertedNetWorth(in: ctx)
+
             return NetWorthDTO(
                 assets: assets,
                 liabilities: liabilities,
                 netWorth: assets + liabilities,
                 formattedAssets: formatCurrency(assets),
                 formattedLiabilities: formatCurrency(liabilities),
-                formattedNetWorth: formatCurrency(assets + liabilities)
+                formattedNetWorth: formatCurrency(assets + liabilities),
+                reportingCurrency: self.reportingCurrency,
+                converted: conversion.converted,
+                currencyBreakdown: conversion.breakdown,
+                warnings: conversion.warnings
             )
         }
     }
@@ -268,6 +291,135 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
             total += amount * Self.effectiveExchangeRate(lineItem)
         }
         return total
+    }
+
+    /// One account's contribution to net worth, in its own currency.
+    struct NetWorthAccountBalance: Sendable {
+        let name: String
+        let accountClass: Int
+        let currency: String?
+        let cash: Decimal
+        let holdings: Decimal
+    }
+
+    struct NetWorthConversion: Sendable {
+        let converted: ConvertedNetWorthDTO
+        let breakdown: [String: CurrencyBreakdownDTO]
+        let warnings: [String]
+    }
+
+    private func convertedNetWorth(in ctx: NSManagedObjectContext) throws -> NetWorthConversion {
+        let request = NSFetchRequest<NSManagedObject>(entityName: "Account")
+        let classes = assetClasses.union(liabilityClasses)
+        var balances: [NetWorthAccountBalance] = []
+        for account in try ctx.fetch(request) {
+            let accountClass = Self.intValue(account, "pAccountClass")
+            guard classes.contains(accountClass) else { continue }
+            let cash = try sumLineItemAmounts(predicate: NSPredicate(format: "pAccount == %@", account), in: ctx)
+            let holdings = Self.isInvestmentAccountClass(accountClass) ? try holdingsValue(account: account, in: ctx) : 0
+            balances.append(NetWorthAccountBalance(
+                name: Self.stringValue(account, "pName"),
+                accountClass: accountClass,
+                currency: Self.currencyCode(account),
+                cash: Decimal(string: String(cash)) ?? 0,
+                holdings: holdings
+            ))
+        }
+        var conversion = Self.convertNetWorth(
+            reportingCurrency: reportingCurrency,
+            accounts: balances,
+            rates: try ExchangeRateRepository.fetchRates(in: ctx)
+        )
+        if let warning = reportingCurrencyWarning {
+            conversion = NetWorthConversion(
+                converted: conversion.converted,
+                breakdown: conversion.breakdown,
+                warnings: [warning] + conversion.warnings
+            )
+        }
+        return conversion
+    }
+
+    /// Convert each account's cash and holdings into the reporting currency.
+    /// Ported from upstream #20's aggregation, without its change to how an
+    /// account's cash is computed. An account with no usable rate is left out
+    /// and named in a warning rather than added unconverted.
+    static func convertNetWorth(
+        reportingCurrency rawReportingCurrency: String,
+        accounts: [NetWorthAccountBalance],
+        rates: [ExchangeRateRecord],
+        now: Date = Date()
+    ) -> NetWorthConversion {
+        let reportingCurrency = ReportingCurrency.resolve(rawReportingCurrency)
+        struct Totals {
+            var cash = Decimal(0)
+            var holdings = Decimal(0)
+            var lookup: ExchangeRateLookupResult
+        }
+
+        var byCurrency: [String: Totals] = [:]
+        var assets = Decimal(0)
+        var liabilities = Decimal(0)
+        var holdings = Decimal(0)
+        var warnings: [String] = []
+
+        for account in accounts {
+            // An account with no currency is read as already in the reporting currency.
+            let currency = account.currency?.uppercased() ?? reportingCurrency
+            guard let lookup = ExchangeRateRepository.resolve(from: currency, to: reportingCurrency, rates: rates) else {
+                if account.cash != 0 || account.holdings != 0 {
+                    warnings.append("Account \(account.name) (\(currency)) left out: no \(currency)->\(reportingCurrency) exchange rate in the vault")
+                }
+                continue
+            }
+            var totals = byCurrency[currency] ?? Totals(lookup: lookup)
+            totals.cash += account.cash
+            totals.holdings += account.holdings
+            byCurrency[currency] = totals
+
+            let convertedCash = account.cash * lookup.rate
+            if assetClasses.contains(account.accountClass) {
+                assets += convertedCash
+            } else {
+                liabilities += convertedCash
+            }
+            holdings += account.holdings * lookup.rate
+        }
+
+        var breakdown: [String: CurrencyBreakdownDTO] = [:]
+        for (currency, totals) in byCurrency {
+            let rateDate = totals.lookup.effectiveDate.map { DateConversion.toISO(DateConversion.fromDate($0)) }
+            breakdown[currency] = CurrencyBreakdownDTO(
+                cash: double(totals.cash),
+                holdingsValue: double(totals.holdings),
+                rate: double(totals.lookup.rate),
+                rateDate: rateDate,
+                convertedCash: double(totals.cash * totals.lookup.rate),
+                convertedHoldingsValue: double(totals.holdings * totals.lookup.rate),
+                hops: totals.lookup.hops,
+                path: totals.lookup.path
+            )
+            if totals.lookup.hops > 0, let effective = totals.lookup.effectiveDate,
+               let age = Calendar(identifier: .gregorian).dateComponents([.day], from: effective, to: now).day,
+               age > 7 {
+                warnings.append("Exchange rate \(totals.lookup.path.joined(separator: "->")) is \(age) days old (\(rateDate ?? "undated"))")
+            }
+        }
+
+        return NetWorthConversion(
+            converted: ConvertedNetWorthDTO(
+                currency: reportingCurrency,
+                assets: double(assets),
+                liabilities: double(liabilities),
+                holdingsValue: double(holdings)
+            ),
+            breakdown: breakdown,
+            warnings: warnings.sorted()
+        )
+    }
+
+    private static func double(_ value: Decimal) -> Double {
+        NSDecimalNumber(decimal: value).doubleValue
     }
 
     static func isInvestmentAccountClass(_ accountClass: Int) -> Bool {
