@@ -17,6 +17,7 @@ import Testing
 /// process. Serialising this suite costs about a second and keeps the fix provable without
 /// pulling the wider Core Data threading work into a categorization change.
 @Suite("Categorize safety", .serialized)
+@MainActor
 struct CategorizeSafetyTests {
 
     // MARK: - Fixture

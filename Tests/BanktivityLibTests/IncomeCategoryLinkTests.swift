@@ -10,6 +10,7 @@ import Testing
 /// 2026-09-29). Compared field by field against a Banktivity-written dividend,
 /// that pointer and `pDistributionType` (1, "deposit") were the only differences.
 @Suite("Income rows link their category line")
+@MainActor
 struct IncomeCategoryLinkTests {
 
     private func seed() throws -> (vault: TestVaultHelper.TestVault, accountId: Int, categoryId: Int) {
