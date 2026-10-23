@@ -50,7 +50,7 @@ final class LoopbackHTTPServer: @unchecked Sendable {
     // ones that arrive while the first is still in flight, gets that result
     // back under its own request id. Everything else (tools/list, tools/call)
     // is session-independent and forwards as-is.
-    private let initializeOnce = InitializeOnce()
+    private let initializeOnce = SharedFirstSuccess<InitializeOutcome, Data>(success: \.result)
 
     init(port: UInt16, path: String, transport: StatelessHTTPServerTransport) throws {
         let params = NWParameters.tcp
@@ -254,39 +254,6 @@ struct InitializeOutcome: Sendable {
             result = try? JSONSerialization.data(withJSONObject: member, options: [.fragmentsAllowed])
         } else {
             result = nil
-        }
-    }
-}
-
-/// Forwards at most one `initialize` at a time and shares the first success
-/// with every caller. The previous optional cache was read and written from
-/// concurrent tasks with no synchronisation, so two clients initializing
-/// together could both be forwarded and the second refused by the
-/// single-session server. Nothing here forwards outside the actor: a caller
-/// that waited on an attempt that failed loops and becomes the next forwarder,
-/// so a failure never leaves the server initialized with nothing shared.
-actor InitializeOnce {
-    enum Outcome: Sendable {
-        case shared(Data)
-        case own(InitializeOutcome)
-    }
-
-    private var shared: Data?
-    private var pending: Task<InitializeOutcome, Never>?
-
-    func run(_ forward: @escaping @Sendable () async -> InitializeOutcome) async -> Outcome {
-        while true {
-            if let shared { return .shared(shared) }
-            if let pending {
-                _ = await pending.value
-                continue
-            }
-            let task = Task { await forward() }
-            pending = task
-            let outcome = await task.value
-            pending = nil
-            if let result = outcome.result { shared = result }
-            return .own(outcome)
         }
     }
 }
