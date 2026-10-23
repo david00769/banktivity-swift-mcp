@@ -115,6 +115,7 @@ public enum CapabilityRegistry {
             writeCLI("uncategorized recategorize"),
             writeCLI("uncategorized bulk-recategorize", supportsDryRun: true),
             readCLI("line-items get"),
+            readCLI("line-items source"),
             verifiedWriteCLI("line-items add", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
             verifiedWriteCLI("line-items update", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),
             verifiedWriteCLI("line-items delete", supportsDryRun: true, note: "Line-item writes affect balances and statement membership."),

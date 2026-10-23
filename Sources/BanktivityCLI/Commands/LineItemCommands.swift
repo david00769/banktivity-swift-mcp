@@ -8,7 +8,7 @@ struct LineItems: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "line-items",
         abstract: "Line item operations",
-        subcommands: [Get.self, Add.self, Update.self, Delete.self]
+        subcommands: [Get.self, Source.self, Add.self, Update.self, Delete.self]
     )
 
     struct Get: AsyncParsableCommand {
@@ -28,6 +28,22 @@ struct LineItems: AsyncParsableCommand {
                 throw ToolError.notFound("Line item not found: \(id)")
             }
             try outputJSON(item, format: parent.format)
+        }
+    }
+
+    struct Source: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Get the raw imported bank details (Plaid/OFX) for a line item")
+
+        @OptionGroup var parent: GlobalOptions
+
+        @Argument(help: "Line item ID")
+        var id: Int
+
+        func run() async throws {
+            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
+            let container = try BanktivityCLI.createContainer(vaultPath: path)
+            let lineItems = LineItemRepository(container: container)
+            try outputJSON(try lineItems.getSources(lineItemId: id), format: parent.format)
         }
     }
 
