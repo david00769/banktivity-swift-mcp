@@ -131,7 +131,7 @@ struct Transactions: AsyncParsableCommand {
         @Option(name: .long, help: "Optional note")
         var note: String?
 
-        @Option(name: .long, help: "Optional transaction type. Kebab-case slug, NOT the display name `transactions get` returns: `move-shares-out`, not `Move Shares Out`. When omitted, only deposit, withdrawal, or transfer is inferred. Investment types must be passed explicitly. Accepted: \(TransactionRepository.transactionTypeNames)")
+        @Option(name: .long, help: "Optional cash transaction type: \(TransactionRepository.cashTransactionTypeList). When omitted, deposit, withdrawal or transfer is inferred from the bank-account lines. Investment rows need a security leg: use securities create-trade or create-income.")
         var transactionType: String?
 
         @Option(name: .long, help: "JSON array of line items, e.g. '[{\"account_id\":1,\"amount\":-50},{\"account_name\":\"Food\",\"amount\":50}]'")

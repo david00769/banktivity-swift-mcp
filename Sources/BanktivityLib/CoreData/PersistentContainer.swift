@@ -40,6 +40,15 @@ public enum PersistentContainerFactory {
         }
     }
 
+    /// The `.momd` bundles among `urls`, sorted by filename so the merge order
+    /// is deterministic. `contentsOfDirectory` returns entries in arbitrary
+    /// order, and `NSManagedObjectModel(byMerging:)` can produce different
+    /// entity version hashes depending on the order it sees them in.
+    static func orderedModelURLs(_ urls: [URL]) -> [URL] {
+        urls.filter { $0.pathExtension == "momd" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
     /// Load all .momd model bundles from the StoreContent directory and merge them.
     public static func loadMergedModel(from storeContentURL: URL) throws -> NSManagedObjectModel {
         let contents = try FileManager.default.contentsOfDirectory(
@@ -48,14 +57,9 @@ public enum PersistentContainerFactory {
             options: .skipsHiddenFiles
         )
 
-        // Sort by filename so the merge order is deterministic. `contentsOfDirectory`
-        // returns entries in arbitrary order, and `NSManagedObjectModel(byMerging:)` can
-        // produce different entity version hashes depending on the order it sees them in.
         // A model whose hashes drift between runs is what triggers Core Data to decide a
-        // migration is needed — see the migration flags in `create` below.
-        let momdURLs = contents
-            .filter { $0.pathExtension == "momd" }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        // migration is needed; see the migration flags in `create` below.
+        let momdURLs = orderedModelURLs(contents)
 
         guard !momdURLs.isEmpty else {
             throw BanktivityError.noModelsFound(storeContentURL.path)

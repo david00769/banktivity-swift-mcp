@@ -54,14 +54,13 @@ struct MigrationGuardTests {
         return metadata[NSStoreModelVersionHashesKey] as? [String: Data] ?? [:]
     }
 
-    @Test("The merged model is the same whatever order the bundles are listed in")
-    func mergedModelIsStable() throws {
-        let vault = try TestVaultHelper.createFreshVault()
-        defer { TestVaultHelper.cleanup(vault) }
-
-        let storeContent = URL(fileURLWithPath: vault.path).appendingPathComponent("StoreContent")
-        let first = try PersistentContainerFactory.loadMergedModel(from: storeContent)
-        let second = try PersistentContainerFactory.loadMergedModel(from: storeContent)
-        #expect(first.entityVersionHashesByName == second.entityVersionHashesByName)
+    @Test("Model bundles are merged in filename order whatever order the directory lists them in")
+    func modelBundlesAreOrderedByName() {
+        let names = ["securities.momd", "core.momd", "budget.momd", "notes.txt", "sync.momd"]
+        let base = URL(fileURLWithPath: "/tmp/StoreContent")
+        let forward = names.map { base.appendingPathComponent($0) }
+        let expected = ["budget.momd", "core.momd", "securities.momd", "sync.momd"]
+        #expect(PersistentContainerFactory.orderedModelURLs(forward).map(\.lastPathComponent) == expected)
+        #expect(PersistentContainerFactory.orderedModelURLs(forward.reversed()).map(\.lastPathComponent) == expected)
     }
 }

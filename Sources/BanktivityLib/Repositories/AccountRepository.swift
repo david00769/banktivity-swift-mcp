@@ -242,7 +242,8 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
 
     /// Update mutable metadata on an existing bank or investment account:
     /// name, account class, or hidden flag. Categories are refused, both as the
-    /// target and as the new class: they belong to `CategoryRepository`.
+    /// target and as the new class: they belong to `CategoryRepository`. A new
+    /// class must be in the same family (investment or not) as the current one.
     /// Stamps `pModificationDate` in the same save, which is the whole upload
     /// signal under this package's sync model.
     public func update(
@@ -265,8 +266,17 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
             guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
                 throw ToolError.notFound("Account not found: \(accountId)")
             }
-            guard Self.intValue(account, "pAccountClass") < AccountClass.income else {
+            let currentClass = Self.intValue(account, "pAccountClass")
+            guard currentClass < AccountClass.income else {
                 throw ToolError.invalidInput("Account \(accountId) is a category; use category tools to modify it")
+            }
+            // Holdings, net worth and statements all key on whether a class is an
+            // investment class. Crossing that line would strand an account's
+            // securities in a cash class, or give a cash account an empty
+            // securities model, so a retype stays within its family.
+            if let accountClass,
+               Self.isInvestmentAccountClass(accountClass) != Self.isInvestmentAccountClass(currentClass) {
+                throw ToolError.invalidInput("Account \(accountId) cannot move between investment and non-investment types (class \(currentClass) to \(accountClass)); create a new account instead")
             }
 
             if let name {

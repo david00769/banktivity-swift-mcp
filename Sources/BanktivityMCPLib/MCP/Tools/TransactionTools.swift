@@ -104,7 +104,7 @@ func registerTransactionTools(
                 "date": ToolHelpers.property(type: "string", description: "Transaction date in ISO format (YYYY-MM-DD)"),
                 "title": ToolHelpers.property(type: "string", description: "Transaction title/payee"),
                 "note": ToolHelpers.property(type: "string", description: "Optional note"),
-                "transaction_type": ToolHelpers.property(type: "string", description: "Optional transaction type. Kebab-case slug, not the display name reads return. When omitted, only deposit, withdrawal, or transfer is inferred from asset/liability line items; investment types must be passed explicitly. Accepted: \(TransactionRepository.transactionTypeNames)"),
+                "transaction_type": ToolHelpers.property(type: "string", description: "Optional cash transaction type: \(TransactionRepository.cashTransactionTypeList). When omitted, deposit, withdrawal or transfer is inferred from the asset/liability line items. Investment rows need a security leg: use create_security_trade or create_security_income."),
                 "line_items": ToolHelpers.property(type: "array", description: "Line items: [{account_id, amount, memo?}]"),
             ],
             required: ["date", "title", "line_items"]

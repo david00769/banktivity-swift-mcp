@@ -81,6 +81,22 @@ struct AccountUpdateTests {
         #expect(try accounts.get(accountId: created.id)?.accountClass == AccountClass.checking)
     }
 
+    @Test("A retype stays within the investment or non-investment family")
+    func retypeStaysWithinFamily() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+        _ = try TestVaultHelper.seedCurrencies(in: vault.container)
+
+        let accounts = AccountRepository(container: vault.container)
+        let checking = try accounts.create(name: "Everyday", accountClass: AccountClass.checking, currencyCode: "USD")
+        let brokerage = try accounts.create(name: "Brokerage", accountClass: AccountClass.investment, currencyCode: "USD")
+
+        expectInvalidInput { _ = try accounts.update(accountId: checking.id, accountClass: AccountClass.investment) }
+        expectInvalidInput { _ = try accounts.update(accountId: brokerage.id, accountClass: AccountClass.creditCard) }
+        #expect(try accounts.update(accountId: checking.id, accountClass: AccountClass.creditCard).accountClass == AccountClass.creditCard)
+        #expect(try accounts.update(accountId: brokerage.id, accountClass: AccountClass.ira).accountClass == AccountClass.ira)
+    }
+
     @Test("Update refuses to modify a category account")
     func updateRefusesCategoryTarget() throws {
         let vault = try TestVaultHelper.createFreshVault()

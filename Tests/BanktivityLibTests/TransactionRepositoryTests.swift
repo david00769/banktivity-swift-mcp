@@ -421,6 +421,27 @@ struct TransactionRepositoryTests {
         #expect(created.transactionType == "Withdrawal")
     }
 
+    @Test("Create refuses an investment type on a plain transaction")
+    func createRefusesInvestmentType() throws {
+        let repos = try makeRepositoriesWithCashTypes()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let checking = try repos.accounts.create(name: "Checking", accountClass: AccountClass.checking, currencyCode: "USD")
+        do {
+            _ = try repos.transactions.create(
+                date: "2026-03-10", title: "Not a trade",
+                lineItems: [(accountId: checking.id, amount: -10, memo: nil)],
+                transactionType: "buy"
+            )
+            Issue.record("Expected an investment type to be refused on create")
+        } catch let error as ToolError {
+            guard case .invalidInput = error else { Issue.record("Expected invalidInput, got \(error)"); return }
+        }
+        #expect(TransactionRepository.cashTransactionTypeNames.allSatisfy {
+            (TransactionRepository.transactionTypeBaseTypeCode($0) ?? 999) < 100
+        })
+    }
+
     @Test("Create rejects an unknown transaction_type")
     func createRejectsUnknownTransactionType() throws {
         let repos = try makeRepositoriesWithCashTypes()

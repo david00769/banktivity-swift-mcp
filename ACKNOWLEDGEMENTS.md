@@ -33,9 +33,13 @@ How to read it:
 | `accounts update` / `update_account`: rename, retype, hide | Peter Baker | same fork, `fix/security-trade-cash-balance`, `521ac43` | Ported: his repository method and refusals kept; type names mapped onto this fork's `AccountClass.slugs` | `a36be32` |
 | Loopback HTTP server mode (`BANKTIVITY_HTTP_PORT`) | Peter Baker | same fork, `fix/security-trade-cash-balance`, `6a7a8cb` | Cherry-picked, unchanged; a follow-up here refuses a negative or oversized `Content-Length` | `5cde56f`, `2444379` |
 
-Added locally around the intake: `line-items source` in the CLI (the same
-read as `get_line_item_source`), and tests for the migration guard and the
-line-item source read.
+Added locally around the intake, after review: `line-items source` in the CLI
+(the same read as `get_line_item_source`); tests for the migration guard, the
+line-item source read and the HTTP request parser (moved into
+`BanktivityMCPLib` so it can be tested); create accepts only cash types by
+name; a retype stays within the investment or non-investment family; the HTTP
+`initialize` cache became a single-flight actor; `make verify` fails on any
+exit of 126 or more.
 
 Not taken, deliberately: Peter Baker's and muxadil's investment-cash formulas
 (`fix/investment-balance-running-balance`, upstream #19 and #33). This fork's

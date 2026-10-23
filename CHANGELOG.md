@@ -25,18 +25,27 @@ records each one's source, original commit and what was changed.
   `create_transaction`. When omitted, only deposit, withdrawal or transfer is
   inferred from the asset and liability lines (transfer whenever two or more
   distinct bank accounts are involved, including fee and FX transfers) instead
-  of taking whichever TransactionType row came first. Investment types must be
-  named. Ported onto the modification-date sync model.
+  of taking whichever TransactionType row came first. Only the cash types
+  (`check`, `deposit`, `transfer`, `withdrawal`) can be named on create: a
+  plain transaction has no security leg, so investment rows still come from
+  `securities create-trade` / `create-income`. Ported onto the
+  modification-date sync model.
 - **`accounts update`** CLI command and **`update_account`** MCP tool (Peter
   Baker): rename an account, change its type, or hide/unhide it. Categories are
-  refused. The account-type slugs now live in `AccountClass.slugs`, shared with
+  refused. A new type must stay in the same family: an investment account
+  cannot become a cash or credit account, or the reverse. The account-type slugs now live in `AccountClass.slugs`, shared with
   `accounts create`; `equity` is no longer offered, since every class from
   income (6000) up was always refused.
 - **Loopback HTTP mode** (Peter Baker): set `BANKTIVITY_HTTP_PORT` (and
   optionally `BANKTIVITY_HTTP_PATH`, default `/mcp`) to serve MCP over HTTP on
   127.0.0.1 instead of stdio, for one long-lived server under launchd. Unset
   means stdio, unchanged. A negative or oversized `Content-Length` is refused
-  (400/413) rather than trusted.
+  (400/413) rather than trusted. Conflicting `Content-Length` headers and chunked bodies are
+  refused too, and concurrent `initialize` calls share one forwarded request
+  instead of racing on an unsynchronised cache.
+
+- **Tests:** the last two Core Data suites now run on the main actor, which
+  removes the intermittent "Categorize safety" crash.
 
 ## Earlier changes (v0.14.0 to v0.16.0, not recorded per release)
 

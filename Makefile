@@ -80,6 +80,8 @@ install-fast: ## Fast native-arch build + install to ~/.local/bin (atomic, signe
 # Internal: atomically install + sign both binaries from $(BIN).
 _install-from:
 	@set -e; \
+	mkdir -p "$(INSTALL_DIR)"; \
+	trap 'rm -f "$(INSTALL_DIR)/banktivity-cli.new" "$(INSTALL_DIR)/banktivity-mcp.new"' EXIT; \
 	for b in banktivity-cli banktivity-mcp; do \
 	  cp "$(BIN)/$$b" "$(INSTALL_DIR)/$$b.new"; \
 	  codesign -fs - "$(INSTALL_DIR)/$$b.new"; \
@@ -93,10 +95,13 @@ _install-from:
 verify: ## Verify installed binaries exec (catches the invalid-signature SIGKILL)
 	@fail=0; \
 	for b in banktivity-cli banktivity-mcp; do \
-	  $(INSTALL_DIR)/$$b --version >/dev/null 2>&1 </dev/null; rc=$$?; \
+	  "$(INSTALL_DIR)/$$b" --version >/dev/null 2>&1 </dev/null; rc=$$?; \
 	  if [ $$rc -eq 137 ]; then \
 	    echo "  FAIL  $$b: SIGKILLed at exec (invalid code signature)"; \
 	    echo "        fix: codesign -fs - $(INSTALL_DIR)/$$b"; \
+	    fail=1; \
+	  elif [ $$rc -ge 126 ]; then \
+	    echo "  FAIL  $$b: did not run (exit $$rc: missing, not executable, or killed by a signal)"; \
 	    fail=1; \
 	  else \
 	    echo "  ok    $$b: execs (exit $$rc)"; \
