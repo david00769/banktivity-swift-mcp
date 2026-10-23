@@ -16,6 +16,7 @@
 // request per connection, no keep-alive, no TLS. It is not a general web
 // server and does not try to be.
 
+import BanktivityMCPLib
 import Foundation
 import MCP
 import Network
@@ -45,10 +46,11 @@ final class LoopbackHTTPServer: @unchecked Sendable {
     // `initialize` and rejects every later one with "already initialized".
     // This daemon serves many clients (Claude Code, Claude Desktop's session
     // pool, Paperclip agents), each of which starts with its own `initialize`.
-    // The first one is forwarded and its result cached; every later one gets
-    // the cached result back under the caller's own request id. Everything
-    // else (tools/list, tools/call) is session-independent and forwards as-is.
-    private var cachedInitializeResult: Any?
+    // The first one is forwarded and its result kept; every caller, including
+    // ones that arrive while the first is still in flight, gets that result
+    // back under its own request id. Everything else (tools/list, tools/call)
+    // is session-independent and forwards as-is.
+    private let initializeOnce = InitializeOnce()
 
     init(port: UInt16, path: String, transport: StatelessHTTPServerTransport) throws {
         let params = NWParameters.tcp
@@ -89,7 +91,7 @@ final class LoopbackHTTPServer: @unchecked Sendable {
             if let chunk { buf.append(chunk) }
             if error != nil { conn.cancel(); return }
 
-            switch self.parse(buf) {
+            switch LoopbackHTTPRequestParser.parse(buf) {
             case .complete(let parsed):
                 Task { await self.respond(conn, to: parsed) }
                 return
@@ -99,10 +101,6 @@ final class LoopbackHTTPServer: @unchecked Sendable {
             case .incomplete:
                 break
             }
-            if buf.count > Self.maxRequestBytes {
-                self.write(conn, status: 413, headers: [:], body: Data("request too large\n".utf8))
-                return
-            }
             if isComplete {
                 self.write(conn, status: 400, headers: [:], body: Data("bad request\n".utf8))
                 return
@@ -111,73 +109,28 @@ final class LoopbackHTTPServer: @unchecked Sendable {
         }
     }
 
-    private struct Parsed { let method: String; let path: String; let headers: [String: String]; let body: Data }
-
-    /// Largest request head plus body this server buffers. MCP requests are
-    /// small JSON; the cap only exists so a local client cannot grow the
-    /// buffer without bound.
-    static let maxRequestBytes = 16 << 20
-
-    private enum ParseResult {
-        case incomplete
-        case invalid(status: Int, reason: String)
-        case complete(Parsed)
-    }
-
-    /// `.incomplete` until the full head and (Content-Length) body have arrived.
-    /// A negative or oversized Content-Length is refused rather than trusted:
-    /// a negative one used to form an inverted range and crash the process.
-    private func parse(_ data: Data) -> ParseResult {
-        guard let headEnd = data.range(of: Data("\r\n\r\n".utf8)) else { return .incomplete }
-        let head = String(decoding: data[data.startIndex..<headEnd.lowerBound], as: UTF8.self)
-        var lines = head.components(separatedBy: "\r\n")
-        guard !lines.isEmpty else { return .invalid(status: 400, reason: "bad request") }
-        let requestLine = lines.removeFirst().split(separator: " ")
-        guard requestLine.count >= 2 else { return .invalid(status: 400, reason: "bad request") }
-        let method = String(requestLine[0])
-        let target = String(requestLine[1])
-        let path = target.split(separator: "?", maxSplits: 1).first.map(String.init) ?? target
-
-        var headers: [String: String] = [:]
-        for line in lines {
-            guard let colon = line.firstIndex(of: ":") else { continue }
-            let name = line[line.startIndex..<colon].trimmingCharacters(in: .whitespaces)
-            let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-            headers[name] = value
-        }
-
-        let bodyStart = headEnd.upperBound
-        let lengthHeader = headers.first { $0.key.lowercased() == "content-length" }?.value
-        let length: Int
-        if let lengthHeader {
-            guard let parsed = Int(lengthHeader), parsed >= 0 else {
-                return .invalid(status: 400, reason: "bad content-length")
-            }
-            length = parsed
-        } else {
-            length = 0
-        }
-        guard length <= Self.maxRequestBytes else { return .invalid(status: 413, reason: "request too large") }
-        guard data.count - (bodyStart - data.startIndex) >= length else { return .incomplete }
-        let body = data[bodyStart..<(bodyStart + length)]
-        return .complete(Parsed(method: method, path: path, headers: headers, body: Data(body)))
-    }
-
     // MARK: - Response
 
-    private func respond(_ conn: NWConnection, to req: Parsed) async {
+    private func respond(_ conn: NWConnection, to req: LoopbackHTTPRequestParser.Request) async {
         guard req.path == mcpPath else {
             write(conn, status: 404, headers: [:], body: Data("not found\n".utf8))
             return
         }
-        if let replay = replayInitializeIfCached(req.body) {
-            write(conn, status: 200, headers: ["Content-Type": "application/json"], body: replay)
-            return
+        let request = HTTPRequest(method: req.method, headers: req.headers, body: req.body.isEmpty ? nil : req.body, path: req.path)
+        if let (method, id) = jsonRPCMethod(req.body), method == "initialize" {
+            let transport = self.transport
+            let result = await initializeOnce.result {
+                Self.initializeResult(from: await transport.handleRequest(request))
+            }
+            if let result, let reply = Self.initializeReply(id: id, result: result) {
+                write(conn, status: 200, headers: ["Content-Type": "application/json"], body: reply)
+                return
+            }
+            // No result to share (the forward failed): fall through, so this
+            // caller sees the transport's own answer.
         }
 
-        let request = HTTPRequest(method: req.method, headers: req.headers, body: req.body.isEmpty ? nil : req.body, path: req.path)
         let response = await transport.handleRequest(request)
-        rememberInitializeResult(requestBody: req.body, response: response)
 
         switch response {
         case .stream(let stream, let headers):
@@ -203,20 +156,18 @@ final class LoopbackHTTPServer: @unchecked Sendable {
         return (method, obj["id"])
     }
 
-    private func replayInitializeIfCached(_ body: Data) -> Data? {
-        guard let cached = cachedInitializeResult,
-              let (method, id) = jsonRPCMethod(body), method == "initialize" else { return nil }
-        let reply: [String: Any] = ["jsonrpc": "2.0", "id": id ?? NSNull(), "result": cached]
-        return try? JSONSerialization.data(withJSONObject: reply)
+    /// The `result` member of a successful `initialize` response, as JSON.
+    private static func initializeResult(from response: HTTPResponse) -> Data? {
+        guard case .data(let data, _) = response,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = obj["result"] else { return nil }
+        return try? JSONSerialization.data(withJSONObject: result, options: [.fragmentsAllowed])
     }
 
-    private func rememberInitializeResult(requestBody: Data, response: HTTPResponse) {
-        guard cachedInitializeResult == nil,
-              let (method, _) = jsonRPCMethod(requestBody), method == "initialize",
-              case .data(let data, _) = response,
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let result = obj["result"] else { return }
-        cachedInitializeResult = result
+    private static func initializeReply(id: Any?, result: Data) -> Data? {
+        guard let resultObject = try? JSONSerialization.jsonObject(with: result, options: [.fragmentsAllowed]) else { return nil }
+        let reply: [String: Any] = ["jsonrpc": "2.0", "id": id ?? NSNull(), "result": resultObject]
+        return try? JSONSerialization.data(withJSONObject: reply)
     }
 
     private func writeHead(_ conn: NWConnection, status: Int, headers: [String: String], chunked: Bool) {
@@ -256,5 +207,23 @@ final class LoopbackHTTPServer: @unchecked Sendable {
         case 415: "Unsupported Media Type"
         default: "Status"
         }
+    }
+}
+
+/// Forwards the first `initialize` and hands its result to every caller,
+/// including callers that arrive while it is still in flight. The previous
+/// optional cache was read and written from concurrent tasks with no
+/// synchronisation, so two clients initializing together could both miss it
+/// and the second was refused by the single-session server.
+actor InitializeOnce {
+    private var pending: Task<Data?, Never>?
+
+    func result(_ forward: @escaping @Sendable () async -> Data?) async -> Data? {
+        if let pending { return await pending.value }
+        let task = Task { await forward() }
+        pending = task
+        let value = await task.value
+        if value == nil { pending = nil }  // a failed forward does not stick
+        return value
     }
 }

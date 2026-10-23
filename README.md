@@ -136,10 +136,16 @@ BANKTIVITY_HTTP_PORT=8790 banktivity-mcp
 # listening on http://127.0.0.1:8790/mcp  (BANKTIVITY_HTTP_PATH changes the path)
 ```
 
-The listener refuses requests with a foreign `Origin`, and a negative or
-oversized `Content-Length`. It has no authentication: any process on the Mac
-can reach it, so treat it with the same trust as the vault file itself, and
-leave the write guard and your backups in place.
+The listener refuses requests with a foreign `Origin`, a malformed or
+oversized `Content-Length`, and chunked bodies. It has no authentication: any
+process on the Mac can reach it, so treat it with the same trust as the vault
+file itself, and leave the write guard and your backups in place.
+
+A long-lived server also holds the vault open for as long as it runs, which is
+exactly what the rule above about closing every MCP and CLI process before
+opening the vault in Banktivity.app forbids. Its Core Data context does not see
+edits Banktivity makes in the meantime. Stop the server before opening the
+vault in Banktivity, and restart it afterwards; do not run the two together.
 
 ## Configuration
 
@@ -186,7 +192,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 - `get_spending_by_category` — Spending breakdown by category for a date range
 - `get_income_by_category` — Income breakdown by category for a date range
 - `get_summary` — Overall financial summary
-- `update_account` — Rename an account, change its type, or hide/unhide it (categories are refused)
+- `update_account` — Rename an account, change its type within the same family (investment or not), or hide/unhide it; categories are refused
 
 ### Transactions
 - `get_transactions` — List transactions with filtering and pagination
@@ -401,9 +407,10 @@ Important behavior:
 - Statement dates use local-day boundaries. Reconciliation preserves existing
   cleared-state semantics when assigning or unassigning line items.
 - `transactions create --line-items` accepts a JSON array for split transactions.
-  `--transaction-type` names the type; without it, deposit, withdrawal or
-  transfer is inferred from the bank-account lines (investment types must be
-  named).
+  `--transaction-type` names a cash type (`check`, `deposit`, `transfer`,
+  `withdrawal`); without it, deposit, withdrawal or transfer is inferred from
+  the bank-account lines. Investment rows come from `securities create-trade`
+  and `create-income`.
 - `accounts create --type` and `accounts update --type` accept the same slugs
   (`banktivity-cli accounts update --help` lists them).
 - `statements inspect-membership` and `statements inspect-sync-record` are
