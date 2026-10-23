@@ -186,7 +186,7 @@ public final class ToolRegistry: @unchecked Sendable {
         )
 
         // Account tools
-        registerAccountTools(registry: self, accounts: accountRepo, tags: tagRepo)
+        registerAccountTools(registry: self, accounts: accountRepo, tags: tagRepo, writeGuard: writeGuard)
 
         // Transaction tools (read + write)
         registerTransactionTools(

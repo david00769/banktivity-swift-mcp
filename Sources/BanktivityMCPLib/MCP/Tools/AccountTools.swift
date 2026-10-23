@@ -5,7 +5,7 @@ import BanktivityLib
 import MCP
 
 /// Register account-related MCP tools
-func registerAccountTools(registry: ToolRegistry, accounts: AccountRepository, tags: TagRepository) {
+func registerAccountTools(registry: ToolRegistry, accounts: AccountRepository, tags: TagRepository, writeGuard: WriteGuard) {
     // list_accounts
     registry.register(
         name: "list_accounts",
@@ -113,6 +113,42 @@ func registerAccountTools(registry: ToolRegistry, accounts: AccountRepository, t
         let tagCount = try tags?.list().count ?? 0
         let summary = try accounts.getSummary(tagCount: tagCount)
         return try ToolHelpers.jsonResponse(summary)
+    }
+    // update_account
+    registry.register(
+        name: "update_account",
+        access: .write,
+        description: "Update a bank or investment account's name, account type, or hidden flag. Income/expense categories are refused.",
+        inputSchema: ToolHelpers.schema(properties: [
+            "account_id": ToolHelpers.property(type: "number", description: "Account ID"),
+            "account_name": ToolHelpers.property(type: "string", description: "Account name (alternative to account_id)"),
+            "name": ToolHelpers.property(type: "string", description: "New account name"),
+            "type": ToolHelpers.property(type: "string", description: "New account type slug: \(AccountClass.slugNames)"),
+            "hidden": ToolHelpers.property(type: "boolean", description: "Hide (true) or unhide (false) the account"),
+        ])
+    ) { arguments in
+        if let msg = await writeGuard.guardWriteAccess() {
+            return ToolHelpers.errorResponse(msg)
+        }
+        var newAccountClass: Int?
+        if let typeName = ToolHelpers.getString(arguments, key: "type") {
+            guard let cls = AccountClass.slugs[typeName] else {
+                return ToolHelpers.errorResponse("Unknown account type '\(typeName)'. Valid types: \(AccountClass.slugNames)")
+            }
+            newAccountClass = cls
+        }
+        let hidden: Bool? = arguments?["hidden"].flatMap { value in
+            if case .bool(let flag) = value { return flag }
+            return nil
+        }
+        let accountId = try resolveAccountId(accounts: accounts, arguments: arguments)
+        let result = try accounts.update(
+            accountId: accountId,
+            name: ToolHelpers.getString(arguments, key: "name"),
+            accountClass: newAccountClass,
+            hidden: hidden
+        )
+        return try ToolHelpers.jsonResponse(result)
     }
 }
 

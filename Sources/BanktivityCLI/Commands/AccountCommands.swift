@@ -7,7 +7,7 @@ import Foundation
 struct Accounts: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Account operations",
-        subcommands: [List.self, Balance.self, NetWorth.self, Spending.self, Income.self, Summary.self, Create.self]
+        subcommands: [List.self, Balance.self, NetWorth.self, Spending.self, Income.self, Summary.self, Create.self, Update.self]
     )
 
     struct List: AsyncParsableCommand {
@@ -154,53 +154,60 @@ struct Accounts: AsyncParsableCommand {
 
             let accounts = AccountRepository(container: container)
 
-            let typeMap: [String: Int] = [
-                "asset": AccountClass.asset,
-                "real-estate": AccountClass.realEstate,
-                "automobile": AccountClass.automobile,
-                "collectible": AccountClass.collectible,
-                "artwork": AccountClass.artwork,
-                "cash": AccountClass.cash,
-                "checking": AccountClass.checking,
-                "savings": AccountClass.savings,
-                "money-market": AccountClass.moneyMarket,
-                "certificate-of-deposit": AccountClass.certificateOfDeposit,
-                "cd": AccountClass.certificateOfDeposit,
-                "health-savings-account": AccountClass.healthSavingsAccount,
-                "hsa": AccountClass.healthSavingsAccount,
-                "current": AccountClass.current,
-                "investment": AccountClass.investment,
-                "ira": AccountClass.ira,
-                "sep": AccountClass.sep,
-                "401k": AccountClass.fourOhOneK,
-                "403b": AccountClass.fourOhThreeB,
-                "college-savings-529": AccountClass.collegeSavings529,
-                "529": AccountClass.collegeSavings529,
-                "mutual-fund": AccountClass.mutualFund,
-                "rrsp": AccountClass.rrsp,
-                "resp": AccountClass.resp,
-                "tfsa": AccountClass.tfsa,
-                "hsa-investment": AccountClass.hsaInvestment,
-                "liability": AccountClass.liability,
-                "loan": AccountClass.loan,
-                "mortgage": AccountClass.mortgage,
-                "student-loan": AccountClass.studentLoan,
-                "auto-loan": AccountClass.autoLoan,
-                "revolving-debt": AccountClass.revolvingDebt,
-                "credit-card": AccountClass.creditCard,
-                "line-of-credit": AccountClass.lineOfCredit,
-                "heloc": AccountClass.heloc,
-                "equity": AccountClass.equity,
-            ]
-
-            guard let accountClass = typeMap[type] else {
-                throw ValidationError("Unknown account type '\(type)'. Valid types: \(typeMap.keys.sorted().joined(separator: ", "))")
+            guard let accountClass = AccountClass.slugs[type] else {
+                throw ValidationError("Unknown account type '\(type)'. Valid types: \(AccountClass.slugNames)")
             }
 
             let result = try accounts.create(
                 name: name,
                 accountClass: accountClass,
                 currencyCode: currencyCode,
+                hidden: hidden
+            )
+            try outputJSON(result, format: parent.format)
+        }
+    }
+
+    struct Update: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Update a bank or investment account's name, type or hidden flag")
+
+        @OptionGroup var parent: GlobalOptions
+
+        @Option(name: .long, help: "Account ID")
+        var accountId: Int?
+
+        @Option(name: .long, help: "Account name (alternative to --account-id)")
+        var accountName: String?
+
+        @Option(name: .long, help: "New account name")
+        var name: String?
+
+        @Option(name: .long, help: "New account type, the same slugs `accounts create` accepts: \(AccountClass.slugNames)")
+        var type: String?
+
+        @Flag(inversion: .prefixedNo, help: "Hide (--hidden) or unhide (--no-hidden) the account")
+        var hidden: Bool?
+
+        func run() async throws {
+            var newAccountClass: Int?
+            if let type {
+                guard let cls = AccountClass.slugs[type] else {
+                    throw ValidationError("Unknown account type '\(type)'. Valid types: \(AccountClass.slugNames)")
+                }
+                newAccountClass = cls
+            }
+
+            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
+            let container = try BanktivityCLI.createContainer(vaultPath: path)
+            let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
+            try await guardWrite(writeGuard)
+
+            let accounts = AccountRepository(container: container)
+            let resolvedId = try accounts.resolveAccountId(id: accountId, name: accountName)
+            let result = try accounts.update(
+                accountId: resolvedId,
+                name: name,
+                accountClass: newAccountClass,
                 hidden: hidden
             )
             try outputJSON(result, format: parent.format)

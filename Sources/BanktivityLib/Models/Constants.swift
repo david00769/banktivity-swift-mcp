@@ -74,6 +74,52 @@ public enum AccountClass {
     public static let income = 6000
     public static let expense = 7000
     public static let equity = 8000
+
+    /// Kebab-case slug -> account class, the one table `accounts create`,
+    /// `accounts update` and the MCP `update_account` tool accept. Category
+    /// classes (income, expense) are deliberately absent, and so is equity:
+    /// every class from `income` up is refused by both writers, so offering it
+    /// only produced a later error.
+    public static let slugs: [String: Int] = [
+        "asset": AccountClass.asset,
+        "real-estate": AccountClass.realEstate,
+        "automobile": AccountClass.automobile,
+        "collectible": AccountClass.collectible,
+        "artwork": AccountClass.artwork,
+        "cash": AccountClass.cash,
+        "checking": AccountClass.checking,
+        "savings": AccountClass.savings,
+        "money-market": AccountClass.moneyMarket,
+        "certificate-of-deposit": AccountClass.certificateOfDeposit,
+        "cd": AccountClass.certificateOfDeposit,
+        "health-savings-account": AccountClass.healthSavingsAccount,
+        "hsa": AccountClass.healthSavingsAccount,
+        "current": AccountClass.current,
+        "investment": AccountClass.investment,
+        "ira": AccountClass.ira,
+        "sep": AccountClass.sep,
+        "401k": AccountClass.fourOhOneK,
+        "403b": AccountClass.fourOhThreeB,
+        "college-savings-529": AccountClass.collegeSavings529,
+        "529": AccountClass.collegeSavings529,
+        "mutual-fund": AccountClass.mutualFund,
+        "rrsp": AccountClass.rrsp,
+        "resp": AccountClass.resp,
+        "tfsa": AccountClass.tfsa,
+        "hsa-investment": AccountClass.hsaInvestment,
+        "liability": AccountClass.liability,
+        "loan": AccountClass.loan,
+        "mortgage": AccountClass.mortgage,
+        "student-loan": AccountClass.studentLoan,
+        "auto-loan": AccountClass.autoLoan,
+        "revolving-debt": AccountClass.revolvingDebt,
+        "credit-card": AccountClass.creditCard,
+        "line-of-credit": AccountClass.lineOfCredit,
+        "heloc": AccountClass.heloc,
+    ]
+
+    /// The accepted slugs, sorted, for error messages and help text.
+    public static var slugNames: String { slugs.keys.sorted().joined(separator: ", ") }
 }
 
 /// Asset account classes (positive net worth)

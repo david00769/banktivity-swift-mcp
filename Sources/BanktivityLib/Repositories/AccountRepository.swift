@@ -240,6 +240,54 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
 
     // MARK: - Write Operations
 
+    /// Update mutable metadata on an existing bank or investment account:
+    /// name, account class, or hidden flag. Categories are refused, both as the
+    /// target and as the new class: they belong to `CategoryRepository`.
+    /// Stamps `pModificationDate` in the same save, which is the whole upload
+    /// signal under this package's sync model.
+    public func update(
+        accountId: Int,
+        name: String? = nil,
+        accountClass: Int? = nil,
+        hidden: Bool? = nil
+    ) throws -> AccountDTO {
+        guard name != nil || accountClass != nil || hidden != nil else {
+            throw ToolError.invalidInput("At least one field to update must be provided (name, accountClass, or hidden)")
+        }
+        if let name, name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw ToolError.invalidInput("Account name must not be empty")
+        }
+        if let cls = accountClass, cls >= AccountClass.income {
+            throw ToolError.invalidInput("accountClass \(cls) is a category type; use CategoryRepository for income/expense categories")
+        }
+
+        try performWrite { [self] ctx in
+            guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
+                throw ToolError.notFound("Account not found: \(accountId)")
+            }
+            guard Self.intValue(account, "pAccountClass") < AccountClass.income else {
+                throw ToolError.invalidInput("Account \(accountId) is a category; use category tools to modify it")
+            }
+
+            if let name {
+                account.setValue(name, forKey: "pName")
+                account.setValue(name, forKey: "pFullName")
+            }
+            if let accountClass {
+                account.setValue(accountClass as NSNumber, forKey: "pAccountClass")
+            }
+            if let hidden {
+                account.setValue(hidden, forKey: "pHidden")
+            }
+            Self.setNow(account, "pModificationDate")
+        }
+
+        guard let result = try get(accountId: accountId) else {
+            throw ToolError.notFound("Account not found after update: \(accountId)")
+        }
+        return result
+    }
+
     /// Create a new bank account (checking, savings, etc.)
     public func create(
         name: String,
