@@ -192,7 +192,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 - `get_spending_by_category` — Spending breakdown by category for a date range
 - `get_income_by_category` — Income breakdown by category for a date range
 - `get_summary` — Overall financial summary
-- `update_account` — Rename an account, change its type within the same family (investment or not), or hide/unhide it; categories are refused
+- `update_account` — Rename an account, change its type within the same family (investment or not), or hide/unhide it; categories are refused. Moving between an asset and a liability type (checking to credit card) is allowed and flips which side of net worth the balance counts on
 
 ### Transactions
 - `get_transactions` — List transactions with filtering and pagination

@@ -28,7 +28,7 @@ public enum LoopbackHTTPRequestParser {
 
     /// `.incomplete` until the full head and (Content-Length) body have arrived.
     ///
-    /// Refused rather than trusted: a non-numeric or negative Content-Length (a
+    /// Refused rather than trusted: a Content-Length that is not plain digits (a
     /// negative one used to form an inverted range and crash the process), two
     /// Content-Length headers that disagree (which one won depended on
     /// dictionary order), a chunked body (not supported, and previously read as
@@ -67,7 +67,9 @@ public enum LoopbackHTTPRequestParser {
         if lengthValues.isEmpty {
             length = 0
         } else {
-            guard Set(lengthValues).count == 1, let parsed = Int(lengthValues[0]), parsed >= 0 else {
+            let value = lengthValues[0]
+            guard Set(lengthValues).count == 1, !value.isEmpty, value.allSatisfy(\.isASCII), value.allSatisfy(\.isNumber),
+                  let parsed = Int(value) else {
                 return .invalid(status: 400, reason: "bad content-length")
             }
             length = parsed

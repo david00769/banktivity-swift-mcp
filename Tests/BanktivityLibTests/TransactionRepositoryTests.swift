@@ -442,6 +442,20 @@ struct TransactionRepositoryTests {
         })
     }
 
+    @Test("Create accepts a cash type in the display-name case reads return")
+    func createAcceptsCashTypeInAnyCase() throws {
+        let repos = try makeRepositoriesWithCashTypes()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let checking = try repos.accounts.create(name: "Checking", accountClass: AccountClass.checking, currencyCode: "USD")
+        let created = try repos.transactions.create(
+            date: "2026-03-11", title: "Read back and written again",
+            lineItems: [(accountId: checking.id, amount: -10, memo: nil)],
+            transactionType: "Deposit"
+        )
+        #expect(created.transactionType == "Deposit")
+    }
+
     @Test("Create rejects an unknown transaction_type")
     func createRejectsUnknownTransactionType() throws {
         let repos = try makeRepositoriesWithCashTypes()

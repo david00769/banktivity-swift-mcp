@@ -197,7 +197,7 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
             if let transactionType {
                 // An unknown slug gets requireTransactionType's own error below.
                 guard Self.transactionTypeBaseTypeCode(transactionType) == nil
-                    || Self.cashTransactionTypeNames.contains(transactionType) else {
+                    || Self.cashTransactionTypeNames.contains(transactionType.lowercased()) else {
                     throw ToolError.invalidInput("transactions create takes a cash type (\(Self.cashTransactionTypeList)), not \(transactionType). Investment rows need a security leg: use securities create-trade or create-income.")
                 }
                 resolvedType = try Self.requireTransactionType(named: transactionType, in: ctx)
@@ -464,12 +464,6 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
 
     // MARK: - Transaction Type Mapping
 
-    /// Infer deposit / withdrawal / transfer from asset/liability line items.
-    /// Income and expense category lines are ignored. Transfer is inferred whenever
-    /// two or more distinct bank accounts are involved (including fee and FX
-    /// transfers that do not net to zero). Deposit and withdrawal are used only
-    /// when a single distinct bank account is present. Investment types are never
-    /// inferred; a caller that means one must name it.
     /// The types `create` accepts by name. A plain transaction has no security
     /// leg, so an investment type on it is a row Banktivity cannot render
     /// consistently; those rows come from `securities create-trade` and
@@ -477,6 +471,12 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
     public static let cashTransactionTypeNames = ["check", "deposit", "transfer", "withdrawal"]
     public static var cashTransactionTypeList: String { cashTransactionTypeNames.joined(separator: ", ") }
 
+    /// Infer deposit / withdrawal / transfer from asset/liability line items.
+    /// Income and expense category lines are ignored. Transfer is inferred whenever
+    /// two or more distinct bank accounts are involved (including fee and FX
+    /// transfers that do not net to zero). Deposit and withdrawal are used only
+    /// when a single distinct bank account is present. Investment types are never
+    /// inferred; a caller that means one must name it.
     static func inferredTransactionTypeName(bankNet: Double, distinctBankAccountCount: Int) -> String {
         if distinctBankAccountCount >= 2 {
             return "transfer"

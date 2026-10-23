@@ -10,7 +10,7 @@ DEVELOPER_DIR := $(shell [ -d $(XCODE_DEVELOPER_DIR) ] && echo $(XCODE_DEVELOPER
 # Framework/SDK layout differs between full Xcode and CommandLineTools; only the
 # `test` target needs these, so resolve them per-toolchain and let them be empty
 # when neither layout matches.
-XCODE_SDK := $(shell xcrun --show-sdk-path 2>/dev/null)
+XCODE_SDK := $(shell DEVELOPER_DIR=$(DEVELOPER_DIR) xcrun --show-sdk-path 2>/dev/null)
 XCODE_FRAMEWORKS := $(firstword $(wildcard \
   $(DEVELOPER_DIR)/Platforms/MacOSX.platform/Developer/Library/Frameworks \
   $(DEVELOPER_DIR)/Library/Frameworks))
@@ -85,6 +85,8 @@ _install-from:
 	for b in banktivity-cli banktivity-mcp; do \
 	  cp "$(BIN)/$$b" "$(INSTALL_DIR)/$$b.new"; \
 	  codesign -fs - "$(INSTALL_DIR)/$$b.new"; \
+	done; \
+	for b in banktivity-cli banktivity-mcp; do \
 	  mv -f "$(INSTALL_DIR)/$$b.new" "$(INSTALL_DIR)/$$b"; \
 	done
 	@$(MAKE) --no-print-directory verify
@@ -95,7 +97,7 @@ _install-from:
 verify: ## Verify installed binaries exec (catches the invalid-signature SIGKILL)
 	@fail=0; \
 	for b in banktivity-cli banktivity-mcp; do \
-	  "$(INSTALL_DIR)/$$b" --version >/dev/null 2>&1 </dev/null; rc=$$?; \
+	  env -u BANKTIVITY_FILE_PATH -u BANKTIVITY_HTTP_PORT "$(INSTALL_DIR)/$$b" --version >/dev/null 2>&1 </dev/null; rc=$$?; \
 	  if [ $$rc -eq 137 ]; then \
 	    echo "  FAIL  $$b: SIGKILLed at exec (invalid code signature)"; \
 	    echo "        fix: codesign -fs - $(INSTALL_DIR)/$$b"; \

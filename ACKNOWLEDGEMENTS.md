@@ -19,19 +19,20 @@ How to read it:
   `Co-authored-by:` trailer and the original commits cited in the message.
 - AI-assistant co-author trailers in contributors' messages were removed when
   their commits were taken, following this fork's rule that commits list only
-  human authors. Nothing else in a contributor's message was changed, apart
-  from the provenance line.
+  human authors. Otherwise a contributor's message is unchanged, apart from
+  the provenance line and, where a conflict was resolved or the code adapted,
+  one line saying so.
 
 ## 2026-10-23 intake (v0.17.0)
 
 | Contribution | Author | Source | How taken | Local commit |
 | --- | --- | --- | --- | --- |
 | Never let Core Data migrate Banktivity's store; merge `.momd` bundles in a stable order | Peter Baker | `peterbaker/banktivity-swift-mcp` `fix/security-trade-cash-balance`, `6901da5` | Cherry-picked; conflict resolved beside this fork's `isReadOnly` option | `4938218` |
-| Install atomically instead of `cp`-ing over the installed binary (`make install`, `install-fast`, `verify`) | Peter Baker | same fork, `fix/atomic-install`, `83ea8e5` | Cherry-picked, unchanged | `165c283` |
+| Install atomically instead of `cp`-ing over the installed binary (`make install`, `install-fast`, `verify`) | Peter Baker | `peterbaker/banktivity-swift-mcp` `fix/atomic-install`, `83ea8e5` | Cherry-picked, unchanged | `165c283` |
 | `get_line_item_source` MCP tool: raw Plaid/OFX import details for a line item | producethis | `producethis/banktivity-swift-mcp` `main`, `a6a8ab8` | Cherry-picked; adapted to declare `access: .read` and to be listed in `CapabilityRegistry` | `b36b26b` |
 | Infer or accept a transaction type on create | Roberto Michelena | `rmichelena/banktivity-swift-mcp` `cursor/create-transaction-type-rebased-3d71`, `fd91944` `1c388fc` `dcb78ed` | Ported: his inference, helpers, 12 tests and docs taken; his sync-blob writes not taken (this fork retired the blob on 2026-10-15) | `8347887` |
-| `accounts update` / `update_account`: rename, retype, hide | Peter Baker | same fork, `fix/security-trade-cash-balance`, `521ac43` | Ported: his repository method and refusals kept; type names mapped onto this fork's `AccountClass.slugs` | `a36be32` |
-| Loopback HTTP server mode (`BANKTIVITY_HTTP_PORT`) | Peter Baker | same fork, `fix/security-trade-cash-balance`, `6a7a8cb` | Cherry-picked, unchanged; a follow-up here refuses a negative or oversized `Content-Length` | `5cde56f`, `2444379` |
+| `accounts update` / `update_account`: rename, retype, hide | Peter Baker | `peterbaker/banktivity-swift-mcp` `fix/security-trade-cash-balance`, `521ac43` | Ported: his repository method and refusals kept; type names mapped onto this fork's `AccountClass.slugs` | `a36be32` |
+| Loopback HTTP server mode (`BANKTIVITY_HTTP_PORT`) | Peter Baker | `peterbaker/banktivity-swift-mcp` `fix/security-trade-cash-balance`, `6a7a8cb` | Cherry-picked, unchanged; a follow-up here refuses a negative or oversized `Content-Length` | `5cde56f`, `2444379` |
 
 Added locally around the intake, after review: `line-items source` in the CLI
 (the same read as `get_line_item_source`); tests for the migration guard, the

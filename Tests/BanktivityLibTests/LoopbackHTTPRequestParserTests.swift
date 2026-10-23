@@ -30,9 +30,9 @@ struct LoopbackHTTPRequestParserTests {
         #expect(LoopbackHTTPRequestParser.parse(request("POST /mcp HTTP/1.1\r\nContent-Length: 10", body: "12345")) == .incomplete)
     }
 
-    @Test("A negative or non-numeric Content-Length is a 400, not a crash")
+    @Test("A Content-Length that is not plain digits is a 400, not a crash")
     func badContentLength() {
-        for value in ["-1", "abc", "1e3", ""] {
+        for value in ["-1", "+5", "abc", "1e3", "", "99999999999999999999"] {
             let result = LoopbackHTTPRequestParser.parse(request("POST /mcp HTTP/1.1\r\nContent-Length: \(value)"))
             guard case .invalid(let status, _) = result else {
                 Issue.record("Content-Length \(value): expected invalid, got \(result)"); continue

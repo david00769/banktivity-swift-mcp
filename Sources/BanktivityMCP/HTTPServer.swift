@@ -118,16 +118,29 @@ final class LoopbackHTTPServer: @unchecked Sendable {
         }
         let request = HTTPRequest(method: req.method, headers: req.headers, body: req.body.isEmpty ? nil : req.body, path: req.path)
         if let (method, id) = jsonRPCMethod(req.body), method == "initialize" {
-            let transport = self.transport
-            let result = await initializeOnce.result {
-                Self.initializeResult(from: await transport.handleRequest(request))
-            }
-            if let result, let reply = Self.initializeReply(id: id, result: result) {
-                write(conn, status: 200, headers: ["Content-Type": "application/json"], body: reply)
+            // A replayed result never reaches the transport, so its Origin and
+            // Content-Type checks are repeated here first.
+            if let refusal = Self.initializeRefusal(req.headers) {
+                write(conn, status: refusal.status, headers: [:], body: Data("\(refusal.reason)\n".utf8))
                 return
             }
-            // No result to share (the forward failed): fall through, so this
-            // caller sees the transport's own answer.
+            let transport = self.transport
+            let outcome = await initializeOnce.run {
+                InitializeOutcome(await transport.handleRequest(request))
+            }
+            switch outcome {
+            case .shared(let result):
+                if let reply = Self.initializeReply(id: id, result: result) {
+                    write(conn, status: 200, headers: ["Content-Type": "application/json"], body: reply)
+                } else {
+                    write(conn, status: 500, headers: [:], body: Data("could not replay initialize\n".utf8))
+                }
+            case .own(let own):
+                // This caller's request was the one forwarded: it gets the
+                // transport's answer as-is, success or failure.
+                write(conn, status: own.status, headers: own.headers, body: own.body)
+            }
+            return
         }
 
         let response = await transport.handleRequest(request)
@@ -156,12 +169,25 @@ final class LoopbackHTTPServer: @unchecked Sendable {
         return (method, obj["id"])
     }
 
-    /// The `result` member of a successful `initialize` response, as JSON.
-    private static func initializeResult(from response: HTTPResponse) -> Data? {
-        guard case .data(let data, _) = response,
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let result = obj["result"] else { return nil }
-        return try? JSONSerialization.data(withJSONObject: result, options: [.fragmentsAllowed])
+    /// The transport's Origin and Content-Type rules, for an `initialize` that
+    /// may be answered from the shared result without reaching the transport.
+    private static func initializeRefusal(_ headers: [String: String]) -> (status: Int, reason: String)? {
+        func header(_ name: String) -> String? {
+            headers.first { $0.key.lowercased() == name }?.value
+        }
+        if let origin = header("origin"),
+           let host = URL(string: origin)?.host?.lowercased(),
+           !["localhost", "127.0.0.1", "::1", "[::1]"].contains(host) {
+            return (403, "forbidden origin")
+        }
+        if let origin = header("origin"), URL(string: origin)?.host == nil {
+            return (403, "forbidden origin")
+        }
+        guard let contentType = header("content-type")?.lowercased(),
+              contentType.hasPrefix("application/json") else {
+            return (415, "content-type must be application/json")
+        }
+        return nil
     }
 
     private static func initializeReply(id: Any?, result: Data) -> Data? {
@@ -210,20 +236,57 @@ final class LoopbackHTTPServer: @unchecked Sendable {
     }
 }
 
-/// Forwards the first `initialize` and hands its result to every caller,
-/// including callers that arrive while it is still in flight. The previous
-/// optional cache was read and written from concurrent tasks with no
-/// synchronisation, so two clients initializing together could both miss it
-/// and the second was refused by the single-session server.
-actor InitializeOnce {
-    private var pending: Task<Data?, Never>?
+/// The transport's answer to one forwarded `initialize`, and its `result`
+/// member when it succeeded.
+struct InitializeOutcome: Sendable {
+    let status: Int
+    let headers: [String: String]
+    let body: Data
+    let result: Data?
 
-    func result(_ forward: @escaping @Sendable () async -> Data?) async -> Data? {
-        if let pending { return await pending.value }
-        let task = Task { await forward() }
-        pending = task
-        let value = await task.value
-        if value == nil { pending = nil }  // a failed forward does not stick
-        return value
+    init(_ response: HTTPResponse) {
+        status = response.statusCode
+        headers = response.headers
+        body = response.bodyData ?? Data()
+        if case .data(let data, _) = response,
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let member = obj["result"] {
+            result = try? JSONSerialization.data(withJSONObject: member, options: [.fragmentsAllowed])
+        } else {
+            result = nil
+        }
+    }
+}
+
+/// Forwards at most one `initialize` at a time and shares the first success
+/// with every caller. The previous optional cache was read and written from
+/// concurrent tasks with no synchronisation, so two clients initializing
+/// together could both be forwarded and the second refused by the
+/// single-session server. Nothing here forwards outside the actor: a caller
+/// that waited on an attempt that failed loops and becomes the next forwarder,
+/// so a failure never leaves the server initialized with nothing shared.
+actor InitializeOnce {
+    enum Outcome: Sendable {
+        case shared(Data)
+        case own(InitializeOutcome)
+    }
+
+    private var shared: Data?
+    private var pending: Task<InitializeOutcome, Never>?
+
+    func run(_ forward: @escaping @Sendable () async -> InitializeOutcome) async -> Outcome {
+        while true {
+            if let shared { return .shared(shared) }
+            if let pending {
+                _ = await pending.value
+                continue
+            }
+            let task = Task { await forward() }
+            pending = task
+            let outcome = await task.value
+            pending = nil
+            if let result = outcome.result { shared = result }
+            return .own(outcome)
+        }
     }
 }
