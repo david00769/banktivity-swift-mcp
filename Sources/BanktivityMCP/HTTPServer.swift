@@ -89,8 +89,18 @@ final class LoopbackHTTPServer: @unchecked Sendable {
             if let chunk { buf.append(chunk) }
             if error != nil { conn.cancel(); return }
 
-            if let parsed = self.parse(buf) {
+            switch self.parse(buf) {
+            case .complete(let parsed):
                 Task { await self.respond(conn, to: parsed) }
+                return
+            case .invalid(let status, let reason):
+                self.write(conn, status: status, headers: [:], body: Data("\(reason)\n".utf8))
+                return
+            case .incomplete:
+                break
+            }
+            if buf.count > Self.maxRequestBytes {
+                self.write(conn, status: 413, headers: [:], body: Data("request too large\n".utf8))
                 return
             }
             if isComplete {
@@ -103,14 +113,27 @@ final class LoopbackHTTPServer: @unchecked Sendable {
 
     private struct Parsed { let method: String; let path: String; let headers: [String: String]; let body: Data }
 
-    /// Returns nil until the full head and (Content-Length) body have arrived.
-    private func parse(_ data: Data) -> Parsed? {
-        guard let headEnd = data.range(of: Data("\r\n\r\n".utf8)) else { return nil }
+    /// Largest request head plus body this server buffers. MCP requests are
+    /// small JSON; the cap only exists so a local client cannot grow the
+    /// buffer without bound.
+    static let maxRequestBytes = 16 << 20
+
+    private enum ParseResult {
+        case incomplete
+        case invalid(status: Int, reason: String)
+        case complete(Parsed)
+    }
+
+    /// `.incomplete` until the full head and (Content-Length) body have arrived.
+    /// A negative or oversized Content-Length is refused rather than trusted:
+    /// a negative one used to form an inverted range and crash the process.
+    private func parse(_ data: Data) -> ParseResult {
+        guard let headEnd = data.range(of: Data("\r\n\r\n".utf8)) else { return .incomplete }
         let head = String(decoding: data[data.startIndex..<headEnd.lowerBound], as: UTF8.self)
         var lines = head.components(separatedBy: "\r\n")
-        guard !lines.isEmpty else { return nil }
+        guard !lines.isEmpty else { return .invalid(status: 400, reason: "bad request") }
         let requestLine = lines.removeFirst().split(separator: " ")
-        guard requestLine.count >= 2 else { return nil }
+        guard requestLine.count >= 2 else { return .invalid(status: 400, reason: "bad request") }
         let method = String(requestLine[0])
         let target = String(requestLine[1])
         let path = target.split(separator: "?", maxSplits: 1).first.map(String.init) ?? target
@@ -124,10 +147,20 @@ final class LoopbackHTTPServer: @unchecked Sendable {
         }
 
         let bodyStart = headEnd.upperBound
-        let length = headers.first { $0.key.lowercased() == "content-length" }.flatMap { Int($0.value) } ?? 0
-        guard data.count - (bodyStart - data.startIndex) >= length else { return nil }
+        let lengthHeader = headers.first { $0.key.lowercased() == "content-length" }?.value
+        let length: Int
+        if let lengthHeader {
+            guard let parsed = Int(lengthHeader), parsed >= 0 else {
+                return .invalid(status: 400, reason: "bad content-length")
+            }
+            length = parsed
+        } else {
+            length = 0
+        }
+        guard length <= Self.maxRequestBytes else { return .invalid(status: 413, reason: "request too large") }
+        guard data.count - (bodyStart - data.startIndex) >= length else { return .incomplete }
         let body = data[bodyStart..<(bodyStart + length)]
-        return Parsed(method: method, path: path, headers: headers, body: Data(body))
+        return .complete(Parsed(method: method, path: path, headers: headers, body: Data(body)))
     }
 
     // MARK: - Response
@@ -219,6 +252,7 @@ final class LoopbackHTTPServer: @unchecked Sendable {
         case 404: "Not Found"
         case 405: "Method Not Allowed"
         case 406: "Not Acceptable"
+        case 413: "Payload Too Large"
         case 415: "Unsupported Media Type"
         default: "Status"
         }
