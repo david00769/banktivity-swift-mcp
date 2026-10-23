@@ -6,6 +6,29 @@ A Swift library, [MCP](https://modelcontextprotocol.io/) server, and CLI for [Ba
 - **banktivity-mcp** — MCP server exposing 79 tools over stdio (or loopback HTTP), for AI assistants like Claude
 - **banktivity-cli** — standalone CLI for scripting and automation
 
+## About this fork
+
+This is David Siroky's maintained fork of
+[sflinter/banktivity-swift-mcp](https://github.com/sflinter/banktivity-swift-mcp).
+It contains everything upstream has, plus a large set of fixes and features
+that are offered upstream as pull requests but not yet merged there
+([open PRs](https://github.com/sflinter/banktivity-swift-mcp/pulls?q=is%3Apr+is%3Aopen+author%3Adavid00769);
+upstream has merged nothing since May 2026). Among them: sync by
+modification date so CLI edits are no longer reverted by Banktivity's merge,
+statement reconciliation and typed repairs, security trades, income and
+realised gains, read-only store mode, capability introspection, reporting
+currency and holdings value, and, from v0.17.0, a guard against Core Data
+migrating the store, `accounts update`, raw import details, transaction-type
+inference and a loopback HTTP mode.
+
+It also carries work by other people from their own forks, credited in
+[ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists
+the changes by release.
+
+The Homebrew tap and binary releases below are upstream's and install
+upstream's version, without this fork's changes. To get this fork, build from
+source.
+
 Inspired by [banktivity-mcp](https://github.com/mhriemers/banktivity-mcp) (TypeScript/Node.js), this is a ground-up rewrite in Swift. The original uses `better-sqlite3` to read and write Core Data's SQLite store directly, bypassing Core Data's internal change tracking. This works for reads, but direct SQL writes are invisible to CloudKit sync — Banktivity doesn't know the data changed, and the vault can become corrupted or fail to sync. This Swift version uses `NSPersistentContainer` so all mutations go through Core Data's API, ensuring proper change tracking and CloudKit compatibility.
 
 > **WARNING: This server can modify your Banktivity data.** Write tools (create, update, delete) make real changes to your `.bank8` vault. While the server uses Core Data for proper change tracking and includes a write guard that blocks mutations when Banktivity is open, AI assistants can and will make mistakes. **Back up your vault regularly** and consider working on a copy until you're confident in your workflow. The authors are not responsible for any data loss or corruption.
@@ -74,29 +97,29 @@ multiplier. It is reported beside `balance` and never added to it.
 
 ## Installation
 
-### Homebrew (recommended)
+### Homebrew (upstream version)
 
 ```sh
 brew install sflinter/tap/banktivity-swift-mcp
 ```
 
-This installs both `banktivity-mcp` and `banktivity-cli` as universal binaries (Apple Silicon + Intel).
+This installs upstream's `banktivity-mcp` and `banktivity-cli` as universal binaries (Apple Silicon + Intel), without this fork's changes.
 
 ### Download binary
 
-Download the universal binary from [GitHub Releases](https://github.com/sflinter/banktivity-swift-mcp/releases), extract, and move to your PATH:
+Upstream's universal binaries are on its [GitHub Releases](https://github.com/sflinter/banktivity-swift-mcp/releases) (again without this fork's changes). Extract and move to your PATH:
 
 ```sh
 tar xzf banktivity-swift-mcp-v0.8.0-macos-universal.tar.gz
 mv banktivity-mcp banktivity-cli ~/.local/bin/
 ```
 
-### Build from source
+### Build from source (this fork)
 
 Requires Xcode 16+ (needed for Swift Testing and universal binary builds):
 
 ```sh
-git clone https://github.com/sflinter/banktivity-swift-mcp.git
+git clone https://github.com/david00769/banktivity-swift-mcp.git
 cd banktivity-swift-mcp
 make install        # Build universal binary and install to ~/.local/bin
 ```
