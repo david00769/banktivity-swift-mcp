@@ -67,7 +67,7 @@ swift test \
   -Xlinker -rpath -Xlinker /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks
 ```
 
-Most suites build a fresh vault from the `.momd` fixtures in `Tests/Fixtures/StoreContent` (`TestVaultHelper.createFreshVault()`), so they need no real vault. The older `PersistentContainer` suite needs upstream's sample vault at `~/Documents/Banktivity/Steves Accounts MCP.bank8` and skips when it is missing. Run anything against a real ledger only on a copy of a backup, never the live vault.
+Most suites build a fresh vault from the `.momd` fixtures in `Tests/Fixtures/StoreContent` (`TestVaultHelper.createFreshVault()`), so they need no real vault. The older `PersistentContainer` suite needs upstream's sample vault at `~/Documents/Banktivity/Steves Accounts MCP.bank8` and skips when it is missing. Run anything against a real ledger only on a copy of a backup, never the live vault. Every suite that touches Core Data must be `@MainActor` (see `TestVaultHelper`); `MainActorSuiteGuardTests` enforces it by reading the test sources.
 
 ## Architecture
 

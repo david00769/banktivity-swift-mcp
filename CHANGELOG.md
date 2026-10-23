@@ -46,6 +46,8 @@ records each one's source, original commit and what was changed.
 
 - **Tests:** the last two Core Data suites now run on the main actor, which
   removes the intermittent "Categorize safety" crash.
+  `MainActorSuiteGuardTests` now fails the run if any suite that touches Core
+  Data lacks `@MainActor`, so the convention cannot lapse again.
 
 ## Earlier changes (v0.14.0 to v0.16.0, not recorded per release)
 
