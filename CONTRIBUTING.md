@@ -12,7 +12,7 @@ Thanks for your interest in contributing! This document covers the basics for ge
 
 - **macOS 14+** and **Swift 6.0+** are required
 - The only external dependency is the [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk)
-- Running tests requires Xcode installed (the Testing framework isn't available in Command Line Tools alone) — see the test command in [CLAUDE.md](CLAUDE.md)
+- Running tests requires Xcode installed (the Testing framework isn't available in Command Line Tools alone) — see the test command in [AGENTS.md](AGENTS.md)
 - Integration tests require a Banktivity `.bank8` vault file and will skip gracefully if one isn't available
 
 ## Making Changes

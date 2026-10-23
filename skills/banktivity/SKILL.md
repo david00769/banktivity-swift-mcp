@@ -57,6 +57,7 @@ Always redirect stderr with `2>/dev/null` — CoreData prints harmless warnings 
 | `get_net_worth` | (none) | Assets minus liabilities |
 | `get_account_balance` | `--account_id N` or `--account_name "name"` | Balance for one account |
 | `get_summary` | (none) | Database overview with account counts and totals |
+| `get_line_item_source` | `--line_item_id N` | Raw imported bank record (Plaid/OFX details, source type and identifier); `[]` for manual entries. CLI: `line-items source <id>` |
 | `get_payee_category_summary` | `--account_id N --min_transactions N` | Per-payee category breakdown; surfaces inconsistencies |
 | `review_categorizations` | `--account_id N --category_name "name" --payee_pattern "pat" --limit N` | Review transactions by category for spotting errors |
 | `suggest_category_for_merchant` | `--merchant_name "name"` | Suggest category based on rules and history |
@@ -107,6 +108,7 @@ Use `get_account_reconciliation_status` through MCP or `banktivity-cli statement
 | `bulk_tag_transactions` | `--transaction_ids [1,2,3] --tag_name "name" --action add\|remove` | Bulk tag/untag |
 | `create_tag` | `--name "name"` | Create a new tag |
 | `create_category` | `--name "name" --type expense\|income --parent_path "Parent"` | Create category or subcategory |
+| `update_account` | `--account_id N` or `--account_name "name"`, then `[--name] [--type SLUG] [--hidden true\|false]` | Rename, retype or hide a bank/investment account; categories are refused. CLI: `accounts update` |
 
 ### Forex Repair
 

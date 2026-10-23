@@ -122,6 +122,21 @@ Get a summary of the Banktivity database including account counts and transactio
 }
 ```
 
+### update_account
+Update a bank or investment account's name, account type, or hidden flag. Income/expense categories are refused. Write tool: behind the write guard.
+
+```json
+{
+  "properties": {
+    "account_id": { "type": "number", "description": "Account ID" },
+    "account_name": { "type": "string", "description": "Account name (alternative to account_id)" },
+    "name": { "type": "string", "description": "New account name" },
+    "type": { "type": "string", "description": "New account type slug, the same set `accounts create --type` accepts (AccountClass.slugs)" },
+    "hidden": { "type": "boolean", "description": "Hide (true) or unhide (false) the account" }
+  }
+}
+```
+
 ---
 
 ## Category Tools
@@ -406,6 +421,18 @@ Add a new line item to an existing transaction.
 
 ### get_line_item
 Get a specific line item by ID.
+
+```json
+{
+  "properties": {
+    "line_item_id": { "type": "number", "description": "The line item ID" }
+  },
+  "required": ["line_item_id"]
+}
+```
+
+### get_line_item_source
+Get the raw imported bank transaction details (e.g. Plaid/OFX description) for a line item, as received before Banktivity applied payee renaming or import rules. Returns an empty array for manually entered line items.
 
 ```json
 {

@@ -3,7 +3,7 @@
 A Swift library, [MCP](https://modelcontextprotocol.io/) server, and CLI for [Banktivity](https://www.iggsoftware.com/banktivity/) personal finance files. Provides full read/write access to `.bank8` vaults — accounts, transactions, categories, tags, templates, import rules, scheduled transactions, statements, securities, and RDF export.
 
 - **BanktivityLib** — pure domain library with Core Data repositories and RDF export, no server dependencies
-- **banktivity-mcp** — MCP server exposing 73 tools over stdio, for AI assistants like Claude
+- **banktivity-mcp** — MCP server exposing 79 tools over stdio (or loopback HTTP), for AI assistants like Claude
 - **banktivity-cli** — standalone CLI for scripting and automation
 
 Inspired by [banktivity-mcp](https://github.com/mhriemers/banktivity-mcp) (TypeScript/Node.js), this is a ground-up rewrite in Swift. The original uses `better-sqlite3` to read and write Core Data's SQLite store directly, bypassing Core Data's internal change tracking. This works for reads, but direct SQL writes are invisible to CloudKit sync — Banktivity doesn't know the data changed, and the vault can become corrupted or fail to sync. This Swift version uses `NSPersistentContainer` so all mutations go through Core Data's API, ensuring proper change tracking and CloudKit compatibility.
@@ -105,6 +105,8 @@ Other Makefile targets:
 
 ```sh
 make help           # List available targets with short descriptions
+make install-fast   # Native-arch release build + atomic install (dev loop)
+make verify         # Check the installed binaries actually exec
 make build          # Debug build
 make test           # Run all tests
 make release        # Universal release build (arm64 + x86_64)
@@ -116,6 +118,28 @@ make clean          # Remove build artifacts
 release configuration and Xcode framework paths as `make release`, so a test
 failure reproduces the way a release build would hit it. Use
 `make test-filter FILTER=TestName` when iterating on one test.
+
+Always install with `make install` or `make install-fast`, never by copying
+over `~/.local/bin` yourself. Both copy to `<path>.new`, sign, and rename into
+place. `cp` rewrites the file in place, and a `banktivity-mcp` still running
+from it is then SIGKILLed with "Code Signature Invalid" on its next exec.
+
+### Loopback HTTP mode
+
+By default `banktivity-mcp` speaks MCP over stdio, one process per client.
+Set `BANKTIVITY_HTTP_PORT` to run one long-lived server instead (for example
+under launchd), serving MCP's streamable HTTP transport on `127.0.0.1` only:
+
+```sh
+BANKTIVITY_FILE_PATH=~/Documents/Banktivity/My\ Accounts.bank8 \
+BANKTIVITY_HTTP_PORT=8790 banktivity-mcp
+# listening on http://127.0.0.1:8790/mcp  (BANKTIVITY_HTTP_PATH changes the path)
+```
+
+The listener refuses requests with a foreign `Origin`, and a negative or
+oversized `Content-Length`. It has no authentication: any process on the Mac
+can reach it, so treat it with the same trust as the vault file itself, and
+leave the write guard and your backups in place.
 
 ## Configuration
 
@@ -162,12 +186,13 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 - `get_spending_by_category` — Spending breakdown by category for a date range
 - `get_income_by_category` — Income breakdown by category for a date range
 - `get_summary` — Overall financial summary
+- `update_account` — Rename an account, change its type, or hide/unhide it (categories are refused)
 
 ### Transactions
 - `get_transactions` — List transactions with filtering and pagination
 - `search_transactions` — Full-text search across payees, memos, etc.
 - `get_transaction` — Get a single transaction by ID
-- `create_transaction` — Create a new transaction
+- `create_transaction` — Create a new transaction; optional `transaction_type`, otherwise deposit, withdrawal or transfer is inferred from the bank-account lines
 - `repair_forex_transfer` — Repair an existing cross-currency transfer with a target-currency receipt and source-currency fee split
 - `update_transaction` — Update an existing transaction
 - `delete_transaction` — Delete a transaction
@@ -234,6 +259,7 @@ banktivity-cli transactions repair-forex \
 
 ### Line Items
 - `get_line_item` — Get a specific line item
+- `get_line_item_source` — Raw imported bank details (Plaid/OFX description, source type and identifier) for a line item; empty for manual entries
 - `add_line_item` — Add a line item to a transaction (for splits)
 - `update_line_item` — Update a line item
 - `delete_line_item` — Delete a line item
@@ -353,12 +379,12 @@ banktivity-cli export turtle --output vault.ttl
 The command groups below are the complete CLI surface. Use a group's
 `--help` output for required arguments, defaults, and write confirmations.
 
-- `accounts`: `list`, `balance`, `net-worth`, `spending`, `income`, `summary`, `create`
+- `accounts`: `list`, `balance`, `net-worth`, `spending`, `income`, `summary`, `create`, `update`
 - `transactions`: `list`, `search`, `get`, `create`, `repair-forex`, `update`, `delete`, `sync-info`
 - `categories`: `list`, `get`, `tree`, `audit-entities`, `create`
 - `tags`: `list`, `create`, `tag-transaction`, `get-by-tag`, `bulk-tag`
 - `uncategorized`: `list`, `suggest`, `review`, `payee-summary`, `recategorize`, `bulk-recategorize`
-- `line-items`: `get`, `add`, `update`, `delete`
+- `line-items`: `get`, `source`, `add`, `update`, `delete`
 - `templates`: `list`, `get`, `create`, `update`, `delete`
 - `import-rules`: `list`, `get`, `match`, `create`, `update`, `delete`
 - `scheduled`: `list`, `get`, `create`, `update`, `delete`
@@ -375,6 +401,11 @@ Important behavior:
 - Statement dates use local-day boundaries. Reconciliation preserves existing
   cleared-state semantics when assigning or unassigning line items.
 - `transactions create --line-items` accepts a JSON array for split transactions.
+  `--transaction-type` names the type; without it, deposit, withdrawal or
+  transfer is inferred from the bank-account lines (investment types must be
+  named).
+- `accounts create --type` and `accounts update --type` accept the same slugs
+  (`banktivity-cli accounts update --help` lists them).
 - `statements inspect-membership` and `statements inspect-sync-record` are
   read-only diagnostics. They expose statement references and sync-record state;
   they do not synthesize missing records.
@@ -423,6 +454,7 @@ Once installed, type `/banktivity` in any Claude Code session to activate it, or
 ## Safety Features
 
 - **Write guard**: Before any mutation, the server checks if Banktivity.app has the vault open (via `lsof`). If it does, writes are blocked to prevent corruption.
+- **No schema migration**: automatic Core Data migration is turned off. If the model merged from the vault's `.momd` bundles does not match the store, opening fails instead of Core Data dropping and recreating tables.
 - **No persistent history tracking**: Banktivity uses its own sync mechanism. Core Data's built-in history tracking would add unrecognized metadata that corrupts the vault.
 - **Background contexts**: All writes use background `NSManagedObjectContext` instances with `performAndWait` for data integrity.
 
@@ -430,10 +462,17 @@ Once installed, type `/banktivity` in any Claude Code session to activate it, or
 
 Banktivity's `.bank8` bundle is a directory containing compiled Core Data models (`.momd` files) and a SQLite database (`StoreContent/core.sql`). This server:
 
-1. Loads and merges all `.momd` model bundles from the vault
-2. Opens the SQLite store via `NSPersistentContainer` (no history tracking)
-3. Exposes 73 MCP tools over stdio transport
+1. Loads and merges all `.momd` model bundles from the vault, in filename order
+2. Opens the SQLite store via `NSPersistentContainer` (no history tracking, no migration)
+3. Exposes 79 MCP tools over stdio, or over loopback HTTP when `BANKTIVITY_HTTP_PORT` is set
 4. Uses KVC (`value(forKey:)`) to access entities since we load Banktivity's own compiled models at runtime
+
+## Acknowledgements
+
+This fork includes work by Peter Baker, Roberto Michelena, producethis,
+muxadil, Richard Jeans, Howy Perrin and Martijn Riemers, on top of Steve
+Flinter's original. [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) lists each
+contribution, where it came from, and how it was taken.
 
 ## License
 

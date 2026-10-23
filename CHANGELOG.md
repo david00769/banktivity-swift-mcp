@@ -1,16 +1,47 @@
 # Changelog
 
-## Unreleased
+## v0.17.0 (2026-10-23)
+
+Contributions from other forks, taken with credit. `ACKNOWLEDGEMENTS.md`
+records each one's source, original commit and what was changed.
+
+- **Never let Core Data migrate Banktivity's store** (Peter Baker). Automatic
+  migration and mapping inference are turned off, and the `.momd` bundles are
+  merged in filename order. With the defaults on, a merged model whose entity
+  hashes differed from what Banktivity wrote was "migrated" by dropping and
+  recreating tables: one `line-items update` emptied `ZSECURITYPRICE`
+  (40,459 rows) and reported success. A mismatch now fails at store load.
+- **Install atomically** (Peter Baker). `make install` and the new
+  `make install-fast` copy to `<path>.new`, sign, then rename into place, so a
+  running `banktivity-mcp` keeps its old inode instead of being SIGKILLed with
+  "Code Signature Invalid". `make verify` execs both installed binaries. The
+  Makefile falls back to `xcode-select -p` when full Xcode is absent.
+- **`get_line_item_source`** MCP tool and **`line-items source <id>`** CLI
+  command (tool by producethis): the raw imported bank record for a line item
+  (Plaid/OFX details, source type and identifier, timestamps), as shown in
+  Banktivity's "Imported Transaction Details". Empty for manual entries.
+- **Transaction type on create** (Roberto Michelena). Optional
+  `--transaction-type` / `transaction_type` on `transactions create` and
+  `create_transaction`. When omitted, only deposit, withdrawal or transfer is
+  inferred from the asset and liability lines (transfer whenever two or more
+  distinct bank accounts are involved, including fee and FX transfers) instead
+  of taking whichever TransactionType row came first. Investment types must be
+  named. Ported onto the modification-date sync model.
+- **`accounts update`** CLI command and **`update_account`** MCP tool (Peter
+  Baker): rename an account, change its type, or hide/unhide it. Categories are
+  refused. The account-type slugs now live in `AccountClass.slugs`, shared with
+  `accounts create`; `equity` is no longer offered, since every class from
+  income (6000) up was always refused.
+- **Loopback HTTP mode** (Peter Baker): set `BANKTIVITY_HTTP_PORT` (and
+  optionally `BANKTIVITY_HTTP_PATH`, default `/mcp`) to serve MCP over HTTP on
+  127.0.0.1 instead of stdio, for one long-lived server under launchd. Unset
+  means stdio, unchanged. A negative or oversized `Content-Length` is refused
+  (400/413) rather than trusted.
+
+## Earlier changes (v0.14.0 to v0.16.0, not recorded per release)
 
 - Sync model: the modification date is the only upload signal for inserts and updates, deletes use Banktivity's pending-delete mark, and the CLI never writes `pRemoteEntityData`. Every create stamps `pCreationTime`/`pModificationDate` and writes no `SyncedHostedEntity` (Banktivity inserts its own on upload); every update stamps `pModificationDate` in the edit's own save, including line-item add/delete, statement delete, tag delete and security price import/fix/delete. Transaction, statement (including the replacement a typed restore removes), security and tag deletes mark the record `pSyncedState = 3` in the same save as the delete; a never-synced row is simply deleted and an already-pending mark is left as it is. Patching the blob (Banktivity's three-way-merge base) told Banktivity the server already held the edit, so a stale server copy won and CLI trade repairs were reverted (measured 2026-09-30). `SyncBlobUpdater` is retired: `SyncRecords` holds the in-context deletion marks and the read-only `inspect`, and repositories no longer take a `syncBlobUpdater:` parameter. Statement replace/restore records and restores the statement record's exact prior `pSyncedModificationDate`.
 - Statement preimages now include the statement sync record's `pSyncedModificationDate` (`syncedModificationTimestamp`). A preimage captured by an older binary for a statement whose sync record has a synced date hashes differently, so its stored envelope fails closed ("preimage or account scope does not match") and must be re-captured with `inspect-membership`.
-- Add optional `transaction_type` to MCP `create_transaction` and CLI
-  `transactions create --transaction-type`. When omitted, infer only deposit,
-  withdrawal, or transfer from asset/liability line items (transfer whenever
-  two or more distinct bank accounts are involved, including fee/FX transfers)
-  instead of picking the first arbitrary TransactionType (often Return Of Capital).
-  Investment types (`buy`, `dividend`, `check`, etc.) must be passed explicitly.
-  (Roberto Michelena, rmichelena/banktivity-swift-mcp; ported onto the modification-date sync model.)
 - Preserve Banktivity date-only calendar days in the host time zone instead of
   parsing and formatting them as UTC instants; full ISO 8601 timestamps remain UTC
 - Add `securities realized-gains` CLI command and `get_security_realized_gains` MCP tool: realised capital gains per closed lot, with acquisition date, holding period and term. Banktivity computes gains at render time and persists nothing (`SecurityLot` ships empty), so this recomputes them by FIFO lot matching; it refuses rather than guessing when a security uses a cost-basis method other than FIFO

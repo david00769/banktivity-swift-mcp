@@ -67,7 +67,7 @@ swift test \
   -Xlinker -rpath -Xlinker /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks
 ```
 
-Integration tests require a Banktivity vault at `~/Documents/Banktivity/Steves Accounts MCP.bank8`. Tests copy it to `/tmp` before each run and skip gracefully if the vault is missing.
+Most suites build a fresh vault from the `.momd` fixtures in `Tests/Fixtures/StoreContent` (`TestVaultHelper.createFreshVault()`), so they need no real vault. The older `PersistentContainer` suite needs upstream's sample vault at `~/Documents/Banktivity/Steves Accounts MCP.bank8` and skips when it is missing. Run anything against a real ledger only on a copy of a backup, never the live vault.
 
 ## Architecture
 
@@ -83,11 +83,11 @@ BanktivityLib        ← Pure domain library (no MCP dependency)
 BanktivityMCPLib     ← MCP glue (depends on BanktivityLib + MCP SDK)
   MCP/               ToolRegistry, ToolHelpers, Tools/*.swift
 
-banktivity-mcp       ← MCP server executable (stdio transport)
+banktivity-mcp       ← MCP server executable (stdio; loopback HTTP when BANKTIVITY_HTTP_PORT is set)
 banktivity-cli       ← CLI executable (depends on BanktivityLib + ArgumentParser)
 ```
 
-**MCP server flow**: `main.swift` → reads `BANKTIVITY_FILE_PATH` env → `PersistentContainerFactory.create()` → `WriteGuard` → `ToolRegistry.registerAllTools()` → MCP Server (stdio)
+**MCP server flow**: `main.swift` → reads `BANKTIVITY_FILE_PATH` env → `PersistentContainerFactory.create()` → `WriteGuard` → `ToolRegistry.registerAllTools()` → MCP Server (stdio, or `HTTPServer.swift`'s loopback listener when `BANKTIVITY_HTTP_PORT` is set)
 
 **CLI flow**: `banktivity-cli <subcommand>` → reads `--vault` or `BANKTIVITY_FILE_PATH` → creates container + repos → executes command → JSON output
 
@@ -112,11 +112,17 @@ Property names are prefixed with `p` (e.g., `pName`, `pDate`, `pAccountClass`, `
 
 `BaseRepository` provides KVC helpers (`stringValue()`, `intValue()`, `doubleValue()`, `relatedObject()`, `relatedSet()`), fetch-by-PK with entity inheritance traversal, and write operations via background contexts (`performWrite()`, `performWriteReturning()`). Domain repositories inherit from it.
 
+### Account types
+
+`AccountClass.slugs` (Constants.swift) is the one table of account-type slugs. `accounts create`, `accounts update` and the MCP `update_account` tool all read it; do not add a second map. Classes from `income` (6000) up are categories or equity and are refused by both writers.
+
 ### Entity Hierarchy
 
 `Account` (Z_ENT=1) is the base entity. `Category` (Z_ENT=2) and `PrimaryAccount` (Z_ENT=3) are sibling subentities. `pAccountClass` lives on the base: 6000=income, 7000=expense. All income/expense categories are `Category` entities.
 
 ## Critical Constraints
+
+**Never let Core Data migrate the store.** `PersistentContainerFactory.create` sets `shouldMigrateStoreAutomatically` and `shouldInferMappingModelAutomatically` to `false` and merges the `.momd` bundles in filename order. With either flag on, a merged model whose entity hashes differ from Banktivity's makes Core Data drop and recreate tables silently (one `line-items update` emptied `ZSECURITYPRICE`, 40,459 rows). A mismatch must fail at load. `MigrationGuardTests` fails if either flag is turned back on.
 
 **Never enable persistent history tracking.** Banktivity uses `ZSYNCEDENTITY` for its own sync — Core Data's `NSPersistentHistoryTrackingKey` adds Z_PRIMARYKEY entries (entity IDs 16001+) that Banktivity doesn't recognize, corrupting the vault.
 
@@ -156,6 +162,10 @@ Evidence on inserts: CLI creates did reach the cloud under the old model (a CLI-
 **LineItems have no separate sync records.** A Statement `SyncedHostedEntity` can exist, but historical vaults can legitimately omit an individual Statement record; typed statement replacement must never synthesize one. When an individual Statement record is present, its deleted/restore state is a strict part of the atomic forward/inverse contract: the inspection preimage records its `pSyncedModificationDate` (`syncedModificationTimestamp`) and restore puts back exactly that value. Replace/restore refuses a record already pending deletion.
 
 `SyncRecords` is the only code that touches `SyncedHostedEntity`: static helpers that run inside the caller's context and never save on their own (`markDeletedIfPresent`, `requireNotPendingDelete`, `syncedModificationDate`, `restoreDeletedStatementRecordIfPresent`), plus the read-only `inspect` behind `transactions sync-info` and `statements inspect-sync-record`. Repositories take no sync dependency.
+
+## Provenance
+
+Some code here came from other people's forks. [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) lists each contribution, its source fork and original commit, and whether it was cherry-picked (original author kept) or ported (maintainer commit with a `Co-authored-by:` trailer). Read it before reworking any of that code, and add a row when you take someone else's work.
 
 ---
 
