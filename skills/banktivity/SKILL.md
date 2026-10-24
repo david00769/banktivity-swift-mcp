@@ -75,7 +75,7 @@ flags each needs. Neither needs a vault.
 | Categories | `categories list --type expense` | Subcategories have a `fullName` like `"Motor:Tolls"` |
 | One category | `categories get "Insurance:Life"` | By ID or full path |
 | Category tree | `categories tree --type income` | |
-| Uncategorized transactions | `uncategorized list --account-id N --limit 50` | `--exclude-transfers` |
+| Uncategorized transactions | `uncategorized list --account-id N --limit 50` | Transfers excluded by default; `--no-exclude-transfers` includes them |
 | Categories used per payee | `uncategorized payee-summary --account-id N --min-transactions 3` | Shows inconsistent payees |
 | Review a category's transactions | `uncategorized review --category-name "Groceries" --limit 50` | Or `--payee-pattern` |
 | Suggest a category | `uncategorized suggest "BLUE BOTTLE"` | From rules and history |

@@ -30,7 +30,8 @@ struct Uncategorized: AsyncParsableCommand {
         @Option(name: .long, help: "Maximum number of transactions")
         var limit: Int = 50
 
-        @Flag(name: .long, help: "Exclude transfer transactions")
+        // A true-default @Flag can never be turned off, so pair it with --no-.
+        @Flag(name: .long, inversion: .prefixedNo, help: "Exclude transfer transactions (default); --no-exclude-transfers includes them")
         var excludeTransfers = true
 
         func run() async throws {
