@@ -17,7 +17,14 @@
   "documentation": "https://github.com/david00769/banktivity-swift-mcp#readme",
   "support": "https://github.com/david00769/banktivity-swift-mcp/issues",
   "license": "MIT",
-  "keywords": ["banktivity", "bank8", "personal-finance", "core-data", "cloudkit", "macos"],
+  "keywords": [
+    "banktivity",
+    "bank8",
+    "personal-finance",
+    "core-data",
+    "cloudkit",
+    "macos"
+  ],
   "server": {
     "type": "binary",
     "entry_point": "server/banktivity-mcp",
@@ -33,19 +40,22 @@
   "user_config": {
     "vault_path": {
       "type": "string",
-      "title": "Vault path",
-      "description": "Absolute path to your .bank8 vault, e.g. /Users/you/Documents/Banktivity/My Accounts.bank8",
-      "required": true
+      "title": "Vault path (optional)",
+      "description": "Leave blank to use your Banktivity 10 vault automatically (the one in ~/Library/Group Containers/group.com.iggsoftware.banktivity.library/IGGFinance/production/Documents). Set it only for a vault stored elsewhere, or if you have several.",
+      "required": false,
+      "default": ""
     },
     "read_only": {
       "type": "boolean",
       "title": "Read-only",
-      "description": "Open the vault read-only. Writes fail; reads still work.",
+      "description": "Open the vault read-only: writes fail, reads still work. Recommended until you trust your setup.",
       "default": false
     }
   },
   "tools_generated": true,
   "compatibility": {
-    "platforms": ["darwin"]
+    "platforms": [
+      "darwin"
+    ]
   }
 }

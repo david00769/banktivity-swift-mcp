@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.17.2 (2026-10-25)
+
+- **Finds your Banktivity 10 vault.** With `BANKTIVITY_FILE_PATH` (and
+  `--vault`) unset or empty, the server and CLI use the vault in Banktivity
+  10's library, `~/Library/Group Containers/group.com.iggsoftware.banktivity.library/IGGFinance/production/Documents/<vault id>/`,
+  when it holds exactly one; with several they list them. The Claude Desktop
+  extension's vault path is now optional, and its example pointed at a folder
+  Banktivity 10 does not use. A path that is a folder rather than a `.bank8`
+  now gets an error listing the vaults inside it, and `~` is expanded.
+
 ## v0.17.1 (2026-10-25)
 
 - **Claude Desktop extension and MCP Registry.** Each release now has an MCP

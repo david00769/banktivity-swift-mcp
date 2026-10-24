@@ -115,18 +115,18 @@ use one of the Core Data projects. All three can read a vault.
 
 Each [release](https://github.com/david00769/banktivity-swift-mcp/releases)
 has one universal download (Apple Silicon and Intel) and a checksum file. CI
-builds and tests the release from the tagged commit. For v0.17.1:
+builds and tests the release from the tagged commit. For v0.17.2:
 
 ```sh
-base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.17.1
-curl -LO "$base/banktivity-swift-mcp-v0.17.1-macos-universal.tar.gz"
-curl -LO "$base/banktivity-swift-mcp-v0.17.1-macos-universal.tar.gz.sha256"
-shasum -a 256 -c banktivity-swift-mcp-v0.17.1-macos-universal.tar.gz.sha256   # prints "OK"
+base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.17.2
+curl -LO "$base/banktivity-swift-mcp-v0.17.2-macos-universal.tar.gz"
+curl -LO "$base/banktivity-swift-mcp-v0.17.2-macos-universal.tar.gz.sha256"
+shasum -a 256 -c banktivity-swift-mcp-v0.17.2-macos-universal.tar.gz.sha256   # prints "OK"
 
-tar xzf banktivity-swift-mcp-v0.17.1-macos-universal.tar.gz
+tar xzf banktivity-swift-mcp-v0.17.2-macos-universal.tar.gz
 xattr -d com.apple.quarantine banktivity-cli banktivity-mcp 2>/dev/null || true
 mkdir -p ~/.local/bin && mv banktivity-cli banktivity-mcp ~/.local/bin/
-banktivity-cli --version   # 0.17.1
+banktivity-cli --version   # 0.17.2
 ```
 
 The binaries are signed ad hoc, not notarized. The `xattr` line removes the
@@ -137,8 +137,9 @@ from running.
 
 Each release also has `banktivity-swift-mcp-vX.Y.Z-macos-universal.mcpb`, an
 [MCP Bundle](https://github.com/modelcontextprotocol/mcpb). Download it and
-open it with Claude Desktop to install `banktivity-mcp` as an extension, then
-enter your vault's path when asked. The binary inside is ad-hoc signed, not
+open it with Claude Desktop to install `banktivity-mcp` as an extension. Leave
+**Vault path** blank to use your Banktivity 10 vault (see
+[Where is my vault?](#where-is-my-vault)), and consider turning **Read-only** on. The binary inside is ad-hoc signed, not
 notarized; if macOS refuses to run it, clear the quarantine flag with
 `xattr -dr com.apple.quarantine ~/Library/Application\ Support/Claude/Claude\ Extensions`
 and restart Claude Desktop. It installs only the MCP server; for the CLI, use the download above. The server
@@ -205,6 +206,22 @@ The CHANGELOG section becomes the release notes.
 
 ## Configuration
 
+### Where is my vault?
+
+Banktivity 10 keeps a vault that syncs through Banktivity Cloud in its own
+library, not in Documents:
+
+```
+~/Library/Group Containers/group.com.iggsoftware.banktivity.library/IGGFinance/production/Documents/<vault id>/1.bank8
+```
+
+The `<vault id>` folder differs from Mac to Mac. **If `BANKTIVITY_FILE_PATH`
+is unset or empty, `banktivity-mcp` and `banktivity-cli` use the vault in that
+folder**, provided there is exactly one. With several they list them and stop,
+so you can pick one. A vault saved anywhere else (the examples below use
+`~/Documents/Banktivity/My Accounts.bank8`) needs its path set. The path must
+end in `.bank8`; if you give a folder, the error lists the vaults inside it.
+
 ### Claude Code
 
 Add to a project's `.mcp.json`, or to `~/.claude.json` for every project
@@ -238,7 +255,8 @@ project.
 
 Any client that starts stdio MCP servers takes the same two things: the
 command `banktivity-mcp` (use its absolute path) and the environment variable
-`BANKTIVITY_FILE_PATH` set to your `.bank8` vault. For one shared server over
+`BANKTIVITY_FILE_PATH` set to your `.bank8` vault (optional for a Banktivity 10
+vault; see [Where is my vault?](#where-is-my-vault)). For one shared server over
 HTTP, see below. For agents that can run shell commands, also consider the
 [CLI](#cli-or-mcp-server-which-to-run-and-keeping-the-vault-safe).
 
@@ -262,7 +280,7 @@ curl -s http://127.0.0.1:8790/mcp \
   -H 'Accept: application/json, text/event-stream' \
   -H 'MCP-Protocol-Version: 2025-06-18' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"check","version":"1"}}}'
-# {"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{...}},"serverInfo":{"name":"banktivity-mcp","version":"0.17.1"},...}}
+# {"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{...}},"serverInfo":{"name":"banktivity-mcp","version":"0.17.2"},...}}
 ```
 
 Point a client at it with a URL instead of a command:
@@ -540,7 +558,8 @@ banktivity-cli transactions list --vault ~/Documents/Banktivity/My\ Accounts.ban
 
 A standalone CLI (`banktivity-cli`) provides the same query and write
 functionality without an MCP server. It reads a `.bank8` vault selected by
-`--vault /absolute/path/to/Ledger.bank8` or `BANKTIVITY_FILE_PATH`.
+`--vault /absolute/path/to/Ledger.bank8` or `BANKTIVITY_FILE_PATH`, or with
+neither, the Banktivity 10 vault ([Where is my vault?](#where-is-my-vault)).
 
 Start with the built-in help:
 

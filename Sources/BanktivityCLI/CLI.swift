@@ -47,15 +47,14 @@ struct BanktivityCLI: AsyncParsableCommand {
         ]
     )
 
-    /// Resolve the vault path from --vault or BANKTIVITY_FILE_PATH
+    /// Resolve the vault path from --vault or BANKTIVITY_FILE_PATH; with
+    /// neither, use the Banktivity 10 vault if there is exactly one.
     static func resolveVaultPath(vault: String?) throws -> String {
-        if let path = vault ?? ProcessInfo.processInfo.environment["BANKTIVITY_FILE_PATH"] {
-            guard FileManager.default.fileExists(atPath: path) else {
-                throw ValidationError("File not found: \(path)")
-            }
-            return path
+        do {
+            return try VaultLocator.resolve(vault ?? ProcessInfo.processInfo.environment["BANKTIVITY_FILE_PATH"])
+        } catch {
+            throw ValidationError(error.localizedDescription)
         }
-        throw ValidationError("Provide --vault or set BANKTIVITY_FILE_PATH")
     }
 
     /// Create a Core Data container for the given vault path

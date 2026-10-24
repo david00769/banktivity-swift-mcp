@@ -7,23 +7,15 @@ import MCP
 
 // MARK: - Configuration
 
-guard let bankFilePath = ProcessInfo.processInfo.environment["BANKTIVITY_FILE_PATH"] else {
-    FileHandle.standardError.write(
-        "Error: BANKTIVITY_FILE_PATH environment variable is required\n".data(using: .utf8)!
-    )
-    FileHandle.standardError.write(
-        "Set it to the path of your .bank8 file\n".data(using: .utf8)!
-    )
+// An empty or unset BANKTIVITY_FILE_PATH means "find the Banktivity 10 vault".
+let bankFilePath: String
+do {
+    bankFilePath = try VaultLocator.resolve(ProcessInfo.processInfo.environment["BANKTIVITY_FILE_PATH"])
+} catch {
+    FileHandle.standardError.write("Error: \(error.localizedDescription)\n".data(using: .utf8)!)
     exit(1)
 }
-
-// Verify the file exists
-guard FileManager.default.fileExists(atPath: bankFilePath) else {
-    FileHandle.standardError.write(
-        "Error: File not found: \(bankFilePath)\n".data(using: .utf8)!
-    )
-    exit(1)
-}
+FileHandle.standardError.write("Vault: \(bankFilePath)\n".data(using: .utf8)!)
 
 // MARK: - Core Data Setup
 
