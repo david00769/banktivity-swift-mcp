@@ -1,0 +1,84 @@
+name: Release
+
+# Push a tag `vX.Y.Z` on main to publish a release. The tag must match
+# `Sources/BanktivityLib/Version.swift`, the suite must pass, and the notes are
+# that version's section of CHANGELOG.md. The asset is the same universal
+# tarball `make package` builds locally.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches the package version
+        run: |
+          version="$(grep 'public let version' Sources/BanktivityLib/Version.swift | sed 's/.*"\(.*\)"/\1/')"
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match Version.swift ${version}" >&2
+            exit 1
+          fi
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+
+      - name: Test
+        run: make test
+
+      - name: Build universal tarball
+        run: |
+          make package
+          tarball="/tmp/banktivity-swift-mcp-v${VERSION}-macos-universal.tar.gz"
+          cp "$tarball" .
+          shasum -a 256 "$(basename "$tarball")" > "$(basename "$tarball").sha256"
+          cat ./*.sha256
+
+      - name: Release notes from CHANGELOG
+        run: |
+          awk -v v="## v${VERSION}" '
+            index($0, v) == 1 { on = 1; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "CHANGELOG.md has no section for v${VERSION}" >&2
+            exit 1
+          fi
+          cat >> notes.md <<'EOF'
+
+          ## Install
+
+          Download `banktivity-swift-mcp-v${VERSION}-macos-universal.tar.gz` below
+          (Apple Silicon and Intel), check it against the `.sha256` file, then:
+
+          ```sh
+          tar xzf banktivity-swift-mcp-v*-macos-universal.tar.gz
+          xattr -d com.apple.quarantine banktivity-cli banktivity-mcp 2>/dev/null || true
+          mv banktivity-cli banktivity-mcp ~/.local/bin/
+          ```
+
+          The binaries are ad-hoc signed, not notarized, so macOS quarantines a
+          downloaded copy until the `xattr` line clears it. Or build from source:
+          `git clone https://github.com/david00769/banktivity-swift-mcp.git && make install`.
+
+          Contributors whose work is in this release are credited in
+          [ACKNOWLEDGEMENTS.md](https://github.com/david00769/banktivity-swift-mcp/blob/main/ACKNOWLEDGEMENTS.md).
+          EOF
+          sed -i '' "s/\${VERSION}/${VERSION}/g" notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            "banktivity-swift-mcp-v${VERSION}-macos-universal.tar.gz" \
+            "banktivity-swift-mcp-v${VERSION}-macos-universal.tar.gz.sha256" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file notes.md \
+            --verify-tag

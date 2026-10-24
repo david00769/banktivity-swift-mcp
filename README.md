@@ -25,9 +25,10 @@ It also carries work by other people from their own forks, credited in
 [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists
 the changes by release.
 
-The Homebrew tap and binary releases below are upstream's and install
-upstream's version, without this fork's changes. To get this fork, build from
-source.
+To install this fork, download a binary from its
+[releases](https://github.com/david00769/banktivity-swift-mcp/releases) or build
+from source. The Homebrew tap below is upstream's and installs upstream's
+version, without this fork's changes.
 
 Inspired by [banktivity-mcp](https://github.com/mhriemers/banktivity-mcp) (TypeScript/Node.js), this is a ground-up rewrite in Swift. The original uses `better-sqlite3` to read and write Core Data's SQLite store directly, bypassing Core Data's internal change tracking. This works for reads, but direct SQL writes are invisible to CloudKit sync — Banktivity doesn't know the data changed, and the vault can become corrupted or fail to sync. This Swift version uses `NSPersistentContainer` so all mutations go through Core Data's API, ensuring proper change tracking and CloudKit compatibility.
 
@@ -105,14 +106,21 @@ brew install sflinter/tap/banktivity-swift-mcp
 
 This installs upstream's `banktivity-mcp` and `banktivity-cli` as universal binaries (Apple Silicon + Intel), without this fork's changes.
 
-### Download binary
+### Download binary (this fork)
 
-Upstream's universal binaries are on its [GitHub Releases](https://github.com/sflinter/banktivity-swift-mcp/releases) (again without this fork's changes). Extract and move to your PATH:
+Each release on this fork's
+[GitHub Releases](https://github.com/david00769/banktivity-swift-mcp/releases)
+carries a universal tarball (Apple Silicon + Intel) and its SHA-256, built and
+tested by CI from the tagged commit:
 
 ```sh
-tar xzf banktivity-swift-mcp-v0.8.0-macos-universal.tar.gz
+tar xzf banktivity-swift-mcp-v0.17.0-macos-universal.tar.gz
+xattr -d com.apple.quarantine banktivity-cli banktivity-mcp 2>/dev/null || true
 mv banktivity-mcp banktivity-cli ~/.local/bin/
 ```
+
+The binaries are ad-hoc signed, not notarized, so macOS quarantines a downloaded
+copy until the `xattr` line clears it.
 
 ### Build from source (this fork)
 
@@ -136,6 +144,12 @@ make release        # Universal release build (arm64 + x86_64)
 make package        # Build release tarball with SHA256
 make clean          # Remove build artifacts
 ```
+
+Releases: CI (`.github/workflows/ci.yml`) runs `make test` on every push and
+pull request to `main`. Pushing a tag `vX.Y.Z` that matches
+`Sources/BanktivityLib/Version.swift` runs `.github/workflows/release.yml`,
+which tests, builds the universal tarball and publishes the release with that
+version's CHANGELOG section as its notes.
 
 `make test` builds the CLI first and runs the suite single-worker under the same
 release configuration and Xcode framework paths as `make release`, so a test
