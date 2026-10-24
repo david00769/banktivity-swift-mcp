@@ -64,7 +64,7 @@ A `.bank8` vault is a Core Data store, and Banktivity syncs it through CloudKit.
 
 ## About this fork
 
-This is David Siroky's maintained fork of Steve Flinter's
+This is david00769's maintained fork of Steve Flinter's
 [banktivity-swift-mcp](https://github.com/sflinter/banktivity-swift-mcp). It
 has everything upstream has. The fixes and features below are offered upstream
 as [pull requests](https://github.com/sflinter/banktivity-swift-mcp/pulls?q=is%3Apr+is%3Aopen+author%3Adavid00769),
