@@ -1,21 +1,31 @@
-MIT License
+This repository is under two licenses. Which one applies depends on who wrote
+the code and when.
 
-Copyright (c) 2026 Steve Flinter
+1. MIT License (LICENSES/MIT.txt)
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+   Everything in this repository as of commit 9bcd5d2 (2026-10-25, just after
+   release v0.17.2), including all earlier commits and releases, is under the
+   MIT License. That includes Steve Flinter's original, Martijn Riemers's code,
+   and every contribution credited in ACKNOWLEDGEMENTS.md. It also covers any
+   later change that is marked as MIT, or that comes from those projects or
+   contributors under MIT. You may keep using all of that code under MIT,
+   commercially or otherwise.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+2. PolyForm Noncommercial License 1.0.0 (LICENSES/PolyForm-Noncommercial-1.0.0.md)
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+   Changes and new code by david00769 after commit 9bcd5d2 are under the
+   PolyForm Noncommercial License 1.0.0. Personal, hobby, research, educational,
+   charitable and government use is allowed. Commercial use is not granted by
+   that license.
+
+   Required Notice: Copyright (c) 2026 david00769 (https://github.com/david00769)
+
+Commercial licensing
+
+   To use the PolyForm-licensed parts commercially (in a product or service you
+   sell, or in a business's operations), you need a separate commercial license
+   from david00769. Contact: https://github.com/david00769.
+
+Using this repository as a whole, as of a commit after 9bcd5d2, means following
+both licenses: MIT for the MIT parts and PolyForm Noncommercial for the rest.
+Every release from v0.17.3 on includes PolyForm-licensed code.

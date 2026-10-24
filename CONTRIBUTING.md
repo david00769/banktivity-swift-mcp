@@ -60,4 +60,13 @@ When reporting bugs, include:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+See [LICENSE](LICENSE): the repository is MIT up to commit `9bcd5d2` and
+PolyForm Noncommercial 1.0.0 for the maintainer's later work, with commercial
+licenses available from the maintainer.
+
+By submitting a contribution, you license it to david00769 under the MIT
+License. That lets it be distributed under this repository's licenses,
+including the PolyForm Noncommercial License and commercial licenses
+david00769 grants. You confirm that you have the right to do so. If you want
+your change to stay under MIT only, say so in the pull request; it will then
+be marked as MIT.

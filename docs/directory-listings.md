@@ -16,7 +16,9 @@ MCP server (79 tools) and CLI for Banktivity 10 `.bank8` personal finance
 vaults, written in Swift. It reads and writes accounts, transactions, splits,
 categories, tags, statements and securities through Core Data, the way
 Banktivity does, so edits are seen by iCloud/CloudKit sync. Works with Claude
-Desktop, Claude Code, Cursor and any stdio MCP client. macOS 14+, MIT.
+Desktop, Claude Code, Cursor and any stdio MCP client. macOS 14+.
+Free for noncommercial use (PolyForm Noncommercial 1.0.0, with MIT for the
+upstream code); commercial licenses from the maintainer.
 
 **Links:** repository `https://github.com/david00769/banktivity-swift-mcp`,
 releases `https://github.com/david00769/banktivity-swift-mcp/releases`.

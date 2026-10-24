@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **License.** Work by david00769 after commit `9bcd5d2` is under the PolyForm
+  Noncommercial License 1.0.0, with commercial licenses available from
+  david00769. Everything up to that commit, including every release through
+  v0.17.2, stays MIT, and so does every credited contribution. See `LICENSE`.
+
 ## v0.17.2 (2026-10-25)
 
 - **Finds your Banktivity 10 vault.** With `BANKTIVITY_FILE_PATH` (and

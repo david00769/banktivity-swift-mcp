@@ -5,7 +5,7 @@
 [![Swift 6.0](https://img.shields.io/badge/Swift-6.0-F05138)](https://swift.org)
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-lightgrey)](#requirements)
 [![MCP](https://img.shields.io/badge/MCP-server-blue)](https://modelcontextprotocol.io/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![License: PolyForm Noncommercial + MIT](https://img.shields.io/badge/License-PolyForm%20NC%20%2B%20MIT-orange)](#license)
 
 A Swift library, [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)
 server and command-line tool for [Banktivity](https://www.iggsoftware.com/banktivity/)
@@ -833,4 +833,15 @@ contribution, where it came from, and how it was taken.
 
 ## License
 
-[MIT](LICENSE)
+Two licenses; [LICENSE](LICENSE) explains which applies where.
+
+- **MIT:** everything up to commit `9bcd5d2` (just after v0.17.2), including every
+  release through v0.17.2, Steve Flinter's original and all credited
+  contributions ([LICENSES/MIT.txt](LICENSES/MIT.txt)).
+- **PolyForm Noncommercial 1.0.0:** david00769's changes after that commit
+  ([LICENSES/PolyForm-Noncommercial-1.0.0.md](LICENSES/PolyForm-Noncommercial-1.0.0.md)).
+  Free for personal, hobby, research, educational, charitable and government
+  use.
+
+**Commercial use** of the PolyForm-licensed parts needs a commercial license
+from [david00769](https://github.com/david00769).
