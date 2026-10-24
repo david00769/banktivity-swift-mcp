@@ -21,7 +21,7 @@ VERSION := $(shell grep 'public let version' Sources/BanktivityLib/Version.swift
 
 export DEVELOPER_DIR
 
-.PHONY: build test release install install-fast _install-from verify clean help
+.PHONY: build test release package mcpb install install-fast _install-from verify clean help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -141,6 +141,19 @@ package: release ## Build release and create tarball
 	tar czf /tmp/banktivity-swift-mcp-v$(VERSION)-macos-universal.tar.gz banktivity-cli banktivity-mcp
 	@echo "Package: /tmp/banktivity-swift-mcp-v$(VERSION)-macos-universal.tar.gz"
 	@shasum -a 256 /tmp/banktivity-swift-mcp-v$(VERSION)-macos-universal.tar.gz
+
+MCPB := /tmp/banktivity-swift-mcp-v$(VERSION)-macos-universal.mcpb
+MCPB_STAGE := .build/mcpb-stage
+
+mcpb: package ## MCP Bundle (.mcpb) for Claude Desktop and the MCP Registry
+	@set -e; \
+	rm -rf $(MCPB_STAGE) $(MCPB); \
+	mkdir -p $(MCPB_STAGE)/server; \
+	sed 's/@VERSION@/$(VERSION)/' mcpb/manifest.json > $(MCPB_STAGE)/manifest.json; \
+	cp $(UNIVERSAL_DIR)/banktivity-mcp $(MCPB_STAGE)/server/; \
+	cd $(MCPB_STAGE) && zip -qrX $(MCPB) manifest.json server
+	@echo "Bundle: $(MCPB)"
+	@shasum -a 256 $(MCPB)
 
 clean: ## Remove build artifacts
 	rm -rf .build

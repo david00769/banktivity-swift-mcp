@@ -35,29 +35,26 @@ README's legend: it marks language, local versus cloud, and OS). The line links
 
 ### Glama (`glama.ai/mcp/servers`)
 
-Glama indexes public GitHub MCP servers. Search for the repository; if it is
-missing, use "Add server" with the repository URL, then claim it with the
-GitHub account to edit its listing.
+`glama.json` at the repository root names `david00769` as maintainer, which is
+how Glama assigns ownership. If Glama has not indexed the repository, sign in
+at glama.ai with GitHub and use "Add server" with the repository URL. Most
+awesome-mcp-servers entries carry a Glama score badge, so do this first.
 
 ### mcp.so
 
-Use the site's submit form with the repository URL and the short description.
+Use the site's submit form (`https://mcp.so/submit`) with the repository URL.
+The free path goes through review; there is also a paid "publish
+immediately" option, which is not needed.
 
 ### Official MCP Registry (`registry.modelcontextprotocol.io`)
 
-Not ready yet. A `server.json` package must be one of the registry's package
-types (npm, PyPI, NuGet, OCI image, MCPB bundle, ...); a plain release tarball
-does not qualify. The fit for this project is an **MCPB bundle** (`.mcpb`)
-attached to each GitHub release, which the release workflow does not build
-yet. Once it does:
-
-1. Add `server.json` with `name` `io.github.david00769/banktivity-swift-mcp`,
-   the release version, and a package of `registryType` `mcpb` whose
-   `identifier` is the `.mcpb` release URL and `fileSha256` its checksum
-   (schema seen 2026-10-25: `https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json`;
-   check the registry docs for the current schema and field names first).
-2. Publish with the registry's `mcp-publisher` CLI, signing in with GitHub,
-   which proves ownership of the `io.github.david00769/` namespace.
+Automated. The release workflow builds the MCP Bundle (`make mcpb`), attaches
+it to the release, hashes the asset GitHub serves, writes that hash into
+`server.json` as `fileSha256`, and publishes with `mcp-publisher` over GitHub
+OIDC (no stored token). Before tagging a release, set `version` and the
+`.mcpb` URL in `server.json` to the new version; the workflow refuses to run
+if they do not match `Version.swift`. A version can be published to the
+registry only once.
 
 ### Smithery
 

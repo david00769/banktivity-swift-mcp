@@ -2,8 +2,9 @@ name: Release
 
 # Push a tag `vX.Y.Z` on main to publish a release. The tag must match
 # `Sources/BanktivityLib/Version.swift`, the suite must pass, and the notes are
-# that version's section of CHANGELOG.md. The asset is the same universal
-# tarball `make package` builds locally.
+# that version's section of CHANGELOG.md. The assets are the same universal
+# tarball and MCP Bundle (.mcpb) that `make mcpb` builds locally. The release is
+# then published to the official MCP Registry (server.json) over GitHub OIDC.
 
 on:
   push:
@@ -11,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write # MCP Registry login (mcp-publisher login github-oidc)
 
 jobs:
   release:
@@ -28,15 +30,24 @@ jobs:
           fi
           echo "VERSION=${version}" >> "$GITHUB_ENV"
 
+      - name: server.json matches the package version
+        run: |
+          jq -e --arg v "${VERSION}" '
+            .version == $v and
+            (.packages[0].identifier | endswith("/v\($v)/banktivity-swift-mcp-v\($v)-macos-universal.mcpb"))
+          ' server.json
+
       - name: Test
         run: make test
 
-      - name: Build universal tarball
+      - name: Build universal tarball and MCP Bundle
         run: |
-          make package
-          tarball="/tmp/banktivity-swift-mcp-v${VERSION}-macos-universal.tar.gz"
-          cp "$tarball" .
-          shasum -a 256 "$(basename "$tarball")" > "$(basename "$tarball").sha256"
+          make mcpb
+          for f in "/tmp/banktivity-swift-mcp-v${VERSION}-macos-universal.tar.gz" \
+                   "/tmp/banktivity-swift-mcp-v${VERSION}-macos-universal.mcpb"; do
+            cp "$f" .
+            shasum -a 256 "$(basename "$f")" > "$(basename "$f").sha256"
+          done
           cat ./*.sha256
 
       - name: Release notes from CHANGELOG
@@ -63,6 +74,9 @@ jobs:
           mv banktivity-cli banktivity-mcp ~/.local/bin/
           ```
 
+          For Claude Desktop, download `banktivity-swift-mcp-v${VERSION}-macos-universal.mcpb`
+          instead and open it to install the server as an extension.
+
           The binaries are ad-hoc signed, not notarized, so macOS quarantines a
           downloaded copy until the `xattr` line clears it. Or build from source:
           `git clone https://github.com/david00769/banktivity-swift-mcp.git && cd banktivity-swift-mcp && make install`.
@@ -76,9 +90,58 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            "banktivity-swift-mcp-v${VERSION}-macos-universal.tar.gz" \
-            "banktivity-swift-mcp-v${VERSION}-macos-universal.tar.gz.sha256" \
-            --title "${GITHUB_REF_NAME}" \
-            --notes-file notes.md \
-            --verify-tag
+          assets=(banktivity-swift-mcp-v${VERSION}-macos-universal.{tar.gz,tar.gz.sha256,mcpb,mcpb.sha256})
+          # On a re-run, upload only what is missing and never replace an asset:
+          # a rebuilt .mcpb has different bytes, and the registry may already
+          # hold the hash of the one GitHub is serving.
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            have="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name')"
+            for a in "${assets[@]}"; do
+              grep -qxF "$a" <<<"$have" || gh release upload "${GITHUB_REF_NAME}" "$a"
+            done
+          else
+            gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
+              --title "${GITHUB_REF_NAME}" \
+              --notes-file notes.md \
+              --verify-tag
+          fi
+
+      # MCP Registry. The hash is of the asset as GitHub serves it, so it is
+      # exactly what clients will download and check.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Download and verify mcp-publisher
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
+        run: |
+          set -euo pipefail
+          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          arch="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+          archive="mcp-publisher_${os}_${arch}.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          curl --fail --location --silent --show-error --output "$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$archive"
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive" "$archive.sigstore.json"
+
+      - name: Publish to the MCP Registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mcpb="banktivity-swift-mcp-v${VERSION}-macos-universal.mcpb"
+          mkdir -p served && gh release download "${GITHUB_REF_NAME}" -p "$mcpb" -D served --clobber
+          sha="$(shasum -a 256 "served/$mcpb" | cut -d' ' -f1)"
+          if ! cmp -s "$mcpb" "served/$mcpb"; then
+            echo "note: served .mcpb is from an earlier run; publishing its hash" >&2
+          fi
+          jq --arg sha "$sha" '.packages[0].fileSha256 = $sha' server.json > server.tmp && mv server.tmp server.json
+          cat server.json
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish

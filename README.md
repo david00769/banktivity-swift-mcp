@@ -115,23 +115,35 @@ use one of the Core Data projects. All three can read a vault.
 
 Each [release](https://github.com/david00769/banktivity-swift-mcp/releases)
 has one universal download (Apple Silicon and Intel) and a checksum file. CI
-builds and tests the release from the tagged commit. For v0.17.0:
+builds and tests the release from the tagged commit. For v0.17.1:
 
 ```sh
-base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.17.0
-curl -LO "$base/banktivity-swift-mcp-v0.17.0-macos-universal.tar.gz"
-curl -LO "$base/banktivity-swift-mcp-v0.17.0-macos-universal.tar.gz.sha256"
-shasum -a 256 -c banktivity-swift-mcp-v0.17.0-macos-universal.tar.gz.sha256   # prints "OK"
+base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.17.1
+curl -LO "$base/banktivity-swift-mcp-v0.17.1-macos-universal.tar.gz"
+curl -LO "$base/banktivity-swift-mcp-v0.17.1-macos-universal.tar.gz.sha256"
+shasum -a 256 -c banktivity-swift-mcp-v0.17.1-macos-universal.tar.gz.sha256   # prints "OK"
 
-tar xzf banktivity-swift-mcp-v0.17.0-macos-universal.tar.gz
+tar xzf banktivity-swift-mcp-v0.17.1-macos-universal.tar.gz
 xattr -d com.apple.quarantine banktivity-cli banktivity-mcp 2>/dev/null || true
 mkdir -p ~/.local/bin && mv banktivity-cli banktivity-mcp ~/.local/bin/
-banktivity-cli --version   # 0.17.0
+banktivity-cli --version   # 0.17.1
 ```
 
 The binaries are signed ad hoc, not notarized. The `xattr` line removes the
 quarantine flag macOS puts on downloaded files, which would otherwise stop them
 from running.
+
+### Claude Desktop extension (`.mcpb`)
+
+Each release also has `banktivity-swift-mcp-vX.Y.Z-macos-universal.mcpb`, an
+[MCP Bundle](https://github.com/modelcontextprotocol/mcpb). Download it and
+open it with Claude Desktop to install `banktivity-mcp` as an extension, then
+enter your vault's path when asked. The binary inside is ad-hoc signed, not
+notarized; if macOS refuses to run it, clear the quarantine flag with
+`xattr -dr com.apple.quarantine ~/Library/Application\ Support/Claude/Claude\ Extensions`
+and restart Claude Desktop. It installs only the MCP server; for the CLI, use the download above. The server
+is also listed in the [MCP Registry](https://registry.modelcontextprotocol.io/)
+as `io.github.david00769/banktivity-swift-mcp`.
 
 ### Build from source
 
@@ -160,6 +172,7 @@ make test           # run all tests
 make test-filter FILTER=AccountUpdateTests   # run one test type
 make release        # universal release build (arm64 + x86_64)
 make package        # release tarball plus its SHA-256
+make mcpb           # the tarball plus the Claude Desktop bundle (.mcpb)
 make clean          # remove build output
 ```
 
@@ -249,7 +262,7 @@ curl -s http://127.0.0.1:8790/mcp \
   -H 'Accept: application/json, text/event-stream' \
   -H 'MCP-Protocol-Version: 2025-06-18' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"check","version":"1"}}}'
-# {"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{...}},"serverInfo":{"name":"banktivity-mcp","version":"0.17.0"},...}}
+# {"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{...}},"serverInfo":{"name":"banktivity-mcp","version":"0.17.1"},...}}
 ```
 
 Point a client at it with a URL instead of a command:

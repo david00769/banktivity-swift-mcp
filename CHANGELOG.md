@@ -1,7 +1,14 @@
 # Changelog
 
-## Unreleased
+## v0.17.1 (2026-10-25)
 
+- **Claude Desktop extension and MCP Registry.** Each release now has an MCP
+  Bundle, `banktivity-swift-mcp-vX.Y.Z-macos-universal.mcpb`, that installs
+  `banktivity-mcp` in Claude Desktop and asks for the vault path (and an
+  optional read-only switch). `make mcpb` builds it. The release workflow
+  publishes the server to the official MCP Registry as
+  `io.github.david00769/banktivity-swift-mcp` (`server.json`). `glama.json`
+  names the maintainer for the Glama directory.
 - **`uncategorized list` can include transfers.** `--exclude-transfers`
   defaulted to on with no way to turn it off, so the CLI always hid transfers
   (the `get_uncategorized_transactions` tool did not), and a debug build

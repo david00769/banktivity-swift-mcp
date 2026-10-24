@@ -1,0 +1,51 @@
+{
+  "manifest_version": "0.3",
+  "name": "banktivity-swift-mcp",
+  "display_name": "Banktivity",
+  "version": "@VERSION@",
+  "description": "Read and write a Banktivity .bank8 vault from Claude, through Core Data so CloudKit sync sees every change.",
+  "long_description": "An MCP server with 79 tools for Banktivity 10 personal finance vaults: accounts, transactions, splits, categories, tags, templates, import rules, scheduled transactions, statements and securities. Writes go through Core Data, as Banktivity's own do. The server keeps the vault open while it runs, so quit Claude Desktop (or disable this extension) before opening the vault in Banktivity, and back up the vault before any write session.",
+  "author": {
+    "name": "david00769",
+    "url": "https://github.com/david00769"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/david00769/banktivity-swift-mcp"
+  },
+  "homepage": "https://github.com/david00769/banktivity-swift-mcp",
+  "documentation": "https://github.com/david00769/banktivity-swift-mcp#readme",
+  "support": "https://github.com/david00769/banktivity-swift-mcp/issues",
+  "license": "MIT",
+  "keywords": ["banktivity", "bank8", "personal-finance", "core-data", "cloudkit", "macos"],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/banktivity-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/server/banktivity-mcp",
+      "args": [],
+      "env": {
+        "BANKTIVITY_FILE_PATH": "${user_config.vault_path}",
+        "BANKTIVITY_STORE_READ_ONLY": "${user_config.read_only}"
+      }
+    }
+  },
+  "user_config": {
+    "vault_path": {
+      "type": "string",
+      "title": "Vault path",
+      "description": "Absolute path to your .bank8 vault, e.g. /Users/you/Documents/Banktivity/My Accounts.bank8",
+      "required": true
+    },
+    "read_only": {
+      "type": "boolean",
+      "title": "Read-only",
+      "description": "Open the vault read-only. Writes fail; reads still work.",
+      "default": false
+    }
+  },
+  "tools_generated": true,
+  "compatibility": {
+    "platforms": ["darwin"]
+  }
+}

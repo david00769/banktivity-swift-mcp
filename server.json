@@ -1,0 +1,33 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.david00769/banktivity-swift-mcp",
+  "title": "Banktivity",
+  "description": "Banktivity MCP server for .bank8 vaults; writes go through Core Data so CloudKit sync sees them.",
+  "repository": {
+    "url": "https://github.com/david00769/banktivity-swift-mcp",
+    "source": "github"
+  },
+  "version": "0.17.1",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.17.1/banktivity-swift-mcp-v0.17.1-macos-universal.mcpb",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "BANKTIVITY_FILE_PATH",
+          "description": "Absolute path to your Banktivity .bank8 vault",
+          "format": "filepath",
+          "isRequired": true
+        },
+        {
+          "name": "BANKTIVITY_STORE_READ_ONLY",
+          "description": "Set to 1 to open the vault read-only",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}
