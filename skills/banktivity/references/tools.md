@@ -1,9 +1,10 @@
-# Banktivity CLI — Complete Tool Reference
+# Banktivity MCP tool reference
 
-The main tools with their input schemas (the server exposes 79; `banktivity-cli capabilities` lists every one). Invoke with:
-```sh
-BANKTIVITY_FILE_PATH="$HOME/Documents/Banktivity/My Accounts.bank8" banktivity-cli <tool> [--key value ...] 2>/dev/null
-```
+These are the MCP server's tools and their input schemas, for an assistant that
+talks to `banktivity-mcp`. The server has 79; `banktivity-cli capabilities`
+lists every one. The command line uses different names and hyphenated options
+(`get_transactions --account_id` here is `transactions list --account-id` on the
+CLI); see `SKILL.md` and `banktivity-cli <group> <command> --help`.
 
 ---
 

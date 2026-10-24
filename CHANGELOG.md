@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.17.0 (2026-10-23)
+## v0.17.0 (2026-10-24)
 
 This release takes work from other people's forks, each credited below and in
 `ACKNOWLEDGEMENTS.md`, plus fixes found while testing it.
@@ -27,7 +27,7 @@ This release takes work from other people's forks, each credited below and in
   worked out from the bank and card lines: two or more accounts make a Transfer
   (fee and currency transfers included), otherwise money out is a Withdrawal and
   money in is a Deposit. Before, every new transaction got whichever type
-  Banktivity listed first, often "Return Of Capital". Only `check`, `deposit`,
+  the database happened to return first, often "Return Of Capital". Only `check`, `deposit`,
   `transfer` and `withdrawal` can be named, because buys and dividends need a
   security; use `securities create-trade` and `create-income` for those.
 - **`accounts update`** and the **`update_account`** tool (Peter Baker). Rename
@@ -40,8 +40,8 @@ This release takes work from other people's forks, each credited below and in
   long-lived server on 127.0.0.1 instead of one stdio process per client.
   `BANKTIVITY_HTTP_PATH` changes the path (default `/mcp`). Leave it unset for
   the usual stdio mode. The server checks each request's origin, refuses
-  malformed, oversized or chunked requests, and answers clients that connect at
-  the same moment correctly.
+  malformed, oversized or chunked requests, and handles several clients
+  connecting at once.
 - **A flaky test crash is fixed for good.** Two test suites touched Core Data off
   the main thread, which crashed the run now and then. They now run on the main
   actor. A new test, `MainActorSuiteGuardTests`, fails the run if any future

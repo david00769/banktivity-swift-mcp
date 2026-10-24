@@ -75,7 +75,7 @@ by release.
 
 Each [release](https://github.com/david00769/banktivity-swift-mcp/releases)
 has one universal download (Apple Silicon and Intel) and a checksum file. CI
-builds and tests both from the tagged commit. For v0.17.0:
+builds and tests the release from the tagged commit. For v0.17.0:
 
 ```sh
 base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.17.0
@@ -95,7 +95,7 @@ from running.
 
 ### Build from source
 
-You need Xcode 16 or later; the tests and the universal build use it.
+Xcode 16 or later is recommended. Without Xcode the Makefile falls back to the Command Line Tools for building and installing (not tested here); running the tests needs Xcode.
 
 ```sh
 git clone https://github.com/david00769/banktivity-swift-mcp.git
@@ -231,8 +231,8 @@ backups.
 ## Net worth in one currency, and holdings value
 
 Net worth (`accounts net-worth`, `get_net_worth`, and `netWorth` inside
-`summary`) still reports `assets`, `liabilities` and `netWorth` as before. Those
-add each account's cash in its own currency, without converting. Net worth also
+`summary`) reports `assets`, `liabilities` and `netWorth`, which add each account's
+cash in its own currency, without converting. Net worth also
 reports:
 
 - `reportingCurrency` and `converted`: the same totals converted into one
@@ -510,8 +510,8 @@ A transaction you entered by hand returns `[]`.
 
 ### Transaction types on create
 
-`transactions create` used to give every new transaction whichever type
-Banktivity listed first, often "Return Of Capital". Now it works the type out
+`transactions create` used to give every new transaction whichever type the
+database happened to return first, often "Return Of Capital". Now it works the type out
 from the bank and card lines:
 
 | Lines | Type |
@@ -547,30 +547,30 @@ The command groups below are the complete CLI surface. Use a group's
 - `import-rules`: `list`, `get`, `match`, `create`, `update`, `delete`
 - `scheduled`: `list`, `get`, `create`, `update`, `delete`
 - `statements`: `list`, `status`, `get`, `inspect-membership`, `inspect-sync-record`, `replace-internal-row-with-visible-statement`, `restore-internal-row-from-preimage`, `visible-row-correction-plan`, `create`, `update`, `delete`, `reconcile`, `unreconcile`, `unreconciled`
-- `securities`: `list`, `create`, `delete`, `prices`, `import-prices`, `delete-prices`, `fix-prices`, `holdings`, `trades`, `income`, `create-trade`, `create-income`, `adjust`, `update-trade`
+- `securities`: `list`, `create`, `rename`, `delete`, `prices`, `import-prices`, `delete-prices`, `fix-prices`, `holdings`, `trades`, `realized-gains`, `income`, `create-trade`, `create-income`, `link-income-category`, `adjust`, `update-trade`
 - `reconciliation`: `execute-bundle` runs a reviewed JSON plan of repairs, checked against its SHA-256 digest
 - `export`: `turtle`
 - `schema`: dump the Core Data schema
-- `capabilities`: show stable JSON safety metadata for CLI and MCP commands
+- `capabilities`: list every command and tool, whether it writes, and what confirmation it needs
 
 Important behavior:
 
 - Commands that accept `--account-id` generally also accept `--account-name`.
-- Statement dates use local-day boundaries. Reconciliation preserves existing
-  cleared-state semantics when assigning or unassigning line items.
+- Statement dates are whole days in your local time zone. Reconciling or
+  un-reconciling a line keeps its cleared flag as it was.
 - `transactions create --line-items` takes a JSON array for split
   transactions. See [Transaction types on create](#transaction-types-on-create)
   for how the type is chosen.
-- `statements inspect-membership` and `statements inspect-sync-record` are
-  read-only diagnostics. They expose statement references and sync-record state;
-  they do not synthesize missing records.
+- `statements inspect-membership` and `statements inspect-sync-record` only
+  read. They show which lines belong to a statement and the statement's sync
+  state, and never create a missing record.
 - Replacing or restoring an internal statement row needs the exact account,
   period, member lines, cleared state and a SHA-256 snapshot of the row as it
   was. These commands repair only the cases they were built for.
 - `reconciliation execute-bundle` checks the plan's digest, the vault, the
   order of operations and each command before it runs anything.
-- `capabilities` is the machine-readable source for access, write-mode,
-  confirmation, dry-run, and UI-verification metadata.
+- `capabilities` lists, as JSON, every command and tool: whether it writes,
+  which confirmation flags it needs, and whether it has a dry run.
 
 Use `--format compact` when a script needs one-line JSON; the default is
 pretty-printed JSON for human inspection.
