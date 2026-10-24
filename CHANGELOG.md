@@ -2,52 +2,52 @@
 
 ## v0.17.0 (2026-10-23)
 
-Contributions from other forks, taken with credit. `ACKNOWLEDGEMENTS.md`
-records each one's source, original commit and what was changed.
+This release takes work from other people's forks, each credited below and in
+`ACKNOWLEDGEMENTS.md`, plus fixes found while testing it.
 
-- **Never let Core Data migrate Banktivity's store** (Peter Baker). Automatic
-  migration and mapping inference are turned off, and the `.momd` bundles are
-  merged in filename order. With the defaults on, a merged model whose entity
-  hashes differed from what Banktivity wrote was "migrated" by dropping and
-  recreating tables: one `line-items update` emptied `ZSECURITYPRICE`
-  (40,459 rows) and reported success. A mismatch now fails at store load.
-- **Install atomically** (Peter Baker). `make install` and the new
-  `make install-fast` copy to `<path>.new`, sign, then rename into place, so a
-  running `banktivity-mcp` keeps its old inode instead of being SIGKILLed with
-  "Code Signature Invalid". `make verify` execs both installed binaries. The
-  Makefile falls back to `xcode-select -p` when full Xcode is absent.
-- **`get_line_item_source`** MCP tool and **`line-items source <id>`** CLI
-  command (tool by producethis): the raw imported bank record for a line item
-  (Plaid/OFX details, source type and identifier, timestamps), as shown in
-  Banktivity's "Imported Transaction Details". Empty for manual entries.
-- **Transaction type on create** (Roberto Michelena). Optional
-  `--transaction-type` / `transaction_type` on `transactions create` and
-  `create_transaction`. When omitted, only deposit, withdrawal or transfer is
-  inferred from the asset and liability lines (transfer whenever two or more
-  distinct bank accounts are involved, including fee and FX transfers) instead
-  of taking whichever TransactionType row came first. Only the cash types
-  (`check`, `deposit`, `transfer`, `withdrawal`) can be named on create: a
-  plain transaction has no security leg, so investment rows still come from
-  `securities create-trade` / `create-income`. Ported onto the
-  modification-date sync model.
-- **`accounts update`** CLI command and **`update_account`** MCP tool (Peter
-  Baker): rename an account, change its type, or hide/unhide it. Categories are
-  refused. A new type must stay in the same family: an investment account
-  cannot become a cash or credit account, or the reverse. The account-type slugs now live in `AccountClass.slugs`, shared with
-  `accounts create`; `equity` is no longer offered, since every class from
-  income (6000) up was always refused.
-- **Loopback HTTP mode** (Peter Baker): set `BANKTIVITY_HTTP_PORT` (and
-  optionally `BANKTIVITY_HTTP_PATH`, default `/mcp`) to serve MCP over HTTP on
-  127.0.0.1 instead of stdio, for one long-lived server under launchd. Unset
-  means stdio, unchanged. A negative or oversized `Content-Length` is refused
-  (400/413) rather than trusted. Conflicting `Content-Length` headers and chunked bodies are
-  refused too, and concurrent `initialize` calls share one forwarded request
-  instead of racing on an unsynchronised cache.
-
-- **Tests:** the last two Core Data suites now run on the main actor, which
-  removes the intermittent "Categorize safety" crash.
-  `MainActorSuiteGuardTests` now fails the run if any suite that touches Core
-  Data lacks `@MainActor`, so the convention cannot lapse again.
+- **Core Data can no longer rewrite Banktivity's database** (Peter Baker).
+  Core Data's automatic migration is turned off, and the vault's model files are
+  read in a fixed order. Before, if the model didn't match what Banktivity had
+  written, Core Data "migrated" the store by dropping and recreating tables. One
+  `line-items update` emptied the security price table (40,459 rows) and
+  reported success. Now a mismatch stops the vault from opening.
+- **Safe installs** (Peter Baker). `make install` and the new
+  `make install-fast` write the binary under a temporary name, sign it, then
+  rename it into place. Copying over a running `banktivity-mcp` used to get it
+  killed by macOS ("Code Signature Invalid"). `make verify` checks that both
+  installed binaries run. The Makefile also works with only Xcode's Command
+  Line Tools installed.
+- **See what the bank sent** (tool by producethis). The new
+  `get_line_item_source` tool and `line-items source <id>` command show the raw
+  imported record for a line item: description, source (for example Plaid),
+  identifier and timestamps. This is what Banktivity's "Imported Transaction
+  Details" shows. A manual entry returns an empty list.
+- **Transaction types on create** (Roberto Michelena). `transactions create`
+  and `create_transaction` take an optional type. Without one, the type is
+  worked out from the bank and card lines: two or more accounts make a Transfer
+  (fee and currency transfers included), otherwise money out is a Withdrawal and
+  money in is a Deposit. Before, every new transaction got whichever type
+  Banktivity listed first, often "Return Of Capital". Only `check`, `deposit`,
+  `transfer` and `withdrawal` can be named, because buys and dividends need a
+  security; use `securities create-trade` and `create-income` for those.
+- **`accounts update`** and the **`update_account`** tool (Peter Baker). Rename
+  an account, change its type, or hide it. Categories are refused, and a new type
+  must stay on the same side of the investment line: a checking account can't
+  become a brokerage account, or the reverse. `accounts create` and
+  `accounts update` now share one list of type names. `equity` is gone from that
+  list; creating an equity account never worked.
+- **Optional HTTP server** (Peter Baker). Set `BANKTIVITY_HTTP_PORT` to run one
+  long-lived server on 127.0.0.1 instead of one stdio process per client.
+  `BANKTIVITY_HTTP_PATH` changes the path (default `/mcp`). Leave it unset for
+  the usual stdio mode. The server checks each request's origin, refuses
+  malformed, oversized or chunked requests, and answers clients that connect at
+  the same moment correctly.
+- **A flaky test crash is fixed for good.** Two test suites touched Core Data off
+  the main thread, which crashed the run now and then. They now run on the main
+  actor. A new test, `MainActorSuiteGuardTests`, fails the run if any future
+  suite forgets.
+- **CI and releases.** Every push builds and tests the code on GitHub, and
+  pushing a version tag publishes a release with a universal download.
 
 ## Earlier changes (v0.14.0 to v0.16.0, not recorded per release)
 

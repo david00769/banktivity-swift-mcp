@@ -100,15 +100,15 @@ Use `get_account_reconciliation_status` through MCP or `banktivity-cli statement
 
 | Tool | Key Arguments | Notes |
 |---|---|---|
-| `create_transaction` | `--date YYYY-MM-DD --title "Payee" --line_items '[{...}]' [--transaction_type]` | Create a transaction. `--transaction-type` takes a cash type (check, deposit, transfer, withdrawal); omitted, deposit / withdrawal / transfer is inferred from the bank-account lines. Investment rows: `securities create-trade` / `create-income`. |
-| `update_transaction` | `--transaction_id N [--title] [--note] [--date] [--cleared] [--transaction_type]` | Update title, note, date, cleared, or transaction type (deposit, withdrawal, buy, sell, etc.) |
+| `create_transaction` | `--date YYYY-MM-DD --title "Payee" --line_items '[{...}]' [--transaction_type]` | Create a transaction. `transaction_type` takes a cash type only: check, deposit, transfer or withdrawal. Leave it out and the type is worked out from the bank and card lines. For buys and dividends use `create_security_trade` / `create_security_income`. |
+| `update_transaction` | `--transaction_id N [--title] [--note] [--date] [--cleared] [--transaction_type]` | Update title, note, date, cleared, or transaction type. Unlike create, update accepts any type, investment types included (buy, sell, dividend, ...). |
 | `recategorize_transaction` | `--transaction_id N --category_id N` or `--category_name "Name"` | Use `--category_id` for subcategories |
 | `bulk_recategorize_by_payee` | `--payee_pattern "pat" --category_id N --dry_run true --uncategorized_only true` | **Always dry_run first** |
 | `tag_transaction` | `--transaction_id N --tag_name "name" --action add\|remove` | Add or remove a tag |
 | `bulk_tag_transactions` | `--transaction_ids [1,2,3] --tag_name "name" --action add\|remove` | Bulk tag/untag |
 | `create_tag` | `--name "name"` | Create a new tag |
 | `create_category` | `--name "name" --type expense\|income --parent_path "Parent"` | Create category or subcategory |
-| `update_account` | `--account_id N` or `--account_name "name"`, then `[--name] [--type SLUG] [--hidden true\|false]` | Rename, retype (within the investment or non-investment family) or hide an account; categories are refused. CLI: `accounts update` |
+| `update_account` | `--account_id N` or `--account_name "name"`, then `[--name] [--type SLUG] [--hidden true\|false]` | Rename, retype or hide an account. A new type must stay on the same side of the investment line (checking can't become investment); categories are refused. CLI: `accounts update --hidden` / `--no-hidden` |
 
 ### Forex Repair
 

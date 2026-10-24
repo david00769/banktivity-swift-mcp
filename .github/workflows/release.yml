@@ -65,7 +65,7 @@ jobs:
 
           The binaries are ad-hoc signed, not notarized, so macOS quarantines a
           downloaded copy until the `xattr` line clears it. Or build from source:
-          `git clone https://github.com/david00769/banktivity-swift-mcp.git && make install`.
+          `git clone https://github.com/david00769/banktivity-swift-mcp.git && cd banktivity-swift-mcp && make install`.
 
           Contributors whose work is in this release are credited in
           [ACKNOWLEDGEMENTS.md](https://github.com/david00769/banktivity-swift-mcp/blob/main/ACKNOWLEDGEMENTS.md).

@@ -1,194 +1,160 @@
 # banktivity-swift-mcp
 
-A Swift library, [MCP](https://modelcontextprotocol.io/) server, and CLI for [Banktivity](https://www.iggsoftware.com/banktivity/) personal finance files. Provides full read/write access to `.bank8` vaults — accounts, transactions, categories, tags, templates, import rules, scheduled transactions, statements, securities, and RDF export.
+A Swift library, [MCP](https://modelcontextprotocol.io/) server and command-line
+tool for [Banktivity](https://www.iggsoftware.com/banktivity/) personal finance
+files. It reads and writes `.bank8` vaults: accounts, transactions, categories,
+tags, templates, import rules, scheduled transactions, statements and
+securities, and it can export a vault as RDF.
 
-- **BanktivityLib** — pure domain library with Core Data repositories and RDF export, no server dependencies
-- **banktivity-mcp** — MCP server exposing 79 tools over stdio (or loopback HTTP), for AI assistants like Claude
-- **banktivity-cli** — standalone CLI for scripting and automation
+- **banktivity-cli** is the command-line tool, for scripts and for looking things up yourself.
+- **banktivity-mcp** is an MCP server with 79 tools, so an AI assistant such as Claude can work with your vault.
+- **BanktivityLib** is the library both are built on. It has no server dependencies.
+
+It is a Swift rewrite of Martijn Riemers's
+[banktivity-mcp](https://github.com/mhriemers/banktivity-mcp). That project
+wrote to Banktivity's SQLite file directly, which Banktivity's CloudKit sync
+cannot see, so edits could fail to sync or corrupt the vault. This one makes
+every change through Core Data (`NSPersistentContainer`), the same way
+Banktivity does.
+
+> **Warning: this tool changes your Banktivity data.** Write commands make real
+> changes to your vault, and AI assistants make mistakes. Back up the vault before
+> any write session, and work on a copy until you trust your setup. The authors
+> are not responsible for data loss.
+
+**Using it safely**
+
+- Run one `banktivity-cli` or `banktivity-mcp` process per vault at a time.
+  Writes are queued inside one process, but nothing locks the file across
+  processes.
+- Quit any `banktivity-mcp` server before you open the same vault in
+  Banktivity.app. The app and this tool must not have the file open together.
+  (Writes are refused while Banktivity has the vault open, but reads are not.)
+- Back up before every write session.
+- After restoring, importing or migrating a vault in Banktivity 10, look up
+  account, transaction, statement and category IDs again. Banktivity can
+  renumber them.
 
 ## About this fork
 
-This is David Siroky's maintained fork of
-[sflinter/banktivity-swift-mcp](https://github.com/sflinter/banktivity-swift-mcp).
-It contains everything upstream has, plus a large set of fixes and features
-that are offered upstream as pull requests but not yet merged there
-([open PRs](https://github.com/sflinter/banktivity-swift-mcp/pulls?q=is%3Apr+is%3Aopen+author%3Adavid00769);
-upstream has merged nothing since May 2026). Among them: sync by
-modification date so CLI edits are no longer reverted by Banktivity's merge,
-statement reconciliation and typed repairs, security trades, income and
-realised gains, read-only store mode, capability introspection, reporting
-currency and holdings value, and, from v0.17.0, a guard against Core Data
-migrating the store, `accounts update`, raw import details, transaction-type
-inference and a loopback HTTP mode.
+This is David Siroky's maintained fork of Steve Flinter's
+[banktivity-swift-mcp](https://github.com/sflinter/banktivity-swift-mcp). It
+has everything upstream has. The fixes and features below are offered upstream
+as [pull requests](https://github.com/sflinter/banktivity-swift-mcp/pulls?q=is%3Apr+is%3Aopen+author%3Adavid00769),
+but upstream has merged nothing since May 2026.
 
-It also carries work by other people from their own forks, credited in
-[ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists
-the changes by release.
+What the fork adds:
 
-To install this fork, download a binary from its
-[releases](https://github.com/david00769/banktivity-swift-mcp/releases) or build
-from source. The Homebrew tap below is upstream's and installs upstream's
-version, without this fork's changes.
+- **Edits that survive sync.** Changes made with the CLI are no longer reverted
+  the next time Banktivity syncs.
+- **Statements:** reconciliation, plus repair commands for statement rows.
+- **Investments:** create security trades and income, and see realised capital
+  gains per lot.
+- **Safety and reporting:** a read-only mode, a machine-readable list of which
+  commands write, net worth in one reporting currency, and the market value of
+  holdings.
+- **New in v0.17.0:**
+  - a guard that stops Core Data from rewriting Banktivity's database;
+  - `accounts update`;
+  - `line-items source`, showing the raw bank import behind a transaction;
+  - automatic transaction types on create;
+  - an optional HTTP server mode.
 
-Inspired by [banktivity-mcp](https://github.com/mhriemers/banktivity-mcp) (TypeScript/Node.js), this is a ground-up rewrite in Swift. The original uses `better-sqlite3` to read and write Core Data's SQLite store directly, bypassing Core Data's internal change tracking. This works for reads, but direct SQL writes are invisible to CloudKit sync — Banktivity doesn't know the data changed, and the vault can become corrupted or fail to sync. This Swift version uses `NSPersistentContainer` so all mutations go through Core Data's API, ensuring proper change tracking and CloudKit compatibility.
-
-> **WARNING: This server can modify your Banktivity data.** Write tools (create, update, delete) make real changes to your `.bank8` vault. While the server uses Core Data for proper change tracking and includes a write guard that blocks mutations when Banktivity is open, AI assistants can and will make mistakes. **Back up your vault regularly** and consider working on a copy until you're confident in your workflow. The authors are not responsible for any data loss or corruption.
-
-Write operations are serialized within each running process. This protects
-concurrent MCP tool calls handled by one `banktivity-mcp` server and overlapping
-writes inside one CLI command, but it is not a cross-process file lock. Do not
-run multiple `banktivity-cli` or `banktivity-mcp` processes against the same
-vault at the same time.
-
-AI harnesses should add their own safety layer around this tool. Use one
-MCP/CLI process per vault, serialize write calls, and prefer read-before-write
-checks where the tool can verify the row still has the expected value before
-mutating it. Shut down `banktivity-mcp` and any long-running CLI process before
-opening the same vault in Banktivity.app; the app and external Core Data clients
-must not hold the live file open together. Always make a fresh backup before
-write runs, and re-resolve account, transaction, statement, and category IDs
-after restoring, importing, or migrating a Banktivity 10 vault because local
-numeric IDs can change.
+Some of this came from other people's forks. [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md)
+credits each contribution, and [CHANGELOG.md](CHANGELOG.md) lists every change
+by release.
 
 ## Requirements
 
-- macOS 14+
-- A Banktivity `.bank8` vault file
-
-## Read-only mode
-
-Set `BANKTIVITY_STORE_READ_ONLY` to `1`, `true`, or `yes` to open the Core Data
-store read-only. Even a pure read makes SQLite touch its write-ahead log and
-other housekeeping files, so use this when the goal is to inspect a vault
-without altering a byte of it. Writes then fail down at the store layer rather
-than at the write guard.
-
-```sh
-BANKTIVITY_STORE_READ_ONLY=1 \
-  banktivity-cli --vault ~/Documents/Banktivity/My\ Accounts.bank8 accounts list
-```
-
-One caveat: SQLite may still open `core.sql-shm` for writing on its own account.
-The default remains read/write and the write guard is unchanged, so treat this as
-a second layer rather than a substitute for backups.
-
-## Reporting currency and holdings
-
-Net worth (`accounts net-worth`, `get_net_worth`, and the `netWorth` inside
-`summary`) keeps its original fields: `assets`, `liabilities` and `netWorth`
-add every account's cash in its own currency, with no conversion. Beside them
-it now also reports:
-
-- `reportingCurrency` and `converted`: the same totals converted into one
-  currency, plus `holdingsValue` (market value of investment holdings) and
-  `netWorthWithHoldings`.
-- `currencyBreakdown`: per account currency, the cash, holdings, rate used and
-  converted amounts.
-- `warnings`: for example an account left out because the vault has no
-  exchange rate for its currency.
-
-Set `BANKTIVITY_REPORTING_CURRENCY` (an ISO code such as `USD`) to choose the
-reporting currency. Unset, it is EUR, the label aggregates always used. Rates
-come from the vault's own ExchangeRate table: the latest direct rate, else the
-inverse of the latest reverse rate, else a route through USD.
-
-Investment accounts in `accounts list` / `accounts balance` (and the matching
-MCP tools) also carry `holdingsValue`: shares held x latest close x price
-multiplier. It is reported beside `balance` and never added to it.
+- macOS 14 or later
+- A Banktivity `.bank8` vault
 
 ## Installation
 
-### Homebrew (upstream version)
+### Download a release (recommended)
+
+Each [release](https://github.com/david00769/banktivity-swift-mcp/releases)
+has one universal download (Apple Silicon and Intel) and a checksum file. CI
+builds and tests both from the tagged commit. For v0.17.0:
+
+```sh
+base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.17.0
+curl -LO "$base/banktivity-swift-mcp-v0.17.0-macos-universal.tar.gz"
+curl -LO "$base/banktivity-swift-mcp-v0.17.0-macos-universal.tar.gz.sha256"
+shasum -a 256 -c banktivity-swift-mcp-v0.17.0-macos-universal.tar.gz.sha256   # prints "OK"
+
+tar xzf banktivity-swift-mcp-v0.17.0-macos-universal.tar.gz
+xattr -d com.apple.quarantine banktivity-cli banktivity-mcp 2>/dev/null || true
+mkdir -p ~/.local/bin && mv banktivity-cli banktivity-mcp ~/.local/bin/
+banktivity-cli --version   # 0.17.0
+```
+
+The binaries are signed ad hoc, not notarized. The `xattr` line removes the
+quarantine flag macOS puts on downloaded files, which would otherwise stop them
+from running.
+
+### Build from source
+
+You need Xcode 16 or later; the tests and the universal build use it.
+
+```sh
+git clone https://github.com/david00769/banktivity-swift-mcp.git
+cd banktivity-swift-mcp
+make install        # universal build, installed to ~/.local/bin
+```
+
+Always install with `make install` (or `make install-fast` for a quicker
+single-architecture build). Never copy a new binary over `~/.local/bin` with
+`cp`. `cp` rewrites the file in place, and a `banktivity-mcp` still running from
+it is killed by macOS the next time it starts ("Code Signature Invalid"). The
+Makefile copies to a temporary name, signs it, then renames it into place.
+
+Other Makefile targets:
+
+```sh
+make help           # list all targets
+make install-fast   # native-architecture build and install, for development
+make verify         # check that the installed binaries actually run
+make build          # debug build
+make test           # run all tests
+make test-filter FILTER=AccountUpdateTests   # run one test type
+make release        # universal release build (arm64 + x86_64)
+make package        # release tarball plus its SHA-256
+make clean          # remove build output
+```
+
+`make test` runs the suite the way a release build behaves: release
+configuration, one worker, Xcode's test frameworks.
+
+### Homebrew (upstream's version)
 
 ```sh
 brew install sflinter/tap/banktivity-swift-mcp
 ```
 
-This installs upstream's `banktivity-mcp` and `banktivity-cli` as universal binaries (Apple Silicon + Intel), without this fork's changes.
+This installs upstream's binaries, without this fork's changes.
 
-### Download binary (this fork)
+### How releases are made
 
-Each release on this fork's
-[GitHub Releases](https://github.com/david00769/banktivity-swift-mcp/releases)
-carries a universal tarball (Apple Silicon + Intel) and its SHA-256, built and
-tested by CI from the tagged commit:
-
-```sh
-tar xzf banktivity-swift-mcp-v0.17.0-macos-universal.tar.gz
-xattr -d com.apple.quarantine banktivity-cli banktivity-mcp 2>/dev/null || true
-mv banktivity-mcp banktivity-cli ~/.local/bin/
-```
-
-The binaries are ad-hoc signed, not notarized, so macOS quarantines a downloaded
-copy until the `xattr` line clears it.
-
-### Build from source (this fork)
-
-Requires Xcode 16+ (needed for Swift Testing and universal binary builds):
+CI (`.github/workflows/ci.yml`) runs on every push and pull request to `main`.
+It runs `make test`, then `make package`, so a change that breaks the release
+build fails before anyone tags it. To release, bump
+`Sources/BanktivityLib/Version.swift` and add a matching section to
+`CHANGELOG.md`, then push a tag:
 
 ```sh
-git clone https://github.com/david00769/banktivity-swift-mcp.git
-cd banktivity-swift-mcp
-make install        # Build universal binary and install to ~/.local/bin
+git tag -a v0.18.0 -m "v0.18.0" && git push origin v0.18.0
 ```
 
-Other Makefile targets:
-
-```sh
-make help           # List available targets with short descriptions
-make install-fast   # Native-arch release build + atomic install (dev loop)
-make verify         # Check the installed binaries actually exec
-make build          # Debug build
-make test           # Run all tests
-make release        # Universal release build (arm64 + x86_64)
-make package        # Build release tarball with SHA256
-make clean          # Remove build artifacts
-```
-
-Releases: CI (`.github/workflows/ci.yml`) runs `make test` on every push and
-pull request to `main`. Pushing a tag `vX.Y.Z` that matches
-`Sources/BanktivityLib/Version.swift` runs `.github/workflows/release.yml`,
-which tests, builds the universal tarball and publishes the release with that
-version's CHANGELOG section as its notes.
-
-`make test` builds the CLI first and runs the suite single-worker under the same
-release configuration and Xcode framework paths as `make release`, so a test
-failure reproduces the way a release build would hit it. Use
-`make test-filter FILTER=TestName` when iterating on one test.
-
-Always install with `make install` or `make install-fast`, never by copying
-over `~/.local/bin` yourself. Both copy to `<path>.new`, sign, and rename into
-place. `cp` rewrites the file in place, and a `banktivity-mcp` still running
-from it is then SIGKILLed with "Code Signature Invalid" on its next exec.
-
-### Loopback HTTP mode
-
-By default `banktivity-mcp` speaks MCP over stdio, one process per client.
-Set `BANKTIVITY_HTTP_PORT` to run one long-lived server instead (for example
-under launchd), serving MCP's streamable HTTP transport on `127.0.0.1` only:
-
-```sh
-BANKTIVITY_FILE_PATH=~/Documents/Banktivity/My\ Accounts.bank8 \
-BANKTIVITY_HTTP_PORT=8790 banktivity-mcp
-# listening on http://127.0.0.1:8790/mcp  (BANKTIVITY_HTTP_PATH changes the path)
-```
-
-The listener refuses requests with a foreign `Origin`, a malformed or
-oversized `Content-Length`, and chunked bodies. It has no authentication: any
-process on the Mac can reach it, so treat it with the same trust as the vault
-file itself, and leave the write guard and your backups in place.
-
-A long-lived server also holds the vault open for as long as it runs, which is
-exactly what the rule above about closing every MCP and CLI process before
-opening the vault in Banktivity.app forbids. Its Core Data context does not see
-edits Banktivity makes in the meantime. Stop the server before opening the
-vault in Banktivity, and restart it afterwards; do not run the two together.
+`.github/workflows/release.yml` then checks that the tag matches
+`Version.swift`, runs the tests, builds the tarball and publishes the release.
+The CHANGELOG section becomes the release notes.
 
 ## Configuration
 
 ### Claude Code
 
-Add to your MCP settings (`~/.claude/settings.json` or project `.mcp.json`):
+Add to your MCP settings (`~/.claude/settings.json` or a project's `.mcp.json`):
 
 ```json
 {
@@ -205,20 +171,91 @@ Add to your MCP settings (`~/.claude/settings.json` or project `.mcp.json`):
 
 ### Claude Desktop
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Add the same block to
+`~/Library/Application Support/Claude/claude_desktop_config.json`.
+
+### Running one long-lived server over HTTP
+
+Normally each client starts its own `banktivity-mcp` over stdio. If you'd rather
+run one server that stays up (for example under launchd), set
+`BANKTIVITY_HTTP_PORT`. It listens on `127.0.0.1` only:
+
+```sh
+BANKTIVITY_FILE_PATH=~/Documents/Banktivity/My\ Accounts.bank8 \
+BANKTIVITY_HTTP_PORT=8790 banktivity-mcp
+# Banktivity MCP server listening on http://127.0.0.1:8790/mcp
+```
+
+`BANKTIVITY_HTTP_PATH` changes the `/mcp` path. To check that it answers:
+
+```sh
+curl -s http://127.0.0.1:8790/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'MCP-Protocol-Version: 2025-06-18' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"check","version":"1"}}}'
+# {"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{...}},"serverInfo":{"name":"banktivity-mcp","version":"0.17.0"},...}}
+```
+
+Point a client at it with a URL instead of a command:
 
 ```json
-{
-  "mcpServers": {
-    "banktivity": {
-      "command": "/Users/you/.local/bin/banktivity-mcp",
-      "env": {
-        "BANKTIVITY_FILE_PATH": "/Users/you/Documents/Banktivity/My Accounts.bank8"
-      }
-    }
-  }
-}
+{ "mcpServers": { "banktivity": { "type": "http", "url": "http://127.0.0.1:8790/mcp" } } }
 ```
+
+Two things to know before you use it:
+
+- **Anything on your Mac can connect.** There is no password, so treat the port
+  like the vault file itself. Browser pages from other sites are refused (their
+  `Origin` header is checked), and so are malformed requests.
+- **It keeps the vault open while it runs, and it does not see edits Banktivity
+  makes.** Stop the server before you open the vault in Banktivity, and start it
+  again afterwards.
+
+## Read-only mode
+
+Set `BANKTIVITY_STORE_READ_ONLY=1` (or `true`, `yes`) to open the vault
+read-only. Even a plain read lets SQLite tidy its write-ahead log, which
+changes files on disk. Use this when you want to look at a vault without
+changing a byte of it:
+
+```sh
+BANKTIVITY_STORE_READ_ONLY=1 \
+  banktivity-cli --vault ~/Documents/Banktivity/My\ Accounts.bank8 accounts list
+```
+
+In this mode a write fails when it reaches the database. SQLite may still open
+`core.sql-shm` for writing on its own, so this is an extra layer; keep your
+backups.
+
+## Net worth in one currency, and holdings value
+
+Net worth (`accounts net-worth`, `get_net_worth`, and `netWorth` inside
+`summary`) still reports `assets`, `liabilities` and `netWorth` as before. Those
+add each account's cash in its own currency, without converting. Net worth also
+reports:
+
+- `reportingCurrency` and `converted`: the same totals converted into one
+  currency, plus `holdingsValue` (the market value of investments) and
+  `netWorthWithHoldings`;
+- `currencyBreakdown`: for each currency, the cash, holdings, exchange rate used
+  and converted amounts;
+- `warnings`: for example, an account left out because the vault has no
+  exchange rate for its currency.
+
+Choose the currency with `BANKTIVITY_REPORTING_CURRENCY` (an ISO code such as
+`USD`). If it is unset, EUR is used, the label the totals have always carried.
+Rates come from the vault's own exchange-rate table: the latest direct rate if
+there is one, otherwise the inverse of the latest reverse rate, otherwise a
+conversion through USD.
+
+```sh
+BANKTIVITY_REPORTING_CURRENCY=USD banktivity-cli accounts net-worth
+```
+
+Investment accounts in `accounts list` and `accounts balance` (and their MCP
+tools) also carry `holdingsValue`: shares held × latest closing price × the
+security's price multiplier. It is shown next to `balance`, never added to it.
 
 ## Available Tools
 
@@ -229,7 +266,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 - `get_spending_by_category` — Spending breakdown by category for a date range
 - `get_income_by_category` — Income breakdown by category for a date range
 - `get_summary` — Overall financial summary
-- `update_account` — Rename an account, change its type within the same family (investment or not), or hide/unhide it; categories are refused. Moving between an asset and a liability type (checking to credit card) is allowed and flips which side of net worth the balance counts on
+- `update_account` — Rename an account, change its type, or hide it (see [Changing an account](#changing-an-account))
 
 ### Transactions
 - `get_transactions` — List transactions with filtering and pagination
@@ -312,6 +349,7 @@ banktivity-cli transactions repair-forex \
 - `get_category` — Get a specific category
 - `get_category_tree` — Get the full category hierarchy
 - `create_category` — Create a new category
+- `audit_category_entities` — Find categories stored under the wrong internal type, a fault older tools could leave behind
 
 ### Categorization
 - `get_uncategorized_transactions` — Find transactions without categories
@@ -359,12 +397,13 @@ banktivity-cli transactions repair-forex \
 - `reconcile_line_items` — Assign line items to a statement
 - `unreconcile_line_items` — Remove line items from a statement
 - `get_unreconciled_line_items` — List unreconciled line items for an account
+- `update_statement` — Correct a statement's ending balance to match what Banktivity's window shows
+- `plan_statement_visible_row_correction` — Turn the start, end and missing amounts you read off Banktivity's statement window into a correction plan (it does not read Banktivity's screen itself)
 
-Statement line-item readback includes `statementBalanceAmount`, the exact
-per-line amount used by the statement balance engine. Investment-account
-reconciliation planners should use this field for visible statement metadata
-derivation instead of summing raw `amount` or `accountAmount`, because
-security-linked rows can carry separate security-line cash effects.
+Each line item in a statement carries `statementBalanceAmount`, the amount
+that line contributes to the statement's balance. For an investment account, add
+up `statementBalanceAmount` rather than `amount` or `accountAmount`: a security
+trade can move cash that the raw amounts don't show.
 
 ### Securities
 - `list_securities` — List all securities with name, symbol, and currency
@@ -374,7 +413,10 @@ security-linked rows can carry separate security-line cash effects.
 - `get_security_trades` — Get trade history (buys, sells, transfers) with shares, prices, and commissions
 - `get_security_realized_gains` — Get realised capital gains per closed lot (acquisition date, proceeds, cost basis, gain, short/long term)
 - `get_security_income` — Get investment income (dividends, interest, capital gains distributions)
+- `create_security_trade` — Record a buy or sell (positive shares buy, negative shares sell), with its cash line
+- `update_security_trade` — Change an existing trade's shares, price, amount, commission or security
 - `create_security_income` — Create native security income, currently dividend income
+- `rename_security` — Change a security's ticker, name or both (refused if another security already has that ticker)
 - `create_share_adjustment` — Create a share adjustment (e.g. charges, stock splits, position corrections)
 - `import_security_prices` — Import prices from a CSV file (Yahoo Finance, OHLCV, or Date/Close)
 - `delete_security_prices` — Delete price history for a security (optional date range)
@@ -385,6 +427,7 @@ security-linked rows can carry separate security-line cash effects.
 
 ### Diagnostic
 - `dump_schema` — Inspect the Core Data model schema (entity names, attributes, relationships)
+- `get_capabilities` — List every command and tool, whether it reads or writes, and what confirmation it needs
 
 ## CLI
 
@@ -417,6 +460,78 @@ banktivity-cli tags get-by-tag --tag-name "Vacation" --limit 20
 banktivity-cli export turtle --output vault.ttl
 ```
 
+### Changing an account
+
+`accounts update` renames an account, changes its type, or hides it:
+
+```sh
+banktivity-cli accounts update --account-name "Old Checking" --name "Joint Checking"
+banktivity-cli accounts update --account-id 12 --type savings   # checking to savings: fine
+banktivity-cli accounts update --account-id 12 --hidden         # --no-hidden shows it again
+```
+
+A new type has to stay on the same side of the investment line. Checking can
+become savings or a credit card. A 529 can become a 401k. But a checking
+account can't become a brokerage account, because Banktivity keeps securities
+only in investment accounts:
+
+```text
+$ banktivity-cli accounts update --account-id 12 --type investment
+Error: [validation_failed] Account 12 cannot move between investment and non-investment types (class 1001 to 2000); create a new account instead
+```
+
+Changing between an asset and a liability type (checking to credit card) is
+allowed, and it moves the balance to the other side of net worth.
+`accounts update --help` lists every type name; `accounts create --type`
+accepts the same names. Categories are changed with the category commands
+instead.
+
+### Seeing what the bank sent
+
+`line-items source` shows the raw record behind an imported transaction, before
+Banktivity renamed the payee or applied import rules:
+
+```text
+$ banktivity-cli line-items source 4821
+[
+  {
+    "amount" : -4.5,
+    "date" : "2026-10-01",
+    "details" : "SQ *BLUE BOTTLE COFFEE 0123",
+    "matched" : true,
+    "sourceIdentifier" : "pl_8Vd45zonEXAMPLE",
+    "sourceTime" : "2026-10-02T09:53:14Z",
+    "sourceType" : "plaid"
+  }
+]
+```
+
+A transaction you entered by hand returns `[]`.
+
+### Transaction types on create
+
+`transactions create` used to give every new transaction whichever type
+Banktivity listed first, often "Return Of Capital". Now it works the type out
+from the bank and card lines:
+
+| Lines | Type |
+| --- | --- |
+| two or more different bank or card accounts | Transfer |
+| one account, money going out | Withdrawal |
+| one account, money coming in | Deposit |
+
+```text
+$ banktivity-cli transactions create --date 2026-10-02 --title "Move to savings" \
+    --line-items '[{"account_id":6,"amount":-500},{"account_id":7,"amount":500}]'
+{ "id" : 23122, "title" : "Move to savings", "transactionType" : "Transfer", ... }
+```
+
+To choose the type yourself, pass `--transaction-type` with `check`,
+`deposit`, `transfer` or `withdrawal`. Investment rows such as buys and
+dividends need a security, so create them with `securities create-trade` and
+`securities create-income`. `transactions update --transaction-type` can still
+set any type on an existing transaction.
+
 ### Command reference
 
 The command groups below are the complete CLI surface. Use a group's
@@ -433,7 +548,7 @@ The command groups below are the complete CLI surface. Use a group's
 - `scheduled`: `list`, `get`, `create`, `update`, `delete`
 - `statements`: `list`, `status`, `get`, `inspect-membership`, `inspect-sync-record`, `replace-internal-row-with-visible-statement`, `restore-internal-row-from-preimage`, `visible-row-correction-plan`, `create`, `update`, `delete`, `reconcile`, `unreconcile`, `unreconciled`
 - `securities`: `list`, `create`, `delete`, `prices`, `import-prices`, `delete-prices`, `fix-prices`, `holdings`, `trades`, `income`, `create-trade`, `create-income`, `adjust`, `update-trade`
-- `reconciliation`: `execute-bundle` for a reviewed, hash-bound phase bundle
+- `reconciliation`: `execute-bundle` runs a reviewed JSON plan of repairs, checked against its SHA-256 digest
 - `export`: `turtle`
 - `schema`: dump the Core Data schema
 - `capabilities`: show stable JSON safety metadata for CLI and MCP commands
@@ -443,21 +558,17 @@ Important behavior:
 - Commands that accept `--account-id` generally also accept `--account-name`.
 - Statement dates use local-day boundaries. Reconciliation preserves existing
   cleared-state semantics when assigning or unassigning line items.
-- `transactions create --line-items` accepts a JSON array for split transactions.
-  `--transaction-type` names a cash type (`check`, `deposit`, `transfer`,
-  `withdrawal`); without it, deposit, withdrawal or transfer is inferred from
-  the bank-account lines. Investment rows come from `securities create-trade`
-  and `create-income`.
-- `accounts create --type` and `accounts update --type` accept the same slugs
-  (`banktivity-cli accounts update --help` lists them).
+- `transactions create --line-items` takes a JSON array for split
+  transactions. See [Transaction types on create](#transaction-types-on-create)
+  for how the type is chosen.
 - `statements inspect-membership` and `statements inspect-sync-record` are
   read-only diagnostics. They expose statement references and sync-record state;
   they do not synthesize missing records.
-- Internal statement replacement and restoration require exact account,
-  period, membership, cleared-state, and SHA-256 preimage evidence. They are
-  typed repair operations, not a general-purpose internal-row write escape hatch.
-- `reconciliation execute-bundle` validates the bundle digest, vault, operation
-  order, and command templates before running the phase.
+- Replacing or restoring an internal statement row needs the exact account,
+  period, member lines, cleared state and a SHA-256 snapshot of the row as it
+  was. These commands repair only the cases they were built for.
+- `reconciliation execute-bundle` checks the plan's digest, the vault, the
+  order of operations and each command before it runs anything.
 - `capabilities` is the machine-readable source for access, write-mode,
   confirmation, dry-run, and UI-verification metadata.
 
@@ -498,13 +609,13 @@ Once installed, type `/banktivity` in any Claude Code session to activate it, or
 ## Safety Features
 
 - **Write guard**: Before any mutation, the server checks if Banktivity.app has the vault open (via `lsof`). If it does, writes are blocked to prevent corruption.
-- **No schema migration**: automatic Core Data migration is turned off. If the model merged from the vault's `.momd` bundles does not match the store, opening fails instead of Core Data dropping and recreating tables.
+- **No schema migration**: Core Data's automatic migration is turned off. If the data model read from the vault doesn't match its database, the tool refuses to open it. Left on, Core Data would "migrate" by dropping and recreating tables; one user lost 40,459 price records that way.
 - **No persistent history tracking**: Banktivity uses its own sync mechanism. Core Data's built-in history tracking would add unrecognized metadata that corrupts the vault.
 - **Background contexts**: All writes use background `NSManagedObjectContext` instances with `performAndWait` for data integrity.
 
 ## How It Works
 
-Banktivity's `.bank8` bundle is a directory containing compiled Core Data models (`.momd` files) and a SQLite database (`StoreContent/core.sql`). This server:
+Banktivity's `.bank8` bundle is a folder holding Banktivity's compiled data model (the `.momd` files) and a SQLite database (`StoreContent/core.sql`). This tool:
 
 1. Loads and merges all `.momd` model bundles from the vault, in filename order
 2. Opens the SQLite store via `NSPersistentContainer` (no history tracking, no migration)

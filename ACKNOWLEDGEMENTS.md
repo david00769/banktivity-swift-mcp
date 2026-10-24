@@ -1,13 +1,13 @@
 # Acknowledgements
 
-This fork (`david00769/banktivity-swift-mcp`) builds on
-[sflinter/banktivity-swift-mcp](https://github.com/sflinter/banktivity-swift-mcp)
-by Steve Flinter, which in turn was inspired by Martijn Riemers's TypeScript
-[banktivity-mcp](https://github.com/mhriemers/banktivity-mcp). Several other
-people have published fixes and features in their own forks or as pull
-requests upstream. This file records exactly what this fork took from them,
-how, and what was changed, so a reader (human or agent) can tell borrowed
-code from local code and find the original.
+This fork (`david00769/banktivity-swift-mcp`) builds on Steve Flinter's
+[banktivity-swift-mcp](https://github.com/sflinter/banktivity-swift-mcp), which
+was inspired by Martijn Riemers's TypeScript
+[banktivity-mcp](https://github.com/mhriemers/banktivity-mcp). Other people
+have published fixes and features in their own forks, or as pull requests
+upstream. This file records what this fork took from them, how, and what was
+changed. Anyone reading the code can then tell borrowed work from local work,
+and find the original.
 
 How to read it:
 
@@ -17,11 +17,10 @@ How to read it:
 - **Ported** means the idea or code was reimplemented on this fork's current
   code and committed by the maintainer, with the original author named in a
   `Co-authored-by:` trailer and the original commits cited in the message.
-- AI-assistant co-author trailers in contributors' messages were removed when
-  their commits were taken, following this fork's rule that commits list only
-  human authors. Otherwise a contributor's message is unchanged, apart from
-  the provenance line and, where a conflict was resolved or the code adapted,
-  one line saying so.
+- Contributors' commit messages are unchanged except for three things. The
+  provenance line was added. Where a conflict was resolved or the code adapted,
+  one line says so. And AI-assistant co-author lines were removed, because this
+  fork's commits list only human authors.
 
 ## 2026-10-23 intake (v0.17.0)
 
@@ -32,21 +31,26 @@ How to read it:
 | `get_line_item_source` MCP tool: raw Plaid/OFX import details for a line item | producethis | `producethis/banktivity-swift-mcp` `main`, `a6a8ab8` | Cherry-picked; adapted to declare `access: .read` and to be listed in `CapabilityRegistry` | `b36b26b` |
 | Infer or accept a transaction type on create | Roberto Michelena | `rmichelena/banktivity-swift-mcp` `cursor/create-transaction-type-rebased-3d71`, `fd91944` `1c388fc` `dcb78ed` | Ported: his inference, helpers, 12 tests and docs taken; his sync-blob writes not taken (this fork retired the blob on 2026-10-15) | `8347887` |
 | `accounts update` / `update_account`: rename, retype, hide | Peter Baker | `peterbaker/banktivity-swift-mcp` `fix/security-trade-cash-balance`, `521ac43` | Ported: his repository method and refusals kept; type names mapped onto this fork's `AccountClass.slugs` | `a36be32` |
-| Loopback HTTP server mode (`BANKTIVITY_HTTP_PORT`) | Peter Baker | `peterbaker/banktivity-swift-mcp` `fix/security-trade-cash-balance`, `6a7a8cb` | Cherry-picked, unchanged; a follow-up here refuses a negative or oversized `Content-Length` | `5cde56f`, `2444379` |
+| Loopback HTTP server mode (`BANKTIVITY_HTTP_PORT`) | Peter Baker | `peterbaker/banktivity-swift-mcp` `fix/security-trade-cash-balance`, `6a7a8cb` | Cherry-picked, unchanged; later commits here added request checks and fixed concurrent `initialize` (see below) | `5cde56f` |
 
-Added locally around the intake, after review: `line-items source` in the CLI
-(the same read as `get_line_item_source`); tests for the migration guard, the
-line-item source read and the HTTP request parser (moved into
-`BanktivityMCPLib` so it can be tested); create accepts only cash types by
-name; a retype stays within the investment or non-investment family; the HTTP
-`initialize` cache became a single-flight actor; `make verify` fails on any
-exit of 126 or more.
+Added here around the intake, mostly after code review:
 
-Not taken, deliberately: Peter Baker's and muxadil's investment-cash formulas
-(`fix/investment-balance-running-balance`, upstream #19 and #33). This fork's
-write paths leave `pRunningBalance` at zero, so reading cash from it regresses
-here, and the line-item variant double-counts on registers the trade-cash
-repair rewrote. The holdings value from the same work was taken (below).
+- `line-items source` in the CLI, the same read as `get_line_item_source`;
+- tests for the migration guard, the line-item source read, and the HTTP request
+  parser (moved into `BanktivityMCPLib` so it can be tested);
+- HTTP mode refuses malformed, conflicting, oversized and chunked requests, and
+  concurrent `initialize` calls share one result (`SharedFirstSuccess`);
+- `transactions create` accepts only cash types by name;
+- a retype stays on the same side of the investment line;
+- `make verify` fails if a binary is missing or killed, not only on a bad
+  signature.
+
+Not taken, on purpose: Peter Baker's and muxadil's ways of calculating an
+investment account's cash (`fix/investment-balance-running-balance`, upstream
+#19 and #33). Peter's reads Banktivity's stored running balance, which this
+fork's writes leave at zero. muxadil's adds up line items, which counts some
+trades twice on accounts this fork has repaired. The holdings market value from
+the same work was taken (see below).
 
 ## Earlier work taken from others
 
