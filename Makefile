@@ -29,8 +29,30 @@ help: ## Show this help
 build: ## Debug build
 	swift build
 
+# One architecture per build, then lipo. A single multi-arch build goes through
+# Xcode's build system, which on Xcode 16.4 rejects dependencies that declare
+# Swift 5 language mode ("given: [5], supported: []") and fails the release,
+# though newer toolchains accept it. Each architecture's binaries are copied
+# aside straight after its own build, because some toolchains write both
+# architectures to the same output directory. The universal binaries land
+# where they always did.
+UNIVERSAL_DIR := .build/apple/Products/Release
+ARCH_STAGE := .build/universal-stage
+
 release: ## Universal release build (arm64 + x86_64)
-	swift build -c release --arch arm64 --arch x86_64
+	@set -e; \
+	rm -rf $(ARCH_STAGE); \
+	for arch in arm64 x86_64; do \
+	  swift build -c release --arch $$arch; \
+	  bin="$$(swift build -c release --arch $$arch --show-bin-path)"; \
+	  mkdir -p $(ARCH_STAGE)/$$arch; \
+	  cp "$$bin/banktivity-cli" "$$bin/banktivity-mcp" $(ARCH_STAGE)/$$arch/; \
+	done; \
+	mkdir -p $(UNIVERSAL_DIR); \
+	for b in banktivity-cli banktivity-mcp; do \
+	  lipo -create -output "$(UNIVERSAL_DIR)/$$b" $(ARCH_STAGE)/arm64/$$b $(ARCH_STAGE)/x86_64/$$b; \
+	  lipo -info "$(UNIVERSAL_DIR)/$$b"; \
+	done
 
 test: ## Run all tests
 	swift build --product banktivity-cli
