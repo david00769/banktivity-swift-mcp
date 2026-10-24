@@ -22,7 +22,7 @@ BANKTIVITY_FILE_PATH="/path/to/file.bank8" swift run banktivity-mcp
 
 # Run CLI
 BANKTIVITY_FILE_PATH="/path/to/file.bank8" swift run banktivity-cli accounts list
-swift run banktivity-cli --vault "/path/to/file.bank8" accounts list
+swift run banktivity-cli accounts list --vault "/path/to/file.bank8"
 ```
 
 ### Never `cp` over an installed binary

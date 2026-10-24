@@ -1,21 +1,48 @@
-# banktivity-swift-mcp
+# banktivity-swift-mcp: Banktivity MCP server and CLI for AI assistants
 
-A Swift library, [MCP](https://modelcontextprotocol.io/) server and command-line
-tool for [Banktivity](https://www.iggsoftware.com/banktivity/) personal finance
-files. It reads and writes `.bank8` vaults: accounts, transactions, categories,
-tags, templates, import rules, scheduled transactions, statements and
-securities, and it can export a vault as RDF.
+[![CI](https://img.shields.io/github/actions/workflow/status/david00769/banktivity-swift-mcp/ci.yml?branch=main&label=CI)](https://github.com/david00769/banktivity-swift-mcp/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/david00769/banktivity-swift-mcp)](https://github.com/david00769/banktivity-swift-mcp/releases)
+[![Swift 6.0](https://img.shields.io/badge/Swift-6.0-F05138)](https://swift.org)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-lightgrey)](#requirements)
+[![MCP](https://img.shields.io/badge/MCP-server-blue)](https://modelcontextprotocol.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-- **banktivity-cli** is the command-line tool, for scripts and for looking things up yourself.
+A Swift library, [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)
+server and command-line tool for [Banktivity](https://www.iggsoftware.com/banktivity/)
+personal finance files. It lets Claude Desktop, Claude Code, Cursor and other
+MCP clients or AI agents read and write a Banktivity 10 `.bank8` vault:
+accounts, transactions, splits, categories, payees, tags, templates, import
+rules, scheduled transactions, statements and securities. It can also export a
+vault as RDF.
+
+- **banktivity-cli** is the command-line tool, for scripts, for AI agents that run shell commands, and for looking things up yourself.
 - **banktivity-mcp** is an MCP server with 79 tools, so an AI assistant such as Claude can work with your vault.
 - **BanktivityLib** is the library both are built on. It has no server dependencies.
 
-It is a Swift rewrite of Martijn Riemers's
-[banktivity-mcp](https://github.com/mhriemers/banktivity-mcp). That project
-wrote to Banktivity's SQLite file directly, which Banktivity's CloudKit sync
-cannot see, so edits could fail to sync or corrupt the vault. This one makes
-every change through Core Data (`NSPersistentContainer`), the same way
-Banktivity does.
+Every change goes through Core Data, the way Banktivity itself writes, so
+edits are seen by Banktivity's iCloud/CloudKit sync. See
+[CloudKit sync safety](#cloudkit-sync-safety-why-core-data-not-direct-sqlite).
+
+## CloudKit sync safety: why Core Data, not direct SQLite
+
+A `.bank8` vault is a Core Data store, and Banktivity syncs it through CloudKit.
+
+- **Writing SQLite directly is invisible to sync.** A tool that writes
+  `core.sql` with SQL bypasses Core Data's change tracking. CloudKit sync never
+  sees those edits, so they can fail to sync, be reverted, or corrupt the vault.
+  Martijn Riemers's TypeScript
+  [banktivity-mcp](https://github.com/mhriemers/banktivity-mcp), which
+  inspired the Swift rewrite, was built that way.
+- **This tool writes through Core Data.** Steve Flinter's Swift rewrite opens
+  the vault with `NSPersistentContainer`, using Banktivity's own compiled data
+  model, and makes every change through it, as Banktivity does.
+- **Writes are refused while Banktivity has the vault open** (an `lsof` check,
+  from the Swift rewrite).
+- **This fork adds more guards.** CLI edits are no longer reverted by the next
+  sync, Core Data is never allowed to migrate (rewrite) Banktivity's database,
+  and the write guard now refuses when it cannot tell and is enforced where
+  every write is saved. See
+  [Safety Features](#safety-features).
 
 > **Warning: this tool changes your Banktivity data.** Write commands make real
 > changes to your vault, and AI assistants make mistakes. Back up the vault before
@@ -63,6 +90,19 @@ What the fork adds:
 Some of this came from other people's forks. [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md)
 credits each contribution, and [CHANGELOG.md](CHANGELOG.md) lists every change
 by release.
+
+## Which Banktivity MCP should I use?
+
+Three related projects come up when you search for a Banktivity MCP server:
+
+| Project | Language | How it writes | Install | Status |
+| --- | --- | --- | --- | --- |
+| [mhriemers/banktivity-mcp](https://github.com/mhriemers/banktivity-mcp) | TypeScript (npm) | SQL into `core.sql` (as described when the Swift rewrite began) | npm | The original TypeScript server that inspired the Swift rewrite |
+| [sflinter/banktivity-swift-mcp](https://github.com/sflinter/banktivity-swift-mcp) | Swift | Core Data (`NSPersistentContainer`) | Homebrew (`sflinter/tap`) | The Swift rewrite this fork is based on |
+| **david00769/banktivity-swift-mcp** (this repo) | Swift | Core Data, plus the guards above | [Release download](#download-a-release-recommended) or `make install` | Maintained; everything upstream has, plus the [fork's additions](#about-this-fork) |
+
+If you want an AI assistant to write to a vault that syncs through iCloud,
+use one of the Core Data projects. All three can read a vault.
 
 ## Requirements
 
@@ -154,7 +194,8 @@ The CHANGELOG section becomes the release notes.
 
 ### Claude Code
 
-Add to your MCP settings (`~/.claude/settings.json` or a project's `.mcp.json`):
+Add to a project's `.mcp.json`, or to `~/.claude.json` for every project
+(`claude mcp add` writes the same entry):
 
 ```json
 {
@@ -169,10 +210,24 @@ Add to your MCP settings (`~/.claude/settings.json` or a project's `.mcp.json`):
 }
 ```
 
-### Claude Desktop
+### Claude Desktop (`claude_desktop_config.json`)
 
 Add the same block to
-`~/Library/Application Support/Claude/claude_desktop_config.json`.
+`~/Library/Application Support/Claude/claude_desktop_config.json`, then
+restart Claude Desktop.
+
+### Cursor (`mcp.json`)
+
+Add the same block to `~/.cursor/mcp.json`, or to `.cursor/mcp.json` in a
+project.
+
+### Other MCP clients
+
+Any client that starts stdio MCP servers takes the same two things: the
+command `banktivity-mcp` (use its absolute path) and the environment variable
+`BANKTIVITY_FILE_PATH` set to your `.bank8` vault. For one shared server over
+HTTP, see below. For agents that can run shell commands, also consider the
+[CLI](#cli-or-mcp-server-which-to-run-and-keeping-the-vault-safe).
 
 ### Running one long-lived server over HTTP
 
@@ -221,7 +276,7 @@ changing a byte of it:
 
 ```sh
 BANKTIVITY_STORE_READ_ONLY=1 \
-  banktivity-cli --vault ~/Documents/Banktivity/My\ Accounts.bank8 accounts list
+  banktivity-cli accounts list --vault ~/Documents/Banktivity/My\ Accounts.bank8
 ```
 
 In this mode a write fails when it reaches the database. SQLite may still open
@@ -429,6 +484,45 @@ trade can move cash that the raw amounts don't show.
 - `dump_schema` — Inspect the Core Data model schema (entity names, attributes, relationships)
 - `get_capabilities` — List every command and tool, whether it reads or writes, and what confirmation it needs
 
+## CLI or MCP server: which to run, and keeping the vault safe
+
+The CLI is a first-class part of this project, and the reason is the vault's
+safety.
+
+**An MCP server stays running.** `banktivity-mcp` opens the vault when it
+starts and keeps it open until it exits. A client such as Claude Desktop
+usually starts it at launch and leaves it running in the background, even when
+you are not using it. If Banktivity then opens the same vault for reading and
+writing, or its sync touches the file, the two processes have the database
+open at once. Banktivity may hang or crash, or sync may go wrong. You can quit
+the server whenever you are done, but it is easy to forget.
+
+**The CLI opens the vault for one command and exits.** `banktivity-cli` loads
+the vault, runs the read or write, prints JSON and exits, so it is not holding
+the file when you open Banktivity. AI agents are good at tool calling through
+the shell, so Claude Code, Cursor's agent and other terminal agents can do the
+same work through the CLI that they do through MCP tools. The
+[Claude Code skill](#claude-code-skill) does exactly that.
+
+| | `banktivity-cli` | `banktivity-mcp` |
+| --- | --- | --- |
+| Holds the vault open | Only while one command runs | For as long as the server runs |
+| Best for | Claude Code, terminal agents, scripts, cron | Clients that only speak MCP (e.g. Claude Desktop) |
+| Before opening Banktivity | Nothing to do | Quit the server (or the client that started it) |
+
+What neither tool does:
+
+- **Neither locks the vault.** Both refuse to *write* while Banktivity has the
+  vault open (an `lsof` check before writes, cached for 3 seconds). Nothing stops Banktivity
+  from opening the vault while a command is running, and reads are not
+  blocked. The CLI shortens the window; it does not close it.
+- **Neither replaces backups.** Back up the vault before any write session.
+
+```sh
+# Read the five latest transactions; nothing stays running afterwards
+banktivity-cli transactions list --vault ~/Documents/Banktivity/My\ Accounts.bank8 --limit 5
+```
+
 ## CLI
 
 A standalone CLI (`banktivity-cli`) provides the same query and write
@@ -452,13 +546,63 @@ before using them.
 Common examples:
 
 ```sh
-banktivity-cli --vault ~/Documents/Banktivity/My\ Accounts.bank8 accounts list
+banktivity-cli accounts list --vault ~/Documents/Banktivity/My\ Accounts.bank8
 banktivity-cli accounts balance --account-name "Checking"
 banktivity-cli transactions list --account-name "Checking" --start-date 2025-01-01 --limit 10
 banktivity-cli statements status --account-name "Brokerage"
 banktivity-cli tags get-by-tag --tag-name "Vacation" --limit 20
 banktivity-cli export turtle --output vault.ttl
 ```
+
+### CLI recipes
+
+Copy-paste commands for common jobs. Set `BANKTIVITY_FILE_PATH` once, or add
+`--vault <path>` after the subcommand (`accounts list --vault <path>`; it is
+not accepted before it). Every command takes
+`--format compact` for one-line JSON, which is easier for scripts and agents to
+parse.
+
+```sh
+export BANKTIVITY_FILE_PATH=~/Documents/Banktivity/My\ Accounts.bank8
+
+# Split one payment across two categories. Make the lines balance:
+# money out of Checking (-120) equals money into the categories (+90, +30).
+# Any difference is added as an uncategorized offset line.
+banktivity-cli transactions create --date 2026-10-01 --title "Costco" \
+  --line-items '[{"account_name":"Checking","amount":-120},
+                 {"account_name":"Groceries","amount":90,"memo":"food"},
+                 {"account_name":"Household","amount":30}]'
+
+# A simple two-line transaction with an explicit type. The category line
+# gets the opposite amount (+50).
+banktivity-cli transactions create --account-name "Checking" --date 2026-10-02 \
+  --title "Cafe" --amount -50 --category-name "Dining" --transaction-type withdrawal
+
+# Full-text search across payees and memos, as one-line JSON
+banktivity-cli transactions search --format compact --query "Amazon" --limit 20
+
+# Uncategorized transactions in one account, including transfers
+banktivity-cli uncategorized list --account-id 3 --limit 50 --no-exclude-transfers
+
+# Which commands write, so an agent can stick to reads
+banktivity-cli capabilities --format compact
+
+# Open the vault read-only (see Read-only mode for what this does not cover)
+BANKTIVITY_STORE_READ_ONLY=1 banktivity-cli accounts list
+```
+
+`transactions create` options:
+
+| Option | Meaning |
+| --- | --- |
+| `--account-id` / `--account-name` | Account for the first line item (simple mode) |
+| `--date` | Transaction date, `YYYY-MM-DD` (required) |
+| `--title` | Payee or title (required) |
+| `--amount` | Amount on the account line; required unless `--line-items` is given |
+| `--category-id` / `--category-name` | Category for the second line, which gets `-amount` |
+| `--note` | Optional note |
+| `--transaction-type` | `check`, `deposit`, `transfer` or `withdrawal`; inferred if omitted |
+| `--line-items` | JSON array of `{"account_id" or "account_name", "amount", "memo"?}`; replaces the account, amount and category options |
 
 ### Changing an account
 
@@ -612,6 +756,7 @@ Once installed, type `/banktivity` in any Claude Code session to activate it, or
 - **No schema migration**: Core Data's automatic migration is turned off. If the data model read from the vault doesn't match its database, the tool refuses to open it. Left on, Core Data would "migrate" by dropping and recreating tables; one user lost 40,459 price records that way.
 - **No persistent history tracking**: Banktivity uses its own sync mechanism. Core Data's built-in history tracking would add unrecognized metadata that corrupts the vault.
 - **Background contexts**: All writes use background `NSManagedObjectContext` instances with `performAndWait` for data integrity.
+- **How long the vault is held open**: `banktivity-mcp` keeps the vault open for as long as it runs; `banktivity-cli` only while one command runs. Neither locks the file. See [CLI or MCP server](#cli-or-mcp-server-which-to-run-and-keeping-the-vault-safe).
 
 ## How It Works
 
@@ -621,6 +766,31 @@ Banktivity's `.bank8` bundle is a folder holding Banktivity's compiled data mode
 2. Opens the SQLite store via `NSPersistentContainer` (no history tracking, no migration)
 3. Exposes 79 MCP tools over stdio, or over loopback HTTP when `BANKTIVITY_HTTP_PORT` is set
 4. Uses KVC (`value(forKey:)`) to access entities since we load Banktivity's own compiled models at runtime
+
+## FAQ
+
+**Can Claude (or Cursor, or another AI agent) read my Banktivity data?**
+Yes. Point an MCP client at `banktivity-mcp` ([Configuration](#configuration)),
+or let a shell-capable agent run `banktivity-cli` ([CLI](#cli)).
+
+**Is it safe with iCloud / CloudKit sync?**
+Writes go through Core Data, as Banktivity's do, so sync sees them
+([CloudKit sync safety](#cloudkit-sync-safety-why-core-data-not-direct-sqlite)).
+Don't run it while Banktivity has the same vault open, and back up first.
+
+**Can a running MCP server cause trouble when I open Banktivity?**
+It can: the server keeps the vault open. Quit it before opening Banktivity, or use the
+CLI ([CLI or MCP server](#cli-or-mcp-server-which-to-run-and-keeping-the-vault-safe)).
+
+**Does it work with Banktivity 10 and `.bank8` files?**
+Yes. It reads Banktivity's own data model from inside the `.bank8` bundle
+([How It Works](#how-it-works)).
+
+**Can I give an AI read-only access?**
+Set `BANKTIVITY_STORE_READ_ONLY=1` ([Read-only mode](#read-only-mode)), and use
+`banktivity-cli capabilities` to see which commands write. This is a safety
+layer, not a sandbox: an agent that can run shell commands can unset the
+variable, so give it a copy of the vault if it must not write.
 
 ## Acknowledgements
 

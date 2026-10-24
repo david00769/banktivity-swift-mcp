@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **`uncategorized list` can include transfers.** `--exclude-transfers`
+  defaulted to on with no way to turn it off, so the CLI always hid transfers
+  (the `get_uncategorized_transactions` tool did not), and a debug build
+  refused to parse the command at all. `--no-exclude-transfers` now includes
+  them; the default is unchanged.
+
 ## v0.17.0 (2026-10-24)
 
 This release takes work from other people's forks, each credited below and in
