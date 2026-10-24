@@ -2,7 +2,9 @@ name: CI
 
 # Runs the whole suite the way `make test` does locally: release configuration,
 # single worker, Xcode's Swift Testing frameworks. Tests that need a real
-# Banktivity vault skip on a runner, which has none.
+# Banktivity vault skip on a runner, which has none. Then builds the universal
+# release tarball, so a change that breaks the release build fails here rather
+# than at tag time.
 
 on:
   push:
@@ -20,7 +22,7 @@ concurrency:
 jobs:
   test:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
@@ -29,3 +31,8 @@ jobs:
           swift --version
       - name: Test
         run: make test
+      - name: Universal release build
+        run: |
+          make package
+          lipo -info .build/apple/Products/Release/banktivity-cli
+          lipo -info .build/apple/Products/Release/banktivity-mcp
