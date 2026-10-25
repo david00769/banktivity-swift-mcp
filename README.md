@@ -220,19 +220,60 @@ is unset or empty, `banktivity-mcp` and `banktivity-cli` use the vault in that
 folder**, provided there is exactly one. With several they list them and stop,
 so you can pick one.
 
-**macOS privacy permission.** That folder belongs to Banktivity, and macOS
-protects one app's data from others. The first time `banktivity-mcp` reads it
-from Claude Desktop, macOS blocks it and says so in a notification ("access data
-from other apps"); the server then reports that macOS blocked access. Allow it in
-**System Settings > Privacy & Security > Full Disk Access**: add
-`~/Library/Application Support/Claude/Claude Extensions/local.mcpb.david00769.banktivity-swift-mcp/server/banktivity-mcp`
-(press ⌘⇧G in the file picker to paste the path), then turn the extension off
-and on. A Terminal that already has Full Disk Access needs nothing. Because the
-binaries are ad-hoc signed, macOS may ask again after an update.
+**macOS asks permission first.** That folder belongs to Banktivity, and
+macOS protects one app's data from other apps, so the first run is blocked
+until you grant access. See
+[Granting access on macOS](#granting-access-on-macos).
 
 A vault saved anywhere else (the examples below use
 `~/Documents/Banktivity/My Accounts.bank8`) needs its path set. The path must
 end in `.bank8`; if you give a folder, the error lists the vaults inside it.
+
+### Granting access on macOS
+
+macOS blocks other programs from reading Banktivity 10's library until you
+allow it. Until then the server logs:
+
+```
+Error: macOS blocked access to Banktivity's library (…/IGGFinance/production/Documents). …
+```
+
+and Claude Desktop shows the extension as failed. You may also get a macOS
+notification about a program accessing "data from other apps". To fix it:
+
+1. Quit Banktivity.
+2. Open **System Settings > Privacy & Security > Full Disk Access** and click
+   **+** below the list.
+3. Press **⌘⇧G**, paste the path of the `banktivity-mcp` that is actually
+   running, and click **Open**:
+   - Claude Desktop extension:
+     `~/Library/Application Support/Claude/Claude Extensions/local.mcpb.david00769.banktivity-swift-mcp/server/banktivity-mcp`
+   - Installed from a release or with `make install`: `~/.local/bin/banktivity-mcp`
+     (and `~/.local/bin/banktivity-cli` for the CLI)
+4. Check that **banktivity-mcp** now **appears in the list and is switched on**.
+5. Restart the server. In Claude Desktop, go to Settings > Extensions,
+   switch Banktivity off and on (or quit and reopen Claude Desktop).
+
+**Grant the program itself, not the app that runs it.** Giving Claude.app Full
+Disk Access did not unblock the extension; adding the `banktivity-mcp` binary
+did. Claude.app does not need Full Disk Access for this. The exception is a
+terminal that already has Full Disk Access (Terminal, iTerm): the CLI run from
+it, including from Claude Code, works without its own entry.
+
+**After every update, grant again.** The binaries are ad-hoc signed, not
+notarized, so macOS ties the permission to the exact file. An update installs
+a new file, so add it again (remove the old entry first).
+
+**How to tell it worked.** Claude Desktop's server log,
+`~/Library/Logs/Claude/mcp-server-Banktivity.log`, shows:
+
+```
+Vault: /Users/you/Library/Group Containers/…/IGGFinance/production/Documents/<vault id>/1.bank8
+Core Data container loaded successfully
+```
+
+In the extension's **Configure** dialog, turn **Read-only** on and click
+**Save** until you trust your setup. The toggle only takes effect once saved.
 
 ### Claude Code
 
@@ -821,6 +862,10 @@ or let a shell-capable agent run `banktivity-cli` ([CLI](#cli)).
 Writes go through Core Data, as Banktivity's do, so sync sees them
 ([CloudKit sync safety](#cloudkit-sync-safety-why-core-data-not-direct-sqlite)).
 Don't run it while Banktivity has the same vault open, and back up first.
+
+**The extension fails with "macOS blocked access to Banktivity's library".**
+macOS needs your permission first: add the `banktivity-mcp` program itself to
+Full Disk Access ([Granting access on macOS](#granting-access-on-macos)).
 
 **Can a running MCP server cause trouble when I open Banktivity?**
 It can: the server keeps the vault open. Quit it before opening Banktivity, or use the

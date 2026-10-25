@@ -34,10 +34,14 @@ public enum VaultLocator {
                     : "Vaults inside it:\n" + candidates.map { "  \($0)" }.joined(separator: "\n")
                 return "Not a .bank8 vault: \(path)\n\(hint)"
             case .libraryUnreadable(let library):
+                // Granting the host app (Claude.app, Terminal...) is not enough on
+                // its own: macOS checks this binary. Verified 2026-10-25.
                 return "macOS blocked access to Banktivity's library (\(library)). "
-                    + "Allow it in System Settings > Privacy & Security > Full Disk Access for "
-                    + "\(CommandLine.arguments.first ?? "banktivity-mcp") (or the app that runs it), "
-                    + "then restart it. Or set BANKTIVITY_FILE_PATH to a .bank8 vault elsewhere."
+                    + "Add this program itself to System Settings > Privacy & Security > "
+                    + "Full Disk Access with the + button: "
+                    + "\(CommandLine.arguments.first ?? "banktivity-mcp"). "
+                    + "Make sure it shows in the list switched on, then restart it. "
+                    + "See README: Granting access on macOS."
             case .noneDiscovered(let library):
                 return "No vault set and no Banktivity 10 vault found in \(library). "
                     + "Set BANKTIVITY_FILE_PATH (or --vault) to your .bank8 vault."

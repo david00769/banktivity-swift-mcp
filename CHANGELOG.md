@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Clearer steps for granting macOS access.** The README has a new
+  "Granting access on macOS" section: add the `banktivity-mcp` program
+  itself to Full Disk Access (granting Claude.app does not unblock it), check
+  that it is listed and switched on, restart it, grant it again after each
+  update, and read the server log to confirm. The "blocked access" error now
+  says the same and no longer suggests granting "the app that runs it".
+
 ## v0.17.3 (2026-10-25)
 
 - **Says when macOS blocks the vault.** Banktivity 10's library is protected app
