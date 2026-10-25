@@ -21,6 +21,7 @@ public enum VaultLocator {
         case notFound(String)
         case notAVault(String, candidates: [String])
         case noneDiscovered(library: String)
+        case libraryUnreadable(library: String)
         case severalDiscovered([String])
 
         public var errorDescription: String? {
@@ -32,6 +33,11 @@ public enum VaultLocator {
                     ? "Set the path of a .bank8 vault."
                     : "Vaults inside it:\n" + candidates.map { "  \($0)" }.joined(separator: "\n")
                 return "Not a .bank8 vault: \(path)\n\(hint)"
+            case .libraryUnreadable(let library):
+                return "macOS blocked access to Banktivity's library (\(library)). "
+                    + "Allow it in System Settings > Privacy & Security > Full Disk Access for "
+                    + "\(CommandLine.arguments.first ?? "banktivity-mcp") (or the app that runs it), "
+                    + "then restart it. Or set BANKTIVITY_FILE_PATH to a .bank8 vault elsewhere."
             case .noneDiscovered(let library):
                 return "No vault set and no Banktivity 10 vault found in \(library). "
                     + "Set BANKTIVITY_FILE_PATH (or --vault) to your .bank8 vault."
@@ -56,6 +62,13 @@ public enum VaultLocator {
         if raw.hasPrefix("${") && raw.hasSuffix("}") { raw = "" }
         if raw.isEmpty {
             let lib = expand(library)
+            // A library that exists but cannot be listed is macOS app-data
+            // protection (TCC), not an empty library; say so.
+            var libIsDir: ObjCBool = false
+            if fileManager.fileExists(atPath: lib, isDirectory: &libIsDir), libIsDir.boolValue,
+               (try? fileManager.contentsOfDirectory(atPath: lib)) == nil {
+                throw Failure.libraryUnreadable(library: lib)
+            }
             let found = vaults(in: lib, fileManager: fileManager)
             switch found.count {
             case 1: return found[0]

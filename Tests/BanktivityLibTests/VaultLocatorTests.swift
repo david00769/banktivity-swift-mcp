@@ -47,6 +47,16 @@ struct VaultLocatorTests {
         }
     }
 
+    @Test("An unreadable library is reported as blocked, not as empty")
+    func unreadableLibrary() throws {
+        let lib = try library(["V/1.bank8"])
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: lib)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: lib) }
+        #expect(throws: VaultLocator.Failure.libraryUnreadable(library: lib)) {
+            try VaultLocator.resolve(nil, library: lib)
+        }
+    }
+
     @Test("An explicit .bank8 path is used as given, with ~ expanded")
     func explicitPath() throws {
         let lib = try library(["X/My Accounts.bank8"])

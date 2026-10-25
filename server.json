@@ -7,11 +7,11 @@
     "url": "https://github.com/david00769/banktivity-swift-mcp",
     "source": "github"
   },
-  "version": "0.17.2",
+  "version": "0.17.3",
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.17.2/banktivity-swift-mcp-v0.17.2-macos-universal.mcpb",
+      "identifier": "https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.17.3/banktivity-swift-mcp-v0.17.3-macos-universal.mcpb",
       "transport": {
         "type": "stdio"
       },

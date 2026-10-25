@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.17.3 (2026-10-25)
 
+- **Says when macOS blocks the vault.** Banktivity 10's library is protected app
+  data. Run from Claude Desktop, the server was refused access and reported "no
+  Banktivity 10 vault found". It now reports that macOS blocked access and points
+  to Full Disk Access. The README explains the permission.
 - **License.** Work by david00769 after commit `9bcd5d2` is under the PolyForm
   Noncommercial License 1.0.0, with commercial licenses available from
   david00769. Everything up to that commit, including every release through

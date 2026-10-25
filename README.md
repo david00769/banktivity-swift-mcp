@@ -115,18 +115,18 @@ use one of the Core Data projects. All three can read a vault.
 
 Each [release](https://github.com/david00769/banktivity-swift-mcp/releases)
 has one universal download (Apple Silicon and Intel) and a checksum file. CI
-builds and tests the release from the tagged commit. For v0.17.2:
+builds and tests the release from the tagged commit. For v0.17.3:
 
 ```sh
-base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.17.2
-curl -LO "$base/banktivity-swift-mcp-v0.17.2-macos-universal.tar.gz"
-curl -LO "$base/banktivity-swift-mcp-v0.17.2-macos-universal.tar.gz.sha256"
-shasum -a 256 -c banktivity-swift-mcp-v0.17.2-macos-universal.tar.gz.sha256   # prints "OK"
+base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.17.3
+curl -LO "$base/banktivity-swift-mcp-v0.17.3-macos-universal.tar.gz"
+curl -LO "$base/banktivity-swift-mcp-v0.17.3-macos-universal.tar.gz.sha256"
+shasum -a 256 -c banktivity-swift-mcp-v0.17.3-macos-universal.tar.gz.sha256   # prints "OK"
 
-tar xzf banktivity-swift-mcp-v0.17.2-macos-universal.tar.gz
+tar xzf banktivity-swift-mcp-v0.17.3-macos-universal.tar.gz
 xattr -d com.apple.quarantine banktivity-cli banktivity-mcp 2>/dev/null || true
 mkdir -p ~/.local/bin && mv banktivity-cli banktivity-mcp ~/.local/bin/
-banktivity-cli --version   # 0.17.2
+banktivity-cli --version   # 0.17.3
 ```
 
 The binaries are signed ad hoc, not notarized. The `xattr` line removes the
@@ -218,7 +218,19 @@ library, not in Documents:
 The `<vault id>` folder differs from Mac to Mac. **If `BANKTIVITY_FILE_PATH`
 is unset or empty, `banktivity-mcp` and `banktivity-cli` use the vault in that
 folder**, provided there is exactly one. With several they list them and stop,
-so you can pick one. A vault saved anywhere else (the examples below use
+so you can pick one.
+
+**macOS privacy permission.** That folder belongs to Banktivity, and macOS
+protects one app's data from others. The first time `banktivity-mcp` reads it
+from Claude Desktop, macOS blocks it and says so in a notification ("access data
+from other apps"); the server then reports that macOS blocked access. Allow it in
+**System Settings > Privacy & Security > Full Disk Access**: add
+`~/Library/Application Support/Claude/Claude Extensions/local.mcpb.david00769.banktivity-swift-mcp/server/banktivity-mcp`
+(press ⌘⇧G in the file picker to paste the path), then turn the extension off
+and on. A Terminal that already has Full Disk Access needs nothing. Because the
+binaries are ad-hoc signed, macOS may ask again after an update.
+
+A vault saved anywhere else (the examples below use
 `~/Documents/Banktivity/My Accounts.bank8`) needs its path set. The path must
 end in `.bank8`; if you give a folder, the error lists the vaults inside it.
 
@@ -280,7 +292,7 @@ curl -s http://127.0.0.1:8790/mcp \
   -H 'Accept: application/json, text/event-stream' \
   -H 'MCP-Protocol-Version: 2025-06-18' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"check","version":"1"}}}'
-# {"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{...}},"serverInfo":{"name":"banktivity-mcp","version":"0.17.2"},...}}
+# {"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{...}},"serverInfo":{"name":"banktivity-mcp","version":"0.17.3"},...}}
 ```
 
 Point a client at it with a URL instead of a command:
