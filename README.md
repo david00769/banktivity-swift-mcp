@@ -844,4 +844,5 @@ Two licenses; [LICENSE](LICENSE) explains which applies where.
   use.
 
 **Commercial use** of the PolyForm-licensed parts needs a commercial license
-from [david00769](https://github.com/david00769).
+from [david00769](https://github.com/david00769)
+(davidsiroky@me.com).
