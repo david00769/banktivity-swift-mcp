@@ -66,21 +66,24 @@ A `.bank8` vault is a Core Data store, and Banktivity syncs it through CloudKit.
 
 This is david00769's maintained fork of Steve Flinter's
 [banktivity-swift-mcp](https://github.com/sflinter/banktivity-swift-mcp). It
-has everything upstream has. Upstream merged nine of this fork's pull requests
-on 2026-11-03, so much of the fork's earlier work is now in upstream too. The
-fixes and features below are still offered upstream as
-[pull requests](https://github.com/sflinter/banktivity-swift-mcp/pulls?q=is%3Apr+is%3Aopen+author%3Adavid00769)
-and are not in upstream yet.
+has everything upstream has.
+Upstream merged nine of this fork's pull requests on 2026-11-03, so much of the
+fork's earlier work is in upstream too. Some of what is listed below is still
+offered upstream as
+[pull requests](https://github.com/sflinter/banktivity-swift-mcp/pulls?q=is%3Apr+is%3Aopen+author%3Adavid00769);
+the rest is only here.
 
 What the fork adds:
 
 - **Edits that survive sync.** Changes made with the CLI are no longer reverted
   the next time Banktivity syncs.
-- **Statements:** reconciliation, plus repair commands for statement rows.
+- **Statements:** reconciliation that selects the same rows the Banktivity app
+  does, plus repair commands for statement rows.
 - **Investments:** create security trades and income, and see realised capital
   gains per lot.
 - **Safety and reporting:** a machine-readable list of which commands write,
-  net worth in one reporting currency, and the market value of holdings.
+  net worth in one reporting currency, and an investment account's holdings
+  value on its balance.
 - **New in v0.17.0:**
   - a guard that stops Core Data from rewriting Banktivity's database;
   - `accounts update`;
@@ -116,18 +119,18 @@ use one of the Core Data projects. All three can read a vault.
 
 Each [release](https://github.com/david00769/banktivity-swift-mcp/releases)
 has one universal download (Apple Silicon and Intel) and a checksum file. CI
-builds and tests the release from the tagged commit. For v0.17.3:
+builds and tests the release from the tagged commit. For v0.17.4:
 
 ```sh
-base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.17.3
-curl -LO "$base/banktivity-swift-mcp-v0.17.3-macos-universal.tar.gz"
-curl -LO "$base/banktivity-swift-mcp-v0.17.3-macos-universal.tar.gz.sha256"
-shasum -a 256 -c banktivity-swift-mcp-v0.17.3-macos-universal.tar.gz.sha256   # prints "OK"
+base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.17.4
+curl -LO "$base/banktivity-swift-mcp-v0.17.4-macos-universal.tar.gz"
+curl -LO "$base/banktivity-swift-mcp-v0.17.4-macos-universal.tar.gz.sha256"
+shasum -a 256 -c banktivity-swift-mcp-v0.17.4-macos-universal.tar.gz.sha256   # prints "OK"
 
-tar xzf banktivity-swift-mcp-v0.17.3-macos-universal.tar.gz
+tar xzf banktivity-swift-mcp-v0.17.4-macos-universal.tar.gz
 xattr -d com.apple.quarantine banktivity-cli banktivity-mcp 2>/dev/null || true
 mkdir -p ~/.local/bin && mv banktivity-cli banktivity-mcp ~/.local/bin/
-banktivity-cli --version   # 0.17.3
+banktivity-cli --version   # 0.17.4
 ```
 
 The binaries are signed ad hoc, not notarized. The `xattr` line removes the
@@ -334,7 +337,7 @@ curl -s http://127.0.0.1:8790/mcp \
   -H 'Accept: application/json, text/event-stream' \
   -H 'MCP-Protocol-Version: 2025-06-18' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"check","version":"1"}}}'
-# {"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{...}},"serverInfo":{"name":"banktivity-mcp","version":"0.17.3"},...}}
+# {"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{...}},"serverInfo":{"name":"banktivity-mcp","version":"0.17.4"},...}}
 ```
 
 Point a client at it with a URL instead of a command:

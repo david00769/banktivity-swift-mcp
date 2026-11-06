@@ -1,7 +1,19 @@
 # Changelog
 
-## Unreleased
+## v0.17.4 (2026-11-07)
 
+- **Up to date with upstream.** Upstream merged nine of this fork's pull requests
+  on 2026-11-03, and its `main` is now merged into this fork. The fork has
+  everything upstream has again; eight of the nine were already here.
+- **`securities reset-price-range`** and the `reset_security_price_range` MCP
+  tool, from upstream #44: forget which price history is known for a security
+  without deleting any of it. It marks nothing for upload, because price history
+  does not sync.
+- **Account and category filters now work** in `uncategorized list`,
+  `uncategorized review`, `uncategorized payee-summary` and their MCP tools. They
+  were accepted and ignored, so a query for one account returned every account.
+  An unknown ID now returns not-found, and a category filter refuses an account
+  that is not a category. Reported as upstream issue #53; offered back upstream.
 - **Clearer steps for granting macOS access.** The README has a new
   "Granting access on macOS" section: add the `banktivity-mcp` program
   itself to Full Disk Access (granting Claude.app does not unblock it), check

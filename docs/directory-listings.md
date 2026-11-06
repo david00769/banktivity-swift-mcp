@@ -12,7 +12,7 @@ directory's current rules before submitting, because they change.
 Banktivity MCP server and CLI in Swift; writes go through Core Data so CloudKit sync sees them.
 
 **Short description:**
-MCP server (79 tools) and CLI for Banktivity 10 `.bank8` personal finance
+MCP server (80 tools) and CLI for Banktivity 10 `.bank8` personal finance
 vaults, written in Swift. It reads and writes accounts, transactions, splits,
 categories, tags, statements and securities through Core Data, the way
 Banktivity does, so edits are seen by iCloud/CloudKit sync. Works with Claude

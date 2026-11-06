@@ -52,6 +52,16 @@ fork's writes leave at zero. muxadil's adds up line items, which counts some
 trades twice on accounts this fork has repaired. The holdings market value from
 the same work was taken (see below).
 
+## 2026-11-07, v0.17.4
+
+Both of these are marked MIT, so upstream can take them and the fork's PolyForm
+terms do not apply to them.
+
+| Contribution | Author | Source | How taken | Local commit |
+| --- | --- | --- | --- | --- |
+| `securities reset-price-range` | david00769 | upstream PR #44, `92364b6` | Ported from upstream, where it had merged without reaching this fork's `main`; adapted to the capability registry and main-actor guard | `2486469` |
+| Apply the account and category filters in categorization reads | david00769, reported by mattabate | upstream issue #53 | Written against upstream's `main` and offered back; cherry-picked here | `4ebf528` |
+
 ## Earlier work taken from others
 
 | Contribution | Author | Source | How taken | Local commit |
