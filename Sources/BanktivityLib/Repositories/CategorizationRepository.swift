@@ -26,7 +26,7 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
         limit: Int? = nil,
         excludeTransfers: Bool = true
     ) throws -> [UncategorizedTransactionDTO] {
-        try performRead { ctx in
+        try performRead { [self] ctx in
             // Fetch transactions where at least one line item goes to an income/expense category
             // but another line item has no category assignment
             let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
@@ -40,6 +40,9 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
                 predicates.append(NSPredicate(format: "pDate < %@", DateConversion.toDate(ts) as NSDate))
             }
 
+            if let accountId = accountId {
+                predicates.append(try accountPredicate(accountId: accountId, in: ctx))
+            }
             if !predicates.isEmpty {
                 request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             }
@@ -69,8 +72,12 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
                         hasCategory = true
                     } else {
                         hasNonCategory = true
-                        primaryAccountName = Self.stringValue(account, "pName")
-                        amount = liAmount
+                        // Under a filter, label the row with the leg that was asked about.
+                        if accountId == nil || primaryAccountName.isEmpty
+                            || Self.extractPK(from: account.objectID) == accountId {
+                            primaryAccountName = Self.stringValue(account, "pName")
+                            amount = liAmount
+                        }
                     }
 
                     lineItemDTOs.append(LineItemDTO(
@@ -205,7 +212,7 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
         endDate: String? = nil,
         limit: Int? = nil
     ) throws -> [ReviewedTransactionDTO] {
-        try performRead { ctx in
+        try performRead { [self] ctx in
             let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
             var predicates: [NSPredicate] = []
 
@@ -219,6 +226,16 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
                 predicates.append(NSPredicate(format: "pTitle LIKE[cd] %@", "*\(pattern)*"))
             }
 
+            if let accountId = accountId {
+                predicates.append(try accountPredicate(accountId: accountId, in: ctx))
+            }
+            if let categoryId = categoryId {
+                guard let category = try fetchByPK(entityName: "Account", pk: categoryId, in: ctx) else {
+                    throw ToolError.notFound("Category not found: \(categoryId)")
+                }
+                try Self.requireCategoryAccount(category, id: categoryId)
+                predicates.append(NSPredicate(format: "ANY lineItems.pAccount == %@", category))
+            }
             if !predicates.isEmpty {
                 request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             }
@@ -239,11 +256,17 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
                 for li in lineItems {
                     guard let account = Self.relatedObject(li, "pAccount") else { continue }
                     let acClass = Self.intValue(account, "pAccountClass")
+                    let legPK = Self.extractPK(from: account.objectID)
+                    // Under a filter, label the row with the leg that was asked about.
                     if acClass == AccountClass.income || acClass == AccountClass.expense {
-                        catId = Self.extractPK(from: account.objectID)
-                        catName = Self.stringValue(account, "pName")
-                        catPath = Self.stringValue(account, "pFullName")
-                    } else {
+                        // A category is an account too, so the account filter can name one.
+                        let wanted = categoryId ?? accountId
+                        if wanted == nil || catId == nil || legPK == wanted {
+                            catId = legPK
+                            catName = Self.stringValue(account, "pName")
+                            catPath = Self.stringValue(account, "pFullName")
+                        }
+                    } else if accountId == nil || primaryAccountName.isEmpty || legPK == accountId {
                         primaryAccountName = Self.stringValue(account, "pName")
                         amount = Self.doubleValue(li, "pTransactionAmount")
                     }
@@ -277,7 +300,7 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
         endDate: String? = nil,
         minTransactions: Int = 1
     ) throws -> [PayeeCategorySummaryDTO] {
-        try performRead { ctx in
+        try performRead { [self] ctx in
             let request = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
             var predicates: [NSPredicate] = []
 
@@ -288,6 +311,9 @@ public final class CategorizationRepository: BaseRepository, @unchecked Sendable
                 predicates.append(NSPredicate(format: "pDate < %@", DateConversion.toDate(ts) as NSDate))
             }
 
+            if let accountId = accountId {
+                predicates.append(try accountPredicate(accountId: accountId, in: ctx))
+            }
             if !predicates.isEmpty {
                 request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
             }
