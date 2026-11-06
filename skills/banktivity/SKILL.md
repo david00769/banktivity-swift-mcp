@@ -117,6 +117,7 @@ unless the user asks for something different.
 | Share adjustment | `securities adjust --symbol SYM --account-id N --shares=-10 --date 2026-03-31` | Splits, charges, corrections |
 | Import prices | `securities import-prices --symbol AAPL --file prices.csv` | Yahoo Finance, OHLCV or Date/Close CSV |
 | Delete prices | `securities delete-prices --symbol AAPL --start-date ... --end-date ...` | Date range optional |
+| Forget the known price range | `securities reset-price-range --symbol AAPL` | Keeps every price row |
 | Delete a security | `securities delete --symbol SYM --dry-run` | Refuses while trades use it; a real delete also needs `--operator-reviewed-target --post-ui-verification-required` |
 
 ### Changing things

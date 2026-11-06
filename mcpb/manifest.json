@@ -4,7 +4,7 @@
   "display_name": "Banktivity",
   "version": "@VERSION@",
   "description": "Read and write a Banktivity .bank8 vault from Claude, through Core Data so CloudKit sync sees every change.",
-  "long_description": "An MCP server with 79 tools for Banktivity 10 personal finance vaults: accounts, transactions, splits, categories, tags, templates, import rules, scheduled transactions, statements and securities. Writes go through Core Data, as Banktivity's own do. The server keeps the vault open while it runs, so quit Claude Desktop (or disable this extension) before opening the vault in Banktivity, and back up the vault before any write session.",
+  "long_description": "An MCP server with 80 tools for Banktivity 10 personal finance vaults: accounts, transactions, splits, categories, tags, templates, import rules, scheduled transactions, statements and securities. Writes go through Core Data, as Banktivity's own do. The server keeps the vault open while it runs, so quit Claude Desktop (or disable this extension) before opening the vault in Banktivity, and back up the vault before any write session.",
   "author": {
     "name": "david00769",
     "url": "https://github.com/david00769"

@@ -16,7 +16,7 @@ rules, scheduled transactions, statements and securities. It can also export a
 vault as RDF.
 
 - **banktivity-cli** is the command-line tool, for scripts, for AI agents that run shell commands, and for looking things up yourself.
-- **banktivity-mcp** is an MCP server with 79 tools, so an AI assistant such as Claude can work with your vault.
+- **banktivity-mcp** is an MCP server with 80 tools, so an AI assistant such as Claude can work with your vault.
 - **BanktivityLib** is the library both are built on. It has no server dependencies.
 
 Every change goes through Core Data, the way Banktivity itself writes, so
@@ -66,9 +66,11 @@ A `.bank8` vault is a Core Data store, and Banktivity syncs it through CloudKit.
 
 This is david00769's maintained fork of Steve Flinter's
 [banktivity-swift-mcp](https://github.com/sflinter/banktivity-swift-mcp). It
-has everything upstream has. The fixes and features below are offered upstream
-as [pull requests](https://github.com/sflinter/banktivity-swift-mcp/pulls?q=is%3Apr+is%3Aopen+author%3Adavid00769),
-but upstream has merged nothing since May 2026.
+has everything upstream has. Upstream merged nine of this fork's pull requests
+on 2026-11-03, so much of the fork's earlier work is now in upstream too. The
+fixes and features below are still offered upstream as
+[pull requests](https://github.com/sflinter/banktivity-swift-mcp/pulls?q=is%3Apr+is%3Aopen+author%3Adavid00769)
+and are not in upstream yet.
 
 What the fork adds:
 
@@ -77,9 +79,8 @@ What the fork adds:
 - **Statements:** reconciliation, plus repair commands for statement rows.
 - **Investments:** create security trades and income, and see realised capital
   gains per lot.
-- **Safety and reporting:** a read-only mode, a machine-readable list of which
-  commands write, net worth in one reporting currency, and the market value of
-  holdings.
+- **Safety and reporting:** a machine-readable list of which commands write,
+  net worth in one reporting currency, and the market value of holdings.
 - **New in v0.17.0:**
   - a guard that stops Core Data from rewriting Banktivity's database;
   - `accounts update`;
@@ -559,6 +560,7 @@ trade can move cash that the raw amounts don't show.
 - `create_share_adjustment` — Create a share adjustment (e.g. charges, stock splits, position corrections)
 - `import_security_prices` — Import prices from a CSV file (Yahoo Finance, OHLCV, or Date/Close)
 - `delete_security_prices` — Delete price history for a security (optional date range)
+- `reset_security_price_range` — Forget which price history is known for a security, without deleting any of it
 - `delete_security` — Delete a security record that no trade references
 
 ### Export
@@ -776,7 +778,7 @@ The command groups below are the complete CLI surface. Use a group's
 - `import-rules`: `list`, `get`, `match`, `create`, `update`, `delete`
 - `scheduled`: `list`, `get`, `create`, `update`, `delete`
 - `statements`: `list`, `status`, `get`, `inspect-membership`, `inspect-sync-record`, `replace-internal-row-with-visible-statement`, `restore-internal-row-from-preimage`, `visible-row-correction-plan`, `create`, `update`, `delete`, `reconcile`, `unreconcile`, `unreconciled`
-- `securities`: `list`, `create`, `rename`, `delete`, `prices`, `import-prices`, `delete-prices`, `fix-prices`, `holdings`, `trades`, `realized-gains`, `income`, `create-trade`, `create-income`, `link-income-category`, `adjust`, `update-trade`
+- `securities`: `list`, `create`, `rename`, `delete`, `prices`, `import-prices`, `delete-prices`, `reset-price-range`, `fix-prices`, `holdings`, `trades`, `realized-gains`, `income`, `create-trade`, `create-income`, `link-income-category`, `adjust`, `update-trade`
 - `reconciliation`: `execute-bundle` runs a reviewed JSON plan of repairs, checked against its SHA-256 digest
 - `export`: `turtle`
 - `schema`: dump the Core Data schema
@@ -849,7 +851,7 @@ Banktivity's `.bank8` bundle is a folder holding Banktivity's compiled data mode
 
 1. Loads and merges all `.momd` model bundles from the vault, in filename order
 2. Opens the SQLite store via `NSPersistentContainer` (no history tracking, no migration)
-3. Exposes 79 MCP tools over stdio, or over loopback HTTP when `BANKTIVITY_HTTP_PORT` is set
+3. Exposes 80 MCP tools over stdio, or over loopback HTTP when `BANKTIVITY_HTTP_PORT` is set
 4. Uses KVC (`value(forKey:)`) to access entities since we load Banktivity's own compiled models at runtime
 
 ## FAQ

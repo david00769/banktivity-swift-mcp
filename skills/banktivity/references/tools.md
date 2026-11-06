@@ -1,7 +1,7 @@
 # Banktivity MCP tool reference
 
 These are the MCP server's tools and their input schemas, for an assistant that
-talks to `banktivity-mcp`. The server has 79; `banktivity-cli capabilities`
+talks to `banktivity-mcp`. The server has 80; `banktivity-cli capabilities`
 lists every one. The command line uses different names and hyphenated options
 (`get_transactions --account_id` here is `transactions list --account-id` on the
 CLI); see `SKILL.md` and `banktivity-cli <group> <command> --help`.
@@ -978,6 +978,20 @@ Delete price history for a security, optionally filtered by date range.
     "id": { "type": "number", "description": "Security ID (alternative to symbol)" },
     "start_date": { "type": "string", "description": "Start date in YYYY-MM-DD format (optional)" },
     "end_date": { "type": "string", "description": "End date in YYYY-MM-DD format (optional)" }
+  }
+}
+```
+
+### reset_security_price_range
+Forget which price history is known for a security without deleting any of it.
+Clears the known date range and last import date; every price row stays. The
+response reports the previous values and the surviving row count.
+
+```json
+{
+  "properties": {
+    "symbol": { "type": "string", "description": "Security ticker symbol (e.g. AAPL)" },
+    "id": { "type": "number", "description": "Security ID (alternative to symbol)" }
   }
 }
 ```
