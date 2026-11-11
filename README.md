@@ -893,6 +893,10 @@ muxadil, Richard Jeans, Howy Perrin and Martijn Riemers, on top of Steve
 Flinter's original. [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) lists each
 contribution, where it came from, and how it was taken.
 
+## Support this project
+
+This is a maintained fork that I build and fix in my spare time. If it saves you time, [sponsoring on GitHub](https://github.com/sponsors/david00769) helps pay for ongoing work. Bug reports and pull requests are just as welcome. Commercial use of the PolyForm-licensed parts needs a commercial licence; see the License section below.
+
 ## License
 
 Two licenses; [LICENSE](LICENSE) explains which applies where.
