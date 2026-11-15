@@ -84,6 +84,28 @@ struct IncomeCategoryLinkTests {
         #expect(listed.first { $0.id == income.id }?.categoryLinked == true)
     }
 
+    @Test("update-trade --amount on an income row edits pIncome and leaves pAmount at 0")
+    func updateAmountOnIncomeDoesNotDoubleCount() throws {
+        let seeded = try seed()
+        defer { TestVaultHelper.cleanup(seeded.vault) }
+        let securities = SecurityRepository(container: seeded.vault.container)
+        let income = try securities.createSecurityIncome(
+            accountId: seeded.accountId, symbol: "BBCA", amount: 10, date: "2026-06-25",
+            offsetCategoryId: seeded.categoryId)
+        _ = try securities.updateSecurityLineItem(transactionId: income.id, amount: 12)
+
+        let ctx = seeded.vault.container.newBackgroundContext()
+        nonisolated(unsafe) var values: (Double, Double) = (-1, -1)
+        ctx.performAndWait {
+            let rows = (try? ctx.fetch(NSFetchRequest<NSManagedObject>(entityName: "SecurityLineItem"))) ?? []
+            if let sli = rows.first {
+                values = (BaseRepository.doubleValue(sli, "pAmount"), BaseRepository.doubleValue(sli, "pIncome"))
+            }
+        }
+        #expect(values.0 == 0)
+        #expect(values.1 == 12)
+    }
+
     @Test("link-income-category repairs an unlinked row, and a dry run writes nothing")
     func linkRepairsAnUnlinkedRow() throws {
         let seeded = try seed()

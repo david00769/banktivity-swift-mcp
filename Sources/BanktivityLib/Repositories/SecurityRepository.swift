@@ -1109,6 +1109,9 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let liUUID: String
             let trade: SecurityTradeDTO
             let cashSync: CashSyncInfo?
+            /// 0 when the amount write went to pAmount; true when it went to pIncome.
+            let amountWentToIncome: Bool
+            let writesCostField: Bool
         }
 
         struct CashSyncInfo: Sendable {
@@ -1180,12 +1183,39 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             } else if clearPrice {
                 sli.setValue(nil, forKey: "pPricePerShare")
             }
+            // What kind of row this is decides which field money lands on. A buy
+            // or sell counts pAmount (the cash); an income row counts pIncome and
+            // keeps pAmount at 0 (see createSecurityIncome), so writing pAmount
+            // there would count the money twice.
+            let baseType = (Self.relatedObject(tx, "pTransactionType")).map { Int16(exactly: Self.intValue($0, "pBaseType")) ?? 0 } ?? 0
+            let isBuySell = baseType == 100 || baseType == 101
+            let isIncomeRow = Self.incomeBaseTypes.values.contains(baseType)
+            if isBuySell, !basisOnlyTransfer, let amount {
+                // --amount alone would move pAmount away from the cash line, so
+                // the balance and the cash line disagree. Only a matching
+                // --cash-line-amount makes it consistent.
+                guard let cash = cashLineItemAmount else {
+                    throw ToolError.invalidInput(
+                        "--amount on a buy/sell would desynchronise the balance from the cash line; pass --cash-line-amount instead (it sets both)")
+                }
+                guard abs(cash - amount) < 0.005 else {
+                    throw ToolError.invalidInput(
+                        "--amount (\(amount)) and --cash-line-amount (\(cash)) disagree; on a buy/sell they are the same number")
+                }
+            }
+            var amountToIncome = false
             if let amount = amount {
-                sli.setValue(amount as NSNumber, forKey: "pAmount")
+                if isIncomeRow {
+                    sli.setValue(amount as NSNumber, forKey: "pIncome")
+                    amountToIncome = true
+                } else {
+                    sli.setValue(amount as NSNumber, forKey: "pAmount")
+                }
             }
             // The cash change wins: Banktivity counts pAmount, not the cash
-            // line's pTransactionAmount, so the new cash lands on pAmount too.
-            if let cashLineItemAmount = cashLineItemAmount {
+            // line's pTransactionAmount, so the new cash lands on pAmount too
+            // (never on an income row, whose pAmount stays 0).
+            if let cashLineItemAmount = cashLineItemAmount, !isIncomeRow {
                 sli.setValue(cashLineItemAmount as NSNumber, forKey: "pAmount")
             }
             if let commission = commission {
@@ -1264,7 +1294,8 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let txUUID = Self.stringValue(tx, "pUniqueID")
             let liUUID = Self.stringValue(li, "pUniqueID")
 
-            return UpdateResult(txUUID: txUUID, liUUID: liUUID, trade: trade, cashSync: cashSync)
+            return UpdateResult(txUUID: txUUID, liUUID: liUUID, trade: trade, cashSync: cashSync,
+                                amountWentToIncome: amountToIncome, writesCostField: !isIncomeRow)
         }
 
         if let cashSync = result.cashSync {
@@ -1278,7 +1309,11 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let sharesStr = shares.map { updater.formatDecimalPublic($0) }
             let ppsStr = pricePerShare.map { updater.formatDecimalPublic($0) }
             let clearPriceInBlob = clearPrice
-            let amountStr = (cashLineItemAmount ?? amount).map { updater.formatDecimalPublic($0) }
+            let costValue = (cashLineItemAmount ?? amount)
+            let amountStr = costValue.map { updater.formatDecimalPublic($0) }
+            let incomeStr = amount.map { updater.formatDecimalPublic($0) }
+            let amountWentToIncome = result.amountWentToIncome
+            let writesCostField = result.writesCostField
             let commissionStr = commission.map { updater.formatDecimalPublic($0) }
             let secRef = newSecurityUUID.map { "Security:\($0)" }
             let cashSync = result.cashSync
@@ -1297,9 +1332,13 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                     patched = SyncBlobUpdater.clearSecurityLineItemFieldStatic(
                         xml: patched, lineItemUUID: liUUID, fieldName: "pricePerShare", fieldType: "decimal")
                 }
-                if let v = amountStr {
+                if let v = amountStr, writesCostField {
                     patched = SyncBlobUpdater.patchSecurityLineItemFieldStatic(
                         xml: patched, lineItemUUID: liUUID, fieldName: "cost", fieldType: "decimal", value: v)
+                }
+                if let v = incomeStr, amountWentToIncome {
+                    patched = SyncBlobUpdater.patchSecurityLineItemFieldStatic(
+                        xml: patched, lineItemUUID: liUUID, fieldName: "income", fieldType: "decimal", value: v)
                 }
                 if let v = commissionStr {
                     patched = SyncBlobUpdater.patchSecurityLineItemFieldStatic(

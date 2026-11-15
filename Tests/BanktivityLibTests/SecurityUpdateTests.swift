@@ -84,12 +84,10 @@ struct SecurityUpdateTests {
         let result = try repo.updateSecurityLineItem(
             transactionId: txPK,
             pricePerShare: 12.34,
-            amount: 56.78,
             commission: 0.0
         )
 
         #expect(abs(result.pricePerShare - 12.34) < 0.000001)
-        #expect(abs(result.amount - 56.78) < 0.000001)
         #expect(result.commission == 0.0)
 
         ctx.refreshAllObjects()
@@ -229,12 +227,10 @@ struct SecurityUpdateTests {
         let result = try repo.updateSecurityLineItem(
             transactionId: txPK,
             pricePerShare: 12.34,
-            amount: 56.78,
             commission: 0.0
         )
 
         #expect(abs(result.pricePerShare - 12.34) < 0.000001)
-        #expect(abs(result.amount - 56.78) < 0.000001)
         #expect(result.commission == 0.0)
 
         ctx.refreshAllObjects()

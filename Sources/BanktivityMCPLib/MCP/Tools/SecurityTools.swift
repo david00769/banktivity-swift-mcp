@@ -254,7 +254,7 @@ func registerSecurityTools(
                 "shares": ToolHelpers.property(type: "number", description: "Number of shares"),
                 "price_per_share": ToolHelpers.property(type: "number", description: "Price per share. Must be positive"),
                 "clear_price": ToolHelpers.property(type: "boolean", description: "Clear the stored price to nil (cannot be combined with price_per_share)"),
-                "amount": ToolHelpers.property(type: "number", description: "Security line amount, which Banktivity counts as the trade cash in balances. Prefer cash_line_amount; if both are given, cash_line_amount wins."),
+                "amount": ToolHelpers.property(type: "number", description: "Security line amount. On a buy/sell it must be given together with an equal cash_line_amount (alone it would desynchronise the balance and is refused); on an income row it sets the income; on other types it sets the security line amount."),
                 "commission": ToolHelpers.property(type: "number", description: "Commission or fee amount"),
                 "symbol": ToolHelpers.property(type: "string", description: "Security ticker symbol"),
                 "security_id": ToolHelpers.property(type: "number", description: "Security ID (alternative to symbol)"),

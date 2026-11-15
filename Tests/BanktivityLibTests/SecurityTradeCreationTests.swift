@@ -558,6 +558,33 @@ struct SecurityTradeCreationTests {
         #expect(abs(try accounts.getBalance(accountId: accountPK) - (600 - 1005)) < 0.000001)
     }
 
+    @Test("update-trade --amount alone on a buy is refused and cannot desynchronise the balance; with the cash it moves both")
+    func amountAloneOnTradeIsRefused() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        _ = try TestVaultHelper.seedTransactionTypes(in: vault.container)
+        let account = try TestVaultHelper.seedInvestmentAccount(in: vault.container, currency: eur)
+        _ = try TestVaultHelper.seedSecurity(in: vault.container, symbol: "OGVXX", currency: eur)
+        let repo = SecurityRepository(container: vault.container)
+        let accounts = AccountRepository(container: vault.container)
+        let accountPK = BaseRepository.extractPK(from: account.objectID)
+        let buy = try repo.createSecurityTrade(
+            accountId: accountPK, symbol: "OGVXX", shares: 100, pricePerShare: 10,
+            amount: 1000, commission: 0, cashLineItemAmount: -1000, date: "2026-05-01")
+
+        #expect(throws: ToolError.self) {
+            try repo.updateSecurityLineItem(transactionId: buy.id, amount: -900)
+        }
+        #expect(throws: ToolError.self) {
+            try repo.updateSecurityLineItem(transactionId: buy.id, amount: -900, cashLineItemAmount: -800)
+        }
+        #expect(abs(try accounts.getBalance(accountId: accountPK) + 1000) < 0.000001)
+
+        _ = try repo.updateSecurityLineItem(transactionId: buy.id, amount: -900, cashLineItemAmount: -900)
+        #expect(abs(try accounts.getBalance(accountId: accountPK) + 900) < 0.000001)
+    }
+
     // MARK: - Zero-price guard (upstream c96dea6) and its sanctioned exceptions
 
     private func zeroPriceFixture() throws -> (TestVaultHelper.TestVault, SecurityRepository, Int) {

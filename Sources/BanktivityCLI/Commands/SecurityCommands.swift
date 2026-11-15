@@ -781,7 +781,7 @@ struct Securities: AsyncParsableCommand {
         @Flag(name: .long, help: "Clear the stored price to nil (cannot be combined with --price-per-share)")
         var clearPrice: Bool = false
 
-        @Option(name: .long, parsing: .unconditional, help: "Security line amount, which Banktivity counts as the trade cash in balances. Prefer --cash-line-amount; if both are given, --cash-line-amount wins")
+        @Option(name: .long, parsing: .unconditional, help: "Security line amount. On a buy/sell it must be given together with an equal --cash-line-amount (alone it would desynchronise the balance and is refused); on an income row it sets the income; on other types it sets the security line amount")
         var amount: Double?
 
         @Option(name: .long, parsing: .unconditional, help: "Commission or fee amount")
