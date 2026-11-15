@@ -120,7 +120,7 @@ func registerStatementTools(
         registry.register(
             name: "create_statement",
             access: .write,
-            description: "Create a new statement for an account with beginning/ending balance validation. Requires a fresh backup and post-write Banktivity UI verification.",
+            description: "Create a new statement for an account with beginning/ending balance validation.",
             inputSchema: ToolHelpers.schema(
                 properties: [
                     "account_id": ToolHelpers.property(type: "number", description: "The account ID"),
@@ -131,16 +131,13 @@ func registerStatementTools(
                     "ending_balance": ToolHelpers.property(type: "number", description: "Ending balance"),
                     "name": ToolHelpers.property(type: "string", description: "Optional statement name"),
                     "note": ToolHelpers.property(type: "string", description: "Optional note"),
-                    "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Must be true after creating a fresh whole-vault backup"),
-                    "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Must be true to acknowledge post-write Banktivity UI inspection is required"),
+                    "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
+                    "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
                 ],
-                required: ["start_date", "end_date", "beginning_balance", "ending_balance", "backup_confirmed", "post_ui_verification_required"]
+                required: ["start_date", "end_date", "beginning_balance", "ending_balance"]
             )
         ) { arguments in
             if let msg = await writeGuard.guardWriteAccess() {
-                return ToolHelpers.errorResponse(msg)
-            }
-            if let msg = statementWriteSafetyError(arguments: arguments) {
                 return ToolHelpers.errorResponse(msg)
             }
 
@@ -180,22 +177,19 @@ func registerStatementTools(
         registry.register(
             name: "update_statement",
             access: .write,
-            description: "Update a visible statement row's ending balance after an operator-entered UI correction plan. Unnamed investment statement rows require operator_confirmed_visible=true after UI matching; requires backup plus post-write Banktivity UI verification.",
+            description: "Update a visible statement row's ending balance after an operator-entered UI correction plan.",
             inputSchema: ToolHelpers.schema(
                 properties: [
                     "statement_id": ToolHelpers.property(type: "number", description: "The visible statement ID to update"),
                     "ending_balance": ToolHelpers.property(type: "number", description: "Corrected ending balance"),
-                    "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Must be true after creating a fresh whole-vault backup"),
-                    "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Must be true to acknowledge post-write Banktivity UI inspection is required"),
-                    "operator_confirmed_visible": ToolHelpers.property(type: "boolean", description: "Set true only after matching an unnamed investment statement row to the intended visible Banktivity Statements UI row"),
+                    "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
+                    "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
+                    "operator_confirmed_visible": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; unnamed statements are ordinary app-created rows and need no confirmation"),
                 ],
-                required: ["statement_id", "ending_balance", "backup_confirmed", "post_ui_verification_required"]
+                required: ["statement_id", "ending_balance"]
             )
         ) { arguments in
             if let msg = await writeGuard.guardWriteAccess() {
-                return ToolHelpers.errorResponse(msg)
-            }
-            if let msg = statementWriteSafetyError(arguments: arguments) {
                 return ToolHelpers.errorResponse(msg)
             }
             guard let statementId = ToolHelpers.getInt(arguments, key: "statement_id") else {
@@ -219,21 +213,18 @@ func registerStatementTools(
         registry.register(
             name: "delete_statement",
             access: .write,
-            description: "Delete a visible statement and remove statement links from its line items while preserving their cleared state. Rejects internal investment statement rows unless allow_internal=true is supplied from a diagnostic repair plan; requires backup plus post-write Banktivity UI verification.",
+            description: "Delete a visible statement and remove statement links from its line items while preserving their cleared state. Rejects internal investment statement rows unless allow_internal=true is supplied from a diagnostic repair plan.",
             inputSchema: ToolHelpers.schema(
                 properties: [
                     "statement_id": ToolHelpers.property(type: "number", description: "The statement ID to delete"),
-                    "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Must be true after creating a fresh whole-vault backup"),
-                    "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Must be true to acknowledge post-write Banktivity UI inspection is required"),
+                    "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
+                    "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
                     "allow_internal": ToolHelpers.property(type: "boolean", description: "Deliberately allow deleting an internal investment statement row after a diagnostic repair plan"),
                 ],
-                required: ["statement_id", "backup_confirmed", "post_ui_verification_required"]
+                required: ["statement_id"]
             )
         ) { arguments in
             if let msg = await writeGuard.guardWriteAccess() {
-                return ToolHelpers.errorResponse(msg)
-            }
-            if let msg = statementWriteSafetyError(arguments: arguments) {
                 return ToolHelpers.errorResponse(msg)
             }
             guard let statementId = ToolHelpers.getInt(arguments, key: "statement_id") else {
@@ -256,23 +247,20 @@ func registerStatementTools(
         registry.register(
             name: "reconcile_line_items",
             access: .write,
-            description: "Assign explicitly selected line items to a visible statement (sets pCleared=true). Unnamed investment statement rows require operator_confirmed_visible=true after UI matching; validates account ownership and no double-assignment, and requires backup plus post-write Banktivity UI verification.",
+            description: "Assign explicitly selected line items to a visible statement (sets pCleared=true). validates account ownership and no double-assignment.",
             inputSchema: ToolHelpers.schema(
                 properties: [
                     "statement_id": ToolHelpers.property(type: "number", description: "The statement ID"),
                     "line_item_ids": ToolHelpers.property(type: "array", description: "Array of line item IDs to reconcile"),
                     "allow_out_of_range": ToolHelpers.property(type: "boolean", description: "Allow line items dated outside the statement period, e.g. card charges posted on a later statement (default false)"),
-                    "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Must be true after creating a fresh whole-vault backup"),
-                    "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Must be true to acknowledge post-write Banktivity UI inspection is required"),
-                    "operator_confirmed_visible": ToolHelpers.property(type: "boolean", description: "Set true only after matching an unnamed investment statement row to the intended visible Banktivity Statements UI row"),
+                    "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
+                    "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
+                    "operator_confirmed_visible": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; unnamed statements are ordinary app-created rows and need no confirmation"),
                 ],
-                required: ["statement_id", "line_item_ids", "backup_confirmed", "post_ui_verification_required"]
+                required: ["statement_id", "line_item_ids"]
             )
         ) { arguments in
             if let msg = await writeGuard.guardWriteAccess() {
-                return ToolHelpers.errorResponse(msg)
-            }
-            if let msg = statementWriteSafetyError(arguments: arguments) {
                 return ToolHelpers.errorResponse(msg)
             }
             guard let statementId = ToolHelpers.getInt(arguments, key: "statement_id") else {
@@ -302,22 +290,19 @@ func registerStatementTools(
         registry.register(
             name: "unreconcile_line_items",
             access: .write,
-            description: "Remove line items from a visible statement while preserving their cleared state. Unnamed investment statement rows require operator_confirmed_visible=true after UI matching and require backup plus post-write Banktivity UI verification.",
+            description: "Remove line items from a visible statement while preserving their cleared state.",
             inputSchema: ToolHelpers.schema(
                 properties: [
                     "statement_id": ToolHelpers.property(type: "number", description: "The statement ID"),
                     "line_item_ids": ToolHelpers.property(type: "array", description: "Array of line item IDs to unreconcile"),
-                    "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Must be true after creating a fresh whole-vault backup"),
-                    "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Must be true to acknowledge post-write Banktivity UI inspection is required"),
-                    "operator_confirmed_visible": ToolHelpers.property(type: "boolean", description: "Set true only after matching an unnamed investment statement row to the intended visible Banktivity Statements UI row"),
+                    "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
+                    "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
+                    "operator_confirmed_visible": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; unnamed statements are ordinary app-created rows and need no confirmation"),
                 ],
-                required: ["statement_id", "line_item_ids", "backup_confirmed", "post_ui_verification_required"]
+                required: ["statement_id", "line_item_ids"]
             )
         ) { arguments in
             if let msg = await writeGuard.guardWriteAccess() {
-                return ToolHelpers.errorResponse(msg)
-            }
-            if let msg = statementWriteSafetyError(arguments: arguments) {
                 return ToolHelpers.errorResponse(msg)
             }
             guard let statementId = ToolHelpers.getInt(arguments, key: "statement_id") else {
@@ -366,14 +351,4 @@ func registerStatementTools(
         )
         return try ToolHelpers.jsonResponse(results)
     }
-}
-
-private func statementWriteSafetyError(arguments: [String: Value]?) -> String? {
-    guard ToolHelpers.getBool(arguments, key: "backup_confirmed") else {
-        return "Statement writes require backup_confirmed=true after creating a fresh whole-vault backup."
-    }
-    guard ToolHelpers.getBool(arguments, key: "post_ui_verification_required") else {
-        return "Statement writes require post_ui_verification_required=true because Banktivity Statements UI inspection is the post-write authority."
-    }
-    return nil
 }

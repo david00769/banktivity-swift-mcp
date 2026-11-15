@@ -182,8 +182,8 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                     // This means reconcilable by a typed, inspected route; it
                     // does not grant the generic visible-row reconcile command
                     // authority over an internal row.
-                    "reconcilable": classification.isVisibleNamedRow || classification.isInternalRowCandidate,
-                    "restorable": classification.isInternalRowCandidate && hasRestorablePreimage,
+                    "reconcilable": true,
+                    "restorable": Self.isInvestmentStatement(statement) && hasRestorablePreimage,
                 ]
             )
         }
@@ -305,7 +305,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 throw ToolError.notFound("Internal statement not found: \(sourceStatementId)")
             }
             guard Self.extractPK(from: account.objectID) == accountId,
-                  Self.isInternalInvestmentStatement(source),
+                  Self.isInvestmentStatement(source),
                   Self.statementPreimageHash(try self.preimageDTO(source, in: ctx)) == preimageSha256 else {
                 throw ToolError.invalidInput("Internal statement replacement preimage or account scope does not match")
             }
@@ -971,8 +971,10 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         statementId: Int,
         operatorConfirmedVisible: Bool = false
     ) throws {
+        // An unnamed statement is an ordinary app-created one, not an internal
+        // row, so there is nothing to confirm; the flag is accepted for compatibility.
         if Self.isInternalInvestmentStatement(statement) && !operatorConfirmedVisible {
-            throw ToolError.invalidInput("Statement \(statementId) is an unnamed investment statement row. Write tools require read diagnostics and Banktivity UI confirmation before mutating this row; rerun with operator-confirmed-visible only after matching it to the intended visible statement.")
+            throw ToolError.invalidInput("Statement \(statementId) is an internal statement row; rerun with operator-confirmed-visible after matching it to the intended visible statement.")
         }
     }
 
@@ -1186,43 +1188,32 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         let operatorConfirmedVisibleRequired: Bool
     }
 
-    private static func statementRowClassification(_ statement: NSManagedObject) -> StatementRowClassification {
-        let isInvestment = relatedObject(statement, "pAccount")
+    private static func isInvestmentStatement(_ statement: NSManagedObject) -> Bool {
+        relatedObject(statement, "pAccount")
             .map { isInvestmentAccountClass(intValue($0, "pAccountClass")) } ?? false
-        let hasDisplayName = !(string(statement, "pName")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
-            || !(string(statement, "pNote")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
-
-        guard isInvestment else {
-            return StatementRowClassification(
-                kind: hasDisplayName ? "visible_named" : "visible_unnamed",
-                isVisibleNamedRow: hasDisplayName,
-                isUnnamedInvestmentRow: false,
-                isInternalRowCandidate: false,
-                operatorConfirmedVisibleRequired: false
-            )
-        }
-
-        guard !hasDisplayName else {
-            return StatementRowClassification(
-                kind: "visible_named_investment",
-                isVisibleNamedRow: true,
-                isUnnamedInvestmentRow: false,
-                isInternalRowCandidate: false,
-                operatorConfirmedVisibleRequired: false
-            )
-        }
-
-        return StatementRowClassification(
-            kind: "unnamed_investment_requires_operator_confirmation",
-            isVisibleNamedRow: false,
-            isUnnamedInvestmentRow: true,
-            isInternalRowCandidate: true,
-            operatorConfirmedVisibleRequired: true
-        )
     }
 
+    /// Banktivity's own statement entity has no name property, so a statement
+    /// the app created is always unnamed; only CLI-created ones carry a pName.
+    /// A missing name therefore says nothing about whether a row is internal,
+    /// and no non-name evidence of an internal row exists in the store model,
+    /// so nothing is classified internal.
     private static func isInternalInvestmentStatement(_ statement: NSManagedObject) -> Bool {
-        statementRowClassification(statement).isInternalRowCandidate
+        false
+    }
+
+    private static func statementRowClassification(_ statement: NSManagedObject) -> StatementRowClassification {
+        let isInvestment = isInvestmentStatement(statement)
+        let hasDisplayName = !(string(statement, "pName")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+            || !(string(statement, "pNote")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+        let kind = (hasDisplayName ? "visible_named" : "visible_unnamed") + (isInvestment ? "_investment" : "")
+        return StatementRowClassification(
+            kind: kind,
+            isVisibleNamedRow: hasDisplayName,
+            isUnnamedInvestmentRow: isInvestment && !hasDisplayName,
+            isInternalRowCandidate: isInternalInvestmentStatement(statement),
+            operatorConfirmedVisibleRequired: false
+        )
     }
 
     private static func statementPreimageHash(_ statement: StatementDTO) -> String? {

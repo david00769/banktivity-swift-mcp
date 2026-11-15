@@ -333,7 +333,7 @@ struct StatementRepositoryTests {
             beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
             afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
         )
-        #expect(restored.isInternalRowCandidate)
+        #expect(!restored.isInternalRowCandidate)
         #expect(restored.uniqueId == preimage.uniqueId)
         let replacementTombstone = try #require(
             TestVaultHelper.syncRecordSnapshot(uuid: replacementUUID, in: repos.vault.container)
@@ -1228,8 +1228,8 @@ struct StatementRepositoryTests {
         #expect(plan.warnings.contains { $0.contains("did not discover or verify UI state") })
     }
 
-    @Test("Unnamed investment statement rows are diagnostics unless operator confirms visible UI match")
-    func unnamedInvestmentStatementRowsRequireVisibleConfirmation() throws {
+    @Test("An app-style unnamed investment statement is visible, needs no confirmation, and reconciles")
+    func unnamedInvestmentStatementIsVisibleAndNeedsNoConfirmation() throws {
         let repos = try makeRepositories()
         defer { TestVaultHelper.cleanup(repos.vault) }
 
@@ -1240,7 +1240,8 @@ struct StatementRepositoryTests {
             lineItems: [(accountId: investment.id, amount: 10.0, memo: nil)]
         )
         let lineItemId = try accountLineItemId(in: transaction, accountId: investment.id)
-        let internalStatement = try repos.statements.create(
+        // Banktivity's own statements have no name, so an unnamed row is what the app makes.
+        let statement = try repos.statements.create(
             accountId: investment.id,
             startDate: "2026-04-01",
             endDate: "2026-04-30",
@@ -1248,79 +1249,46 @@ struct StatementRepositoryTests {
             endingBalance: 10
         )
 
-        #expect(try repos.statements.list(accountId: investment.id).isEmpty)
-        let diagnosticRow = try #require(try repos.statements.list(
-            accountId: investment.id,
-            includeInternal: true
-        ).first { $0.id == internalStatement.id })
-        #expect(diagnosticRow.rowKind == "unnamed_investment_requires_operator_confirmation")
-        #expect(diagnosticRow.isUnnamedInvestmentRow)
-        #expect(diagnosticRow.isInternalRowCandidate)
-        #expect(diagnosticRow.operatorConfirmedVisibleRequired)
+        let listed = try #require(try repos.statements.list(accountId: investment.id).first { $0.id == statement.id })
+        #expect(listed.rowKind == "visible_unnamed_investment")
+        #expect(!listed.isInternalRowCandidate)
+        #expect(!listed.operatorConfirmedVisibleRequired)
 
-        let readback = try #require(try repos.statements.get(statementId: internalStatement.id))
-        #expect(readback.rowKind == "unnamed_investment_requires_operator_confirmation")
-        #expect(readback.isUnnamedInvestmentRow)
-        #expect(readback.isInternalRowCandidate)
-
-        #expect(throws: (any Error).self) {
-            try repos.statements.reconcileLineItems(
-                statementId: internalStatement.id,
-                lineItemIds: [lineItemId]
-            )
-        }
+        let readback = try #require(try repos.statements.get(statementId: statement.id))
+        #expect(readback.rowKind == "visible_unnamed_investment")
+        #expect(!readback.isInternalRowCandidate)
+        #expect(!readback.operatorConfirmedVisibleRequired)
 
         let reconciled = try repos.statements.reconcileLineItems(
-            statementId: internalStatement.id,
-            lineItemIds: [lineItemId],
-            operatorConfirmedVisible: true
+            statementId: statement.id,
+            lineItemIds: [lineItemId]
         )
         #expect(reconciled.reconciledLineItemCount == 1)
 
         let membershipInspection = try repos.statements.inspectMembership(lineItemId: lineItemId)
-        #expect(membershipInspection.referencedStatementId == internalStatement.id)
-        #expect(membershipInspection.visibilityClassification == "unnamed_investment_requires_operator_confirmation")
+        #expect(membershipInspection.referencedStatementId == statement.id)
+        #expect(membershipInspection.visibilityClassification == "visible_unnamed_investment")
         #expect(membershipInspection.capabilityFlags["addressable"] == true)
         #expect(membershipInspection.capabilityFlags["reconcilable"] == true)
-        #expect(membershipInspection.capabilityFlags["restorable"] == true)
         #expect(membershipInspection.positionAnchors["statement_index"] == 0)
         #expect(membershipInspection.preimageSha256 != nil)
 
         let unreconciled = try #require(try repos.statements.unreconcileLineItems(
-            statementId: internalStatement.id,
-            lineItemIds: [lineItemId],
-            operatorConfirmedVisible: true
+            statementId: statement.id,
+            lineItemIds: [lineItemId]
         ))
         #expect(unreconciled.reconciledLineItemCount == 0)
 
-        #expect(throws: (any Error).self) {
-            try repos.statements.update(statementId: internalStatement.id, endingBalance: 10)
-        }
-
-        let visibleUpdated = try repos.statements.update(
-            statementId: internalStatement.id,
-            endingBalance: 5,
-            operatorConfirmedVisible: true
-        )
-        #expect(visibleUpdated.endingBalance == 5)
-
         let updated = try repos.statements.update(
-            statementId: internalStatement.id,
-            endingBalance: 0,
-            beginningBalance: 0,
-            endDate: "2026-05-01",
-            allowInternal: true
+            statementId: statement.id,
+            endingBalance: 5,
+            endDate: "2026-05-01"
         )
-        #expect(updated.beginningBalance == 0)
-        #expect(updated.endingBalance == 0)
+        #expect(updated.endingBalance == 5)
         #expect(updated.endDate == "2026-05-01")
 
-        #expect(throws: (any Error).self) {
-            try repos.statements.delete(statementId: internalStatement.id)
-        }
-
-        #expect(try repos.statements.delete(statementId: internalStatement.id, allowInternal: true))
-        #expect(try repos.statements.get(statementId: internalStatement.id) == nil)
+        #expect(try repos.statements.delete(statementId: statement.id))
+        #expect(try repos.statements.get(statementId: statement.id) == nil)
         let detachedLineItem = try #require(
             repos.statements.getUnreconciledLineItems(accountId: investment.id).first { $0.id == lineItemId }
         )
@@ -1342,7 +1310,7 @@ struct StatementRepositoryTests {
             endingBalance: 10
         )
         let before = try #require(try repos.statements.get(statementId: statement.id))
-        #expect(before.rowKind == "unnamed_investment_requires_operator_confirmation")
+        #expect(before.rowKind == "visible_unnamed_investment")
 
         let named = try repos.statements.update(
             statementId: statement.id,
@@ -1360,7 +1328,6 @@ struct StatementRepositoryTests {
         #expect(!readback.operatorConfirmedVisibleRequired)
         #expect(try repos.statements.list(accountId: investment.id).contains { $0.id == statement.id })
 
-        // Once named, later updates no longer need the visible attestation.
         let rebalanced = try repos.statements.update(statementId: statement.id, endingBalance: 12)
         #expect(rebalanced.endingBalance == 12)
         #expect(rebalanced.name == "JPMS statement 2026-04-30")
@@ -1391,7 +1358,7 @@ struct StatementRepositoryTests {
         #expect(readback.rowKind == "visible_named_investment")
     }
 
-    @Test("Statement update refuses a blank name, an empty update, and naming an unnamed row without the gate flag")
+    @Test("Statement update refuses a blank name and an empty update, and names an unnamed row without any flag")
     func updateNameGuards() throws {
         let repos = try makeRepositories()
         defer { TestVaultHelper.cleanup(repos.vault) }
@@ -1413,19 +1380,17 @@ struct StatementRepositoryTests {
         #expect(throws: (any Error).self) {
             try repos.statements.update(statementId: statement.id, operatorConfirmedVisible: true)
         }
-        // Naming does not bypass the unnamed-investment gate for the write that names it.
-        #expect(throws: (any Error).self) {
-            try repos.statements.update(statementId: statement.id, name: "JPMS statement 2026-06-30")
-        }
-        #expect(throws: (any Error).self) {
-            try repos.statements.update(
-                statementId: statement.id, endingBalance: 11, name: "JPMS statement 2026-06-30"
-            )
-        }
         let unchanged = try #require(try repos.statements.get(statementId: statement.id))
         #expect((unchanged.name ?? "").isEmpty)
         #expect(unchanged.endingBalance == 10)
-        #expect(unchanged.rowKind == "unnamed_investment_requires_operator_confirmation")
+        #expect(unchanged.rowKind == "visible_unnamed_investment")
+
+        // An unnamed statement is ordinary: naming it needs no confirmation flag.
+        let named = try repos.statements.update(
+            statementId: statement.id, endingBalance: 11, name: "JPMS statement 2026-06-30"
+        )
+        #expect(named.endingBalance == 11)
+        #expect(named.rowKind == "visible_named_investment")
     }
 
     @Test("Internal statement inspection preimage is stable across read contexts")

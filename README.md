@@ -546,7 +546,7 @@ banktivity-cli transactions repair-forex \
 - `get_account_reconciliation_status` — Statement count, unbalanced statements, last statement, and line items on no statement
 - `update_statement` — Change a statement's beginning and/or ending balance
 - `create_statement` — Create a new statement with balance validation
-- `delete_statement` — Delete a statement; its line items keep their cleared state; internal/unnamed investment rows require explicit `allow_internal`
+- `delete_statement` — Delete a statement; its line items keep their cleared state; internal statement rows require explicit `allow_internal`
 - `reconcile_line_items` — Assign line items to a statement
 - `unreconcile_line_items` — Remove line items from a statement (they stay cleared)
 - `get_unreconciled_line_items` — List unreconciled line items for an account

@@ -293,13 +293,13 @@ struct Statements: AsyncParsableCommand {
         @Option(name: .long, help: "Comma-separated line item IDs to reconcile as part of this create contract")
         var lineItemIds: String?
 
-        @Flag(name: .long, help: "Confirm a fresh whole-vault backup exists for this write session")
+        @Flag(name: .long, help: "Accepted for compatibility; not required for ordinary statements")
         var backupConfirmed: Bool = false
 
-        @Flag(name: .long, help: "Confirm Banktivity UI inspection will be performed after this write")
+        @Flag(name: .long, help: "Accepted for compatibility; not required for ordinary statements")
         var postUIVerificationRequired: Bool = false
 
-        @Flag(name: .long, help: "Confirm the unnamed investment statement row was matched to the intended visible Banktivity Statements UI row")
+        @Flag(name: .long, help: "Accepted for compatibility; unnamed statements are ordinary app-created rows and need no confirmation")
         var operatorConfirmedVisible: Bool = false
 
         func run() async throws {
@@ -307,7 +307,6 @@ struct Statements: AsyncParsableCommand {
             let container = try BanktivityCLI.createContainer(vaultPath: path)
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
-            try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
 
             let accountRepo = AccountRepository(container: container)
             let lineItemRepo = LineItemRepository(container: container)
@@ -378,19 +377,19 @@ struct Statements: AsyncParsableCommand {
         @Option(name: .long, help: "Corrected statement end date, YYYY-MM-DD")
         var endDate: String?
 
-        @Option(name: .long, help: "Statement display name (trimmed, non-empty); does not bypass the unnamed-row gate for this write")
+        @Option(name: .long, help: "Statement display name (trimmed, non-empty); ")
         var name: String?
 
-        @Flag(name: .long, help: "Confirm a fresh whole-vault backup exists for this write session")
+        @Flag(name: .long, help: "Accepted for compatibility; not required for ordinary statements")
         var backupConfirmed: Bool = false
 
-        @Flag(name: .long, help: "Confirm Banktivity UI inspection will be performed after this write")
+        @Flag(name: .long, help: "Accepted for compatibility; not required for ordinary statements")
         var postUIVerificationRequired: Bool = false
 
         @Flag(name: .long, help: "Deliberately allow ending-balance update on an internal investment statement row")
         var allowInternal: Bool = false
 
-        @Flag(name: .long, help: "Set only after matching an unnamed investment statement row to the intended visible Banktivity Statements UI row")
+        @Flag(name: .long, help: "Accepted for compatibility; unnamed statements are ordinary app-created rows and need no confirmation")
         var operatorConfirmedVisible: Bool = false
 
         func run() async throws {
@@ -398,7 +397,6 @@ struct Statements: AsyncParsableCommand {
             let container = try BanktivityCLI.createContainer(vaultPath: path)
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
-            try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
 
             let lineItemRepo = LineItemRepository(container: container)
             let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: SyncBlobUpdater(container: container))
@@ -424,13 +422,13 @@ struct Statements: AsyncParsableCommand {
         @Argument(help: "Statement ID")
         var statementId: Int
 
-        @Flag(name: .long, help: "Confirm a fresh whole-vault backup exists for this write session")
+        @Flag(name: .long, help: "Accepted for compatibility; not required for ordinary statements")
         var backupConfirmed: Bool = false
 
-        @Flag(name: .long, help: "Confirm Banktivity UI inspection will be performed after this write")
+        @Flag(name: .long, help: "Accepted for compatibility; not required for ordinary statements")
         var postUIVerificationRequired: Bool = false
 
-        @Flag(name: .long, help: "Confirm the unnamed investment statement row was matched to the intended visible Banktivity Statements UI row")
+        @Flag(name: .long, help: "Accepted for compatibility; unnamed statements are ordinary app-created rows and need no confirmation")
         var operatorConfirmedVisible: Bool = false
 
         @Flag(name: .long, help: "Deliberately allow deleting an internal investment statement row after a diagnostic repair plan")
@@ -441,7 +439,6 @@ struct Statements: AsyncParsableCommand {
             let container = try BanktivityCLI.createContainer(vaultPath: path)
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
-            try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
 
             let lineItemRepo = LineItemRepository(container: container)
             let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: SyncBlobUpdater(container: container))
@@ -469,13 +466,13 @@ struct Statements: AsyncParsableCommand {
         @Flag(name: .long, help: "Preview advisory reconciliation result without writing")
         var dryRun: Bool = false
 
-        @Flag(name: .long, help: "Confirm a fresh whole-vault backup exists for this write session")
+        @Flag(name: .long, help: "Accepted for compatibility; not required for ordinary statements")
         var backupConfirmed: Bool = false
 
-        @Flag(name: .long, help: "Confirm Banktivity UI inspection will be performed after this write")
+        @Flag(name: .long, help: "Accepted for compatibility; not required for ordinary statements")
         var postUIVerificationRequired: Bool = false
 
-        @Flag(name: .long, help: "Confirm the unnamed investment statement row was matched to the intended visible Banktivity Statements UI row")
+        @Flag(name: .long, help: "Accepted for compatibility; unnamed statements are ordinary app-created rows and need no confirmation")
         var operatorConfirmedVisible: Bool = false
 
         @Flag(name: .long, help: "Allow line items dated outside the statement period (e.g. card charges posted late)")
@@ -505,7 +502,6 @@ struct Statements: AsyncParsableCommand {
 
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
-            try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
 
             let result = try statements.reconcileLineItems(
                 statementId: statementId,
@@ -528,13 +524,13 @@ struct Statements: AsyncParsableCommand {
         @Option(name: .long, help: "Comma-separated line item IDs")
         var lineItemIds: String
 
-        @Flag(name: .long, help: "Confirm a fresh whole-vault backup exists for this write session")
+        @Flag(name: .long, help: "Accepted for compatibility; not required for ordinary statements")
         var backupConfirmed: Bool = false
 
-        @Flag(name: .long, help: "Confirm Banktivity UI inspection will be performed after this write")
+        @Flag(name: .long, help: "Accepted for compatibility; not required for ordinary statements")
         var postUIVerificationRequired: Bool = false
 
-        @Flag(name: .long, help: "Confirm the unnamed investment statement row was matched to the intended visible Banktivity Statements UI row")
+        @Flag(name: .long, help: "Accepted for compatibility; unnamed statements are ordinary app-created rows and need no confirmation")
         var operatorConfirmedVisible: Bool = false
 
         func run() async throws {
@@ -542,7 +538,6 @@ struct Statements: AsyncParsableCommand {
             let container = try BanktivityCLI.createContainer(vaultPath: path)
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
-            try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
 
             let lineItemRepo = LineItemRepository(container: container)
             let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: SyncBlobUpdater(container: container))
