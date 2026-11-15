@@ -138,7 +138,8 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
                 reportingCurrency: self.reportingCurrency,
                 converted: conversion.converted,
                 currencyBreakdown: conversion.breakdown,
-                warnings: conversion.warnings
+                warnings: conversion.warnings,
+                excludedAccounts: conversion.excluded
             )
         }
     }

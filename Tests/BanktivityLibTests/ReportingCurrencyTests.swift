@@ -194,4 +194,48 @@ struct NetWorthReportingCurrencyTests {
         #expect(summary.netWorth.netWorth == netWorth.netWorth)
         #expect(summary.netWorth.converted?.netWorth == converted.netWorth)
     }
+
+    @Test("getNetWorth lists an account with no rate as excluded and incomplete; adding the rate completes it")
+    func netWorthReportsExcludedAccounts() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+        let (usd, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+
+        let accounts = AccountRepository(container: vault.container, reportingCurrency: "USD")
+        _ = try accounts.create(name: "US Checking", accountClass: AccountClass.checking, currencyCode: "USD")
+        let euAccount = try accounts.create(name: "EU Savings", accountClass: AccountClass.savings, currencyCode: "EUR")
+        let usdID = usd.objectID, eurID = eur.objectID, euPK = euAccount.id
+        let base = BaseRepository(container: vault.container)
+        try base.performWrite { ctx in
+            guard let account = try base.fetchByPK(entityName: "Account", pk: euPK, in: ctx) else {
+                throw ToolError.notFound("Account not found: \(euPK)")
+            }
+            let line = NSEntityDescription.insertNewObject(forEntityName: "LineItem", into: ctx)
+            line.setValue(NSDecimalNumber(value: 500.0), forKey: "pTransactionAmount")
+            line.setValue(NSDecimalNumber.one, forKey: "pExchangeRate")
+            line.setValue(UUID().uuidString, forKey: "pUniqueID")
+            line.setValue(false, forKey: "pCleared")
+            BaseRepository.setNow(line, "pCreationTime")
+            line.setValue(account, forKey: "pAccount")
+        }
+
+        let before = try accounts.getNetWorth()
+        #expect(before.complete == false)
+        #expect(before.excludedAccounts.map(\.name) == ["EU Savings"])
+
+        try base.performWrite { ctx in
+            let usd = try ctx.existingObject(with: usdID)
+            let eur = try ctx.existingObject(with: eurID)
+            let rate = NSEntityDescription.insertNewObject(forEntityName: "ExchangeRate", into: ctx)
+            rate.setValue(eur.value(forKey: "pUniqueID"), forKey: "pSourceCurrencyID")
+            rate.setValue(usd.value(forKey: "pUniqueID"), forKey: "pDestinationCurrencyID")
+            rate.setValue(NSDecimalNumber(string: "1.1"), forKey: "pExchangeRate")
+            rate.setValue(Date(), forKey: "pEffectiveDate")
+            rate.setValue(Date(), forKey: "pCreationTime")
+            rate.setValue(Date(), forKey: "pModificationDate")
+        }
+        let after = try accounts.getNetWorth()
+        #expect(after.complete == true)
+        #expect(after.excludedAccounts.isEmpty)
+    }
 }
