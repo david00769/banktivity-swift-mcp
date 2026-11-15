@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.18.3 (2026-11-16): in sync with upstream 660cbc3
+
+### Upstream v0.18.0 (7165a8b)
+- Upstream's own v0.18.0 release is this fork's v0.18.0 content (the fork's numbering is independent); nothing further to take from it.
+
+### Upstream cleanup (eedc143, 660cbc3)
+- **Removed dead and obsolete code:** the sync-blob patching machinery made obsolete by sync by modification date (`SyncBlobUpdater` keeps only new-record creation, delete tombstones and `inspectSyncRecord`), explicit running-balance recalculation now done by the save hook, and unused helpers (`BaseRepository.context`/`save()`, `ZEntityType`, `getAccountTypeName`). `StatementRepository` and `TagRepository` no longer take a `SyncBlobUpdater`; the fork's statement and security code no longer patches blobs on edits.
+- **README rewritten upstream:** the fork keeps its CLI-first README and takes the facts: Banktivity 10.2.2 verified, CLI exit codes, and the rules read from Banktivity's frameworks (sync, amounts, running balances, share prices).
+
 ## v0.18.2 (2026-11-16)
 
 - Release metadata only: server.json's MCP Bundle file name now matches the version, so the release workflow publishes (v0.18.1's tag failed that check and published nothing). Same code as v0.18.1.
