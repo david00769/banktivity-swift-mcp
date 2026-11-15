@@ -261,6 +261,7 @@ func registerStatementTools(
                 properties: [
                     "statement_id": ToolHelpers.property(type: "number", description: "The statement ID"),
                     "line_item_ids": ToolHelpers.property(type: "array", description: "Array of line item IDs to reconcile"),
+                    "allow_out_of_range": ToolHelpers.property(type: "boolean", description: "Allow line items dated outside the statement period, e.g. card charges posted on a later statement (default false)"),
                     "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Must be true after creating a fresh whole-vault backup"),
                     "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Must be true to acknowledge post-write Banktivity UI inspection is required"),
                     "operator_confirmed_visible": ToolHelpers.property(type: "boolean", description: "Set true only after matching an unnamed investment statement row to the intended visible Banktivity Statements UI row"),
@@ -289,6 +290,7 @@ func registerStatementTools(
             let result = try statements.reconcileLineItems(
                 statementId: statementId,
                 lineItemIds: lineItemIds,
+                allowOutOfRange: ToolHelpers.getBool(arguments, key: "allow_out_of_range"),
                 operatorConfirmedVisible: ToolHelpers.getBool(arguments, key: "operator_confirmed_visible")
             )
             return try ToolHelpers.jsonResponse(result)

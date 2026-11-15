@@ -3,7 +3,6 @@
 import CoreData
 import Foundation
 
-/// One row of Banktivity's ExchangeRate table: 1 `source` = `rate` `destination`.
 public struct ExchangeRateRecord: Sendable, Equatable {
     public let source: String
     public let destination: String
@@ -21,7 +20,6 @@ public struct ExchangeRateRecord: Sendable, Equatable {
 public struct ExchangeRateLookupResult: Sendable, Equatable {
     public let rate: Decimal
     public let effectiveDate: Date?
-    /// 0 for the same currency, 1 for a direct or reverse rate, 2 through USD.
     public let hops: Int
     public let path: [String]
 
@@ -33,11 +31,6 @@ public struct ExchangeRateLookupResult: Sendable, Equatable {
     }
 }
 
-/// Reads Banktivity's stored exchange rates and resolves a conversion rate.
-///
-/// Ported from upstream #20. Resolution order: same currency (rate 1), the
-/// latest direct rate, the inverse of the latest reverse rate, then a
-/// two-step route through USD. A zero rate is never used.
 public final class ExchangeRateRepository: BaseRepository, @unchecked Sendable {
     private static let pivotCurrency = "USD"
 
@@ -50,6 +43,13 @@ public final class ExchangeRateRepository: BaseRepository, @unchecked Sendable {
         Self.resolve(from: from, to: to, rates: try allRates())
     }
 
+    static func fetchRates(in ctx: NSManagedObjectContext) throws -> [ExchangeRateRecord] {
+        let request = NSFetchRequest<NSManagedObject>(entityName: "ExchangeRate")
+        let objects = try ctx.fetch(request)
+        let currencyCodesById = try currencyCodesByUniqueId(in: ctx)
+        return objects.compactMap { mapExchangeRate($0, currencyCodesById: currencyCodesById) }
+    }
+
     public static func resolve(
         from rawFrom: String,
         to rawTo: String,
@@ -58,15 +58,18 @@ public final class ExchangeRateRepository: BaseRepository, @unchecked Sendable {
         let from = rawFrom.uppercased()
         let to = rawTo.uppercased()
         guard from != to else {
-            return ExchangeRateLookupResult(rate: 1, effectiveDate: nil, hops: 0, path: [to])
+            return ExchangeRateLookupResult(rate: Decimal(1), effectiveDate: nil, hops: 0, path: [to])
         }
-        if let oneHop = oneHopRate(from: from, to: to, rates: rates) {
-            return oneHop
+
+        if let directOrReverse = oneHopRate(from: from, to: to, rates: rates) {
+            return directOrReverse
         }
+
         guard from != pivotCurrency, to != pivotCurrency,
               let first = oneHopRate(from: from, to: pivotCurrency, rates: rates),
               let second = oneHopRate(from: pivotCurrency, to: to, rates: rates)
         else { return nil }
+
         return ExchangeRateLookupResult(
             rate: first.rate * second.rate,
             effectiveDate: oldest(first.effectiveDate, second.effectiveDate),
@@ -75,60 +78,38 @@ public final class ExchangeRateRepository: BaseRepository, @unchecked Sendable {
         )
     }
 
-    static func fetchRates(in ctx: NSManagedObjectContext) throws -> [ExchangeRateRecord] {
-        let codesById = try currencyCodesByUniqueId(in: ctx)
-        func code(_ id: String) -> String? {
-            codesById[id] ?? (Locale.commonISOCurrencyCodes.contains(id.uppercased()) ? id.uppercased() : nil)
-        }
-        let request = NSFetchRequest<NSManagedObject>(entityName: "ExchangeRate")
-        return try ctx.fetch(request).compactMap { row in
-            guard let sourceId = row.value(forKey: "pSourceCurrencyID") as? String,
-                  let destinationId = row.value(forKey: "pDestinationCurrencyID") as? String,
-                  let source = code(sourceId),
-                  let destination = code(destinationId)
-            else { return nil }
-            return ExchangeRateRecord(
-                source: source,
-                destination: destination,
-                rate: decimalValue(row, "pExchangeRate"),
-                effectiveDate: row.value(forKey: "pEffectiveDate") as? Date
-            )
-        }
-    }
-
-    static func currencyCodesByUniqueId(in ctx: NSManagedObjectContext) throws -> [String: String] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "Currency")
-        var result: [String: String] = [:]
-        for currency in try ctx.fetch(request) {
-            guard let uniqueId = currency.value(forKey: "pUniqueID") as? String,
-                  let code = currency.value(forKey: "pCode") as? String
-            else { continue }
-            result[uniqueId] = code.uppercased()
-        }
-        return result
-    }
-
-    private static func oneHopRate(from: String, to: String, rates: [ExchangeRateRecord]) -> ExchangeRateLookupResult? {
+    private static func oneHopRate(
+        from: String,
+        to: String,
+        rates: [ExchangeRateRecord]
+    ) -> ExchangeRateLookupResult? {
         if let direct = latestRate(source: from, destination: to, rates: rates) {
             return ExchangeRateLookupResult(rate: direct.rate, effectiveDate: direct.effectiveDate, hops: 1, path: [from, to])
         }
-        if let reverse = latestRate(source: to, destination: from, rates: rates) {
-            return ExchangeRateLookupResult(rate: 1 / reverse.rate, effectiveDate: reverse.effectiveDate, hops: 1, path: [from, to])
+
+        if let reverse = latestRate(source: to, destination: from, rates: rates), reverse.rate != Decimal(0) {
+            return ExchangeRateLookupResult(rate: Decimal(1) / reverse.rate, effectiveDate: reverse.effectiveDate, hops: 1, path: [from, to])
         }
+
         return nil
     }
 
-    private static func latestRate(source: String, destination: String, rates: [ExchangeRateRecord]) -> ExchangeRateRecord? {
+    private static func latestRate(
+        source: String,
+        destination: String,
+        rates: [ExchangeRateRecord]
+    ) -> ExchangeRateRecord? {
         rates
-            .filter { $0.source == source && $0.destination == destination && $0.rate != 0 }
-            .max { lhs, rhs in
-                // A dated rate beats an undated one; otherwise the later date wins.
+            .filter { $0.source == source && $0.destination == destination && $0.rate != Decimal(0) }
+            .sorted { lhs, rhs in
                 switch (lhs.effectiveDate, rhs.effectiveDate) {
-                case let (l?, r?): return l < r
-                case (nil, _?): return true
-                default: return false
+                case let (l?, r?): return l > r
+                case (_?, nil): return true
+                case (nil, _?): return false
+                case (nil, nil): return false
                 }
             }
+            .first
     }
 
     private static func oldest(_ lhs: Date?, _ rhs: Date?) -> Date? {
@@ -137,6 +118,51 @@ public final class ExchangeRateRepository: BaseRepository, @unchecked Sendable {
         case let (l?, nil): return l
         case let (nil, r?): return r
         case (nil, nil): return nil
+        }
+    }
+
+    private static func mapExchangeRate(
+        _ object: NSManagedObject,
+        currencyCodesById: [String: String]
+    ) -> ExchangeRateRecord? {
+        guard let sourceId = object.value(forKey: "pSourceCurrencyID") as? String,
+              let destinationId = object.value(forKey: "pDestinationCurrencyID") as? String,
+              let source = currencyCodesById[sourceId] ?? (Locale.commonISOCurrencyCodes.contains(sourceId) ? sourceId : nil),
+              let destination = currencyCodesById[destinationId] ?? (Locale.commonISOCurrencyCodes.contains(destinationId) ? destinationId : nil),
+              let rate = decimalValue(object.value(forKey: "pExchangeRate"))
+        else { return nil }
+
+        return ExchangeRateRecord(
+            source: source,
+            destination: destination,
+            rate: rate,
+            effectiveDate: object.value(forKey: "pEffectiveDate") as? Date
+        )
+    }
+
+    static func currencyCodesByUniqueId(in ctx: NSManagedObjectContext) throws -> [String: String] {
+        let request = NSFetchRequest<NSManagedObject>(entityName: "Currency")
+        let currencies = try ctx.fetch(request)
+        return Dictionary(uniqueKeysWithValues: currencies.compactMap { currency in
+            guard let uniqueId = currency.value(forKey: "pUniqueID") as? String,
+                  let code = currency.value(forKey: "pCode") as? String
+            else { return nil }
+            return (uniqueId, code.uppercased())
+        })
+    }
+
+    private static func decimalValue(_ value: Any?) -> Decimal? {
+        switch value {
+        case let decimal as Decimal:
+            return decimal
+        case let number as NSDecimalNumber:
+            return number.decimalValue
+        case let number as NSNumber:
+            return number.decimalValue
+        case let string as String:
+            return Decimal(string: string)
+        default:
+            return nil
         }
     }
 }

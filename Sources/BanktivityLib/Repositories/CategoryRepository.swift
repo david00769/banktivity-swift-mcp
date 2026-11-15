@@ -156,24 +156,32 @@ public final class CategoryRepository: BaseRepository, @unchecked Sendable {
         hidden: Bool = false,
         currencyCode: String? = nil
     ) throws -> CategoryDTO {
-        try performWriteReturning { [self] ctx in
-            let accountClass = try Self.categoryClass(for: type)
-
-            // Categories are concrete Category entities. Creating them as
-            // PrimaryAccount corrupts Banktivity's category tree in the UI.
+        let newUUID = Self.generateUUID()
+        try performWrite { [self] ctx in
+            // Categories are Category entities (Z_ENT=2). PrimaryAccount (Z_ENT=3) is a
+            // sibling subentity used for real accounts — creating a category as one makes
+            // Banktivity fault it as an account, and the Yodlee importer's category lookup
+            // then sends a Category-only selector to it: unrecognized selector -> SIGABRT
+            // on every bank sync.
             let cat = Self.createObject(entityName: "Category", in: ctx)
+            let accountClass = try Self.categoryClass(for: type)
             cat.setValue(accountClass, forKey: "pAccountClass")
             cat.setValue(name, forKey: "pName")
             cat.setValue(true, forKey: "pDebit")
             cat.setValue(hidden, forKey: "pHidden")
             cat.setValue(false, forKey: "pTaxable")
-            cat.setValue(Self.generateUUID(), forKey: "pUniqueID")
+            cat.setValue(newUUID, forKey: "pUniqueID")
             Self.setNow(cat, "pCreationTime")
             Self.setNow(cat, "pModificationDate")
 
             // Set parent and full name
             var fullName = name
             if let parentId = parentId {
+                // A parent that does not resolve used to be dropped silently, which
+                // created a top-level category under a name the caller believed was
+                // nested. Refuse instead, and refuse a parent that is not itself a
+                // category -- nesting a category under a real account is the same
+                // entity confusion this PR exists to fix.
                 guard let parent = try fetchByPK(entityName: "Category", pk: parentId, in: ctx) else {
                     throw ToolError.invalidInput("Parent category not found: \(parentId)")
                 }
@@ -187,28 +195,74 @@ public final class CategoryRepository: BaseRepository, @unchecked Sendable {
             }
             cat.setValue(fullName, forKey: "pFullName")
 
-            if let code = currencyCode, cat.entity.relationshipsByName["currency"] != nil {
+            // Set currency. The "currency" relationship exists on PrimaryAccount, not on
+            // Category (see BaseRepository.currencyCode), so this is a no-op for categories
+            // — guard on the relationship rather than assume, so setValue can never raise
+            // NSUnknownKeyException if the entity shape changes.
+            if cat.entity.relationshipsByName["currency"] != nil {
                 let currRequest = NSFetchRequest<NSManagedObject>(entityName: "Currency")
-                currRequest.predicate = NSPredicate(format: "pCode ==[cd] %@", code)
+                if let code = currencyCode {
+                    currRequest.predicate = NSPredicate(format: "pCode ==[cd] %@", code)
+                }
                 currRequest.fetchLimit = 1
                 if let currency = try ctx.fetch(currRequest).first {
                     cat.setValue(currency, forKey: "currency")
                 }
             }
-
-            try ctx.obtainPermanentIDs(for: [cat])
-            return self.mapToDTO(cat)
         }
+
+        // Re-fetch the row just inserted, by its unique ID. Looking it up by name returned an
+        // older category of the same name instead.
+        let created: CategoryDTO? = try performRead { [self] ctx in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Account")
+            request.predicate = NSPredicate(format: "pUniqueID == %@", newUUID)
+            request.fetchLimit = 1
+            return try ctx.fetch(request).first.map { self.mapToDTO($0) }
+        }
+        guard let result = created else {
+            throw ToolError.notFound("Failed to retrieve created category")
+        }
+        return result
     }
 
     // MARK: - DTO Mapping
 
-    private static func categoryClass(for type: String) throws -> Int {
-        switch type {
-        case "income": return AccountClass.income
-        case "expense": return AccountClass.expense
-        default: throw ToolError.invalidInput("type must be 'income' or 'expense'")
+    /// Delete an unused category and mark its sync record deleted so the removal reaches CloudKit.
+    /// Refuses a category that still has line items or child categories, and refuses anything that
+    /// is not an income/expense category. Also removes malformed categories that an earlier
+    /// version created as PrimaryAccount entities (see #26 / #37).
+    @discardableResult
+    public func delete(categoryId: Int, syncBlobUpdater: SyncBlobUpdater? = nil) throws -> CategoryDTO {
+        struct Deleted: Sendable { let dto: CategoryDTO; let uuid: String }
+        let deleted: Deleted = try performWriteReturning { [self] ctx in
+            guard let cat = try fetchByPK(entityName: "Account", pk: categoryId, in: ctx) else {
+                throw ToolError.notFound("Category not found: \(categoryId)")
+            }
+            let cls = Self.intValue(cat, "pAccountClass")
+            guard cls == AccountClass.income || cls == AccountClass.expense else {
+                throw ToolError.invalidInput("Account \(categoryId) is not an income/expense category")
+            }
+            let lines = NSFetchRequest<NSManagedObject>(entityName: "LineItem")
+            lines.predicate = NSPredicate(format: "pAccount == %@", cat)
+            let lineCount = try ctx.count(for: lines)
+            guard lineCount == 0 else {
+                throw ToolError.invalidInput("Category \(categoryId) still has \(lineCount) line items; move them first")
+            }
+            let children = NSFetchRequest<NSManagedObject>(entityName: "Account")
+            children.predicate = NSPredicate(format: "pParentAccount == %@", cat)
+            let childCount = try ctx.count(for: children)
+            guard childCount == 0 else {
+                throw ToolError.invalidInput("Category \(categoryId) has \(childCount) subcategories; delete or move them first")
+            }
+            let dto = mapToDTO(cat)
+            let uuid = Self.stringValue(cat, "pUniqueID")
+            ctx.delete(cat)
+            return Deleted(dto: dto, uuid: uuid)
         }
+        if let updater = syncBlobUpdater, !deleted.uuid.isEmpty {
+            updater.deleteSyncRecord(entityUUID: deleted.uuid)
+        }
+        return deleted.dto
     }
 
     public func mapToDTO(_ object: NSManagedObject) -> CategoryDTO {
@@ -231,5 +285,13 @@ public final class CategoryRepository: BaseRepository, @unchecked Sendable {
             uniqueId: Self.stringValue(object, "pUniqueID"),
             currency: Self.currencyCode(object)
         )
+    }
+
+    private static func categoryClass(for type: String) throws -> Int {
+        switch type {
+        case "income": return AccountClass.income
+        case "expense": return AccountClass.expense
+        default: throw ToolError.invalidInput("type must be 'income' or 'expense'")
+        }
     }
 }

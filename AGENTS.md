@@ -54,6 +54,10 @@ place. `mv` is a `rename(2)`: atomic, allocates a new inode, and leaves already-
 servers on the old one. If you ever hit this state, `codesign -fs - <path>` clears it by
 rewriting the file.
 
+**Code signing.** `make install` signs with the self-signed "Banktivity MCP Code Signing" certificate in the login keychain (when present; otherwise ad-hoc) and fixed identifiers (`com.flinter.banktivity-cli` / `-mcp`). The vault lives in Banktivity's Group Container, so both binaries need Full Disk Access. That grant is keyed to identifier + certificate, so it survives rebuilds; with an ad-hoc signature it is lost on every rebuild. Recreate the certificate with `openssl req -x509 ... -addext "extendedKeyUsage=critical,codeSigning"` and `security import ... -T /usr/bin/codesign`. The "not trusted" status doesn't matter.
+
+If the build fails with `module compiled with Swift 6.x cannot be imported by the Swift 6.y compiler` (e.g. for `ArgumentParserToolInfo`), the `.build` cache was produced by a different Swift toolchain. Fix with `rm -rf .build && swift build`.
+
 ## Testing
 
 Tests use Swift Testing framework (`import Testing`). The Command Line Tools don't ship Testing or XCTest, so tests must run with the Xcode toolchain:
@@ -110,7 +114,7 @@ Property names are prefixed with `p` (e.g., `pName`, `pDate`, `pAccountClass`, `
 
 ### Repository Pattern
 
-`BaseRepository` provides KVC helpers (`stringValue()`, `intValue()`, `doubleValue()`, `relatedObject()`, `relatedSet()`), fetch-by-PK with entity inheritance traversal, and write operations via background contexts (`performWrite()`, `performWriteReturning()`). Domain repositories inherit from it.
+`BaseRepository` provides KVC helpers (`stringValue()`, `intValue()`, `doubleValue()`, `relatedObject()`, `relatedSet()`), fetch-by-PK with entity inheritance traversal, reads via a fresh background context per call (`performRead()`, so a read never sees stale view-context objects after a write), and write operations via background contexts (`performWrite()`, `performWriteReturning()`). Domain repositories inherit from it.
 
 ### Account types
 
@@ -118,7 +122,7 @@ Property names are prefixed with `p` (e.g., `pName`, `pDate`, `pAccountClass`, `
 
 ### Entity Hierarchy
 
-`Account` (Z_ENT=1) is the base entity. `Category` (Z_ENT=2) and `PrimaryAccount` (Z_ENT=3) are sibling subentities. `pAccountClass` lives on the base: 6000=income, 7000=expense. All income/expense categories are `Category` entities.
+`Account` (Z_ENT=1) is the base entity. `Category` (Z_ENT=2) and `PrimaryAccount` (Z_ENT=3) are sibling subentities. `pAccountClass` lives on the base: 6000=income, 7000=expense. All income/expense categories must be `Category` entities. A category stored as `PrimaryAccount` can freeze Banktivity reports or crash bank sync. `categories audit-entities` lists any such rows, and `categories delete` removes an unused one.
 
 ## Critical Constraints
 
@@ -132,7 +136,13 @@ Property names are prefixed with `p` (e.g., `pName`, `pDate`, `pAccountClass`, `
 
 **Security prices must set `pClosePrice`.** Some price records (from older imports or Banktivity itself) have `pClosePrice=0` with the actual value only in `pAdjustedClosePrice`. The sync blob embeds only `closePrice`, so the mobile app shows 0. Security price history does **not** sync via CloudKit — only the `latestSecurityPrice` embedded in the Security entity's sync record propagates. Use `securities fix-prices` to repair broken records; it marks each affected Security modified (as do `import-prices` and `delete-prices`). Whether Banktivity's upload then carries the corrected `latestSecurityPrice` is **unverified**.
 
-**WriteGuard before mutations.** All write tools check `WriteGuard.guardWriteAccess()` first. If Banktivity.app has the SQLite file open (detected via `lsof`), writes are blocked to prevent corruption.
+**Line amounts: use `BaseRepository.accountAmount`.** It is Banktivity's own rule (`-[IGGCAccountingLineItem accountAmount]` in IGGAccounting): for an investment transaction (base type 100-310) with a security line, the amount is the security line's `pAmount` (0 for share moves 210-212) + `pIncome`, counted only for a cash distribution type, and `pTransactionAmount` is ignored. Every other line is amount x exchange rate. Balances and statement totals both use it. Investment balances are cash only, with holdings market value reported beside them as `holdingsValue`. Don't read `pRunningBalance` for balances: it's a per-device cache (not in sync records) that the desktop app shows as an account's cash, and rows the CLI writes leave it stale. `accounts recalc-balances` recomputes it (Banktivity orders by transaction date, then creation time or row order within a day). Every repository save also does this automatically for the real accounts it touched, from the earliest changed date (`BaseRepository.accountsNeedingRunningBalance`); don't add separate recalculation calls.
+
+**Never write a trade with pricePerShare 0.** A device that receives a transaction writes its security line's pricePerShare into that security's price history for the trade date, with no zero check, so a 0 makes every other device value the holding at 0. Write a real price, or leave it nil. `SecurityRepository.validatedPricePerShare` enforces this, and `securities audit-prices` finds existing ones.
+
+**Statements have no name in Banktivity.** The app's statement class has no name property and the sync blob carries only account, dates and balances. `pName` is set only by this CLI, so an unnamed statement is normal, not internal.
+
+**WriteGuard before mutations.** All write tools check `WriteGuard.guardWriteAccess()` first. Each tool declares its access level (read, additive, or the destructive default), and that is published to MCP clients as tool annotations (`readOnlyHint` / `destructiveHint`). If Banktivity.app has the SQLite file open (detected via `lsof`), writes are blocked to prevent corruption.
 
 **Agent write safety.** AI assistants can issue parallel tool calls or start
 multiple MCP servers. Keep one MCP/CLI process per vault, serialize writes in
@@ -160,6 +170,8 @@ The write model:
 Evidence on inserts: CLI creates did reach the cloud under the old model (a CLI-created cash leg appeared on the iPhone; every CLI create survived the 2026-09-30 server re-serve that reverted updates). That the modification date alone uploads an insert follows from the measured predicate but has not yet been observed end to end.
 
 **LineItems have no separate sync records.** A Statement `SyncedHostedEntity` can exist, but historical vaults can legitimately omit an individual Statement record; typed statement replacement must never synthesize one. When an individual Statement record is present, its deleted/restore state is a strict part of the atomic forward/inverse contract: the inspection preimage records its `pSyncedModificationDate` (`syncedModificationTimestamp`) and restore puts back exactly that value. Replace/restore refuses a record already pending deletion.
+
+**Upstream blob patching also exists (upstream sync, 2026-11-16).** `SyncBlobUpdater` is restored and upstream's call sites patch `pRemoteEntityData`, nulling `pSyncedModificationDate` on normal records (state-0 records in a live vault have it NULL; only state-3 tombstones carry a date). What actually triggers an upload of a modified record is unverified; the fork's measurement above says the modification date. Keep both: always set `pModificationDate` on the entity you change, and do not drop either mechanism until a controlled round trip settles it.
 
 `SyncRecords` is the only code that touches `SyncedHostedEntity`: static helpers that run inside the caller's context and never save on their own (`markDeletedIfPresent`, `requireNotPendingDelete`, `syncedModificationDate`, `restoreDeletedStatementRecordIfPresent`), plus the read-only `inspect` behind `transactions sync-info` and `statements inspect-sync-record`. Repositories take no sync dependency.
 

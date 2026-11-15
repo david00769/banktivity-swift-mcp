@@ -342,6 +342,30 @@ struct TransactionRepositoryTests {
         #expect(created.transactionType == "Transfer")
     }
 
+    @Test("Create infers Charge and Payment for a credit card when the vault holds those types")
+    func createInfersChargeAndPaymentWhenTypesExist() throws {
+        let repos = try makeRepositoriesWithCashTypes()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+        try seedTransactionType(in: repos.vault.container, baseType: 5, name: "Charge")
+        try seedTransactionType(in: repos.vault.container, baseType: 7, name: "Payment")
+
+        let checking = try repos.accounts.create(name: "Checking", accountClass: AccountClass.checking, currencyCode: "USD")
+        let card = try repos.accounts.create(name: "Visa", accountClass: AccountClass.creditCard, currencyCode: "USD")
+        let expense = try repos.categories.create(name: "Shopping", type: "expense", currencyCode: "USD")
+
+        let purchase = try repos.transactions.create(
+            date: "2026-09-01", title: "Store",
+            lineItems: [(accountId: card.id, amount: -75.0, memo: nil), (accountId: expense.id, amount: 75.0, memo: nil)]
+        )
+        #expect(purchase.transactionType == "Charge")
+
+        let payment = try repos.transactions.create(
+            date: "2026-09-02", title: "Card payment",
+            lineItems: [(accountId: checking.id, amount: -200.0, memo: nil), (accountId: card.id, amount: 200.0, memo: nil)]
+        )
+        #expect(payment.transactionType == "Payment")
+    }
+
     @Test("Create infers Transfer for a bank transfer with a fee split")
     func createInfersTransferWithFeeSplit() throws {
         let repos = try makeRepositoriesWithCashTypes()

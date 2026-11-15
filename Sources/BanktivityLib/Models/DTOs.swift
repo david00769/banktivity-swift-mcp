@@ -31,6 +31,15 @@ public struct AccountDTO: Codable, Sendable {
 public struct TransactionDTO: Codable, Sendable {
     public let id: Int
     public let date: String
+    /// The instant `date` is stored at, when asked for. Absent otherwise.
+    ///
+    /// `date` is a calendar label rendered in the reader's zone, so two machines
+    /// can render the same row differently and neither can see why. This is the
+    /// stored UTC timestamp: an anchored row reads exactly `T10:00:00Z`, and
+    /// anything else is a row written before the anchor or by something that
+    /// bypassed it. One read shows that; comparing renderings across timezones is
+    /// how it had to be done before.
+    public let dateInstant: String?
     public let title: String
     public let note: String?
     public let cleared: Bool
@@ -38,8 +47,9 @@ public struct TransactionDTO: Codable, Sendable {
     public let transactionType: String?
     public let lineItems: [LineItemDTO]
 
-    public init(id: Int, date: String, title: String, note: String?, cleared: Bool, voided: Bool, transactionType: String?, lineItems: [LineItemDTO]) {
-        self.id = id; self.date = date; self.title = title; self.note = note
+    public init(id: Int, date: String, dateInstant: String? = nil, title: String, note: String?, cleared: Bool, voided: Bool, transactionType: String?, lineItems: [LineItemDTO]) {
+        self.id = id; self.date = date; self.dateInstant = dateInstant
+        self.title = title; self.note = note
         self.cleared = cleared; self.voided = voided; self.transactionType = transactionType
         self.lineItems = lineItems
     }
@@ -502,6 +512,63 @@ public struct StatementDTO: Codable, Sendable {
     }
 }
 
+public struct ZeroPriceTradeDTO: Codable, Sendable {
+    public let transactionId: Int
+    public let date: String
+    public let title: String
+    public let symbol: String
+    public let accountId: Int
+    public let shares: Double
+    public let latestQuoteDate: String?
+    /// Held security, trade on or after its latest price: other devices value it at 0.
+    public let zeroesHolding: Bool
+}
+
+public struct RunningBalanceRecalcDTO: Codable, Sendable {
+    public let accountId: Int
+    public let accountName: String
+    public let lineItemCount: Int
+    public let changedCount: Int
+    public let previousBalance: Double
+    public let balance: Double
+    public let wasStale: Bool
+}
+
+/// Where an account's reconciliation stands.
+public struct AccountReconciliationStatusDTO: Codable, Sendable {
+    public let accountId: Int
+    public let accountName: String
+    public let statementCount: Int
+    public let unbalancedStatementIds: [Int]
+    public let lastStatementId: Int?
+    public let lastStatementEndDate: String?
+    public let lastStatementEndingBalance: Double?
+    public let unreconciledLineItemCount: Int
+    public let unreconciledSinceLastStatement: Int
+    // Fork's original fields, kept so both vocabularies are served.
+    public let hasReconciledStatements: Bool
+    public let lastReconciledStatementEndDate: String?
+
+    /// Fork's original shape: the unnamed fields default to empty/zero.
+    public init(accountId: Int, hasReconciledStatements: Bool, statementCount: Int, lastStatementId: Int?, lastReconciledStatementEndDate: String?) {
+        self.accountId = accountId; self.accountName = ""; self.statementCount = statementCount
+        self.unbalancedStatementIds = []; self.lastStatementId = lastStatementId
+        self.lastStatementEndDate = lastReconciledStatementEndDate; self.lastStatementEndingBalance = nil
+        self.unreconciledLineItemCount = 0; self.unreconciledSinceLastStatement = 0
+        self.hasReconciledStatements = hasReconciledStatements
+        self.lastReconciledStatementEndDate = lastReconciledStatementEndDate
+    }
+
+    public init(accountId: Int, accountName: String, statementCount: Int, unbalancedStatementIds: [Int], lastStatementId: Int?, lastStatementEndDate: String?, lastStatementEndingBalance: Double?, unreconciledLineItemCount: Int, unreconciledSinceLastStatement: Int) {
+        self.accountId = accountId; self.accountName = accountName; self.statementCount = statementCount
+        self.unbalancedStatementIds = unbalancedStatementIds; self.lastStatementId = lastStatementId
+        self.lastStatementEndDate = lastStatementEndDate; self.lastStatementEndingBalance = lastStatementEndingBalance
+        self.unreconciledLineItemCount = unreconciledLineItemCount; self.unreconciledSinceLastStatement = unreconciledSinceLastStatement
+        self.hasReconciledStatements = statementCount > 0
+        self.lastReconciledStatementEndDate = lastStatementEndDate
+    }
+}
+
 /// Read-only proof that a line item's statement reference can be addressed by
 /// the runtime and, for an internal row, recreated by the typed restore path.
 /// This deliberately contains no write authority.
@@ -547,22 +614,6 @@ public struct StatementLineItemMembershipPreimageDTO: Codable, Sendable {
 
     public init(lineItemId: Int, statementId: Int, cleared: Bool) {
         self.lineItemId = lineItemId; self.statementId = statementId; self.cleared = cleared
-    }
-}
-
-public struct AccountReconciliationStatusDTO: Codable, Sendable {
-    public let accountId: Int
-    public let hasReconciledStatements: Bool
-    public let statementCount: Int
-    public let lastStatementId: Int?
-    public let lastReconciledStatementEndDate: String?
-
-    public init(accountId: Int, hasReconciledStatements: Bool, statementCount: Int, lastStatementId: Int?, lastReconciledStatementEndDate: String?) {
-        self.accountId = accountId
-        self.hasReconciledStatements = hasReconciledStatements
-        self.statementCount = statementCount
-        self.lastStatementId = lastStatementId
-        self.lastReconciledStatementEndDate = lastReconciledStatementEndDate
     }
 }
 

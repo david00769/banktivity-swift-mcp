@@ -86,13 +86,14 @@ flags each needs. Neither needs a vault.
 | Task | Command | Notes |
 |---|---|---|
 | Statements for an account | `statements list --account-name "Checking"` | |
-| How far reconciliation has got | `statements status --account-name "Checking"` | Statement count and latest end date; read-only |
-| One statement | `statements get 42` | With reconciliation progress |
+| How far reconciliation has got | `statements status --account-name "Checking"` | Statement count, unbalanced statements, latest end date and line items on no statement; read-only |
+| One statement | `statements get 42` | With reconciliation progress and its line items |
 | Unreconciled line items | `statements unreconciled --account-id N --start-date 2026-01-01 --end-date 2026-01-31` | |
+| Fix a statement's balances | `statements update 42 --beginning-balance ... --ending-balance ...` | In place; prefer this to delete and recreate |
 | Create a statement | `statements create --account-id N --start-date ... --end-date ... --beginning-balance ... --ending-balance ...` | Checks the balance carries on from the previous statement |
-| Add line items to a statement | `statements reconcile --statement-id 42 --line-item-ids 1,2,3` | Refuses lines from another account or already on a statement; `--dry-run` first |
+| Add line items to a statement | `statements reconcile --statement-id 42 --line-item-ids 1,2,3` | Refuses lines from another account or already on a statement; `--dry-run` first; `--allow-out-of-range` for card charges posted after the period |
 | Remove line items | `statements unreconcile --statement-id 42 --line-item-ids 1,2,3` | |
-| Delete a statement | `statements delete 42` | Un-reconciles its lines |
+| Delete a statement | `statements delete 42` | Removes its lines from it; they stay cleared |
 
 Check `statements status` before planning new statements. Statement dates are
 whole local days. Pick the candidate line items yourself before calling
@@ -113,11 +114,12 @@ unless the user asks for something different.
 | Rename a security | `securities rename --symbol OLD --new-symbol NEW --new-name "New name"` | Refuses a ticker another security already has |
 | Record a buy or sell | `securities create-trade ...` | Positive shares buy, negative sell; see `--help` for the cash-line options |
 | Record a dividend | `securities create-income --account-id N --amount 12.34 --date 2026-03-31 ...` | See `--help` for the security and offset category |
-| Change a trade | `securities update-trade 1234 --shares 10 --price-per-share 101.5` | Also `--amount`, `--commission`, `--symbol` |
+| Change a trade | `securities update-trade 1234 --shares 10 --price-per-share 101.5` | Also `--amount`, `--commission`, `--symbol`; `--basis-only-transfer` for a zero-cash transfer-in |
 | Share adjustment | `securities adjust --symbol SYM --account-id N --shares=-10 --date 2026-03-31` | Splits, charges, corrections |
 | Import prices | `securities import-prices --symbol AAPL --file prices.csv` | Yahoo Finance, OHLCV or Date/Close CSV |
 | Delete prices | `securities delete-prices --symbol AAPL --start-date ... --end-date ...` | Date range optional |
 | Forget the known price range | `securities reset-price-range --symbol AAPL` | Keeps every price row |
+| Find zero-price trades | `securities audit-prices --at-risk-only` | Trades priced at 0; those that zero a held security make other devices value it at 0 |
 | Delete a security | `securities delete --symbol SYM --dry-run` | Refuses while trades use it; a real delete also needs `--operator-reviewed-target --post-ui-verification-required` |
 
 ### Changing things
@@ -132,6 +134,8 @@ unless the user asks for something different.
 | Tag many | `tags bulk-tag --transaction-ids 1,2,3 --tag-name "Vacation" --action add` | |
 | Create a tag | `tags create --name "Vacation"` | |
 | Create a category | `categories create --name "Tolls" --type expense --parent-path "Motor"` | |
+| Find miscategorised categories | `categories audit-entities` | Income/expense rows stored as the wrong entity; should be empty |
+| Delete a category | `categories delete 123` | Refuses if any line item uses it |
 | Rename, retype or hide an account | `accounts update --account-name "Old" --name "New"` | `--type savings`, `--hidden` / `--no-hidden`. A new type must stay on the same side of the investment line; categories are refused |
 
 ### Repairing a cross-currency transfer

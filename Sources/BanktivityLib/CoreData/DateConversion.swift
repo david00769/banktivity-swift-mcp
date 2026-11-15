@@ -146,6 +146,19 @@ public enum DateConversion {
     /// Use with a strict `<`. Returns midnight of the following day, added through
     /// the calendar so a DST-shortened or -lengthened day stays correct -- which
     /// adding 86,400 seconds would not.
+    /// Convert a date-only `YYYY-MM-DD` label to the instant it is **stored** at.
+    ///
+    /// The anchor is the whole point of this file, and until now it was an
+    /// argument every write path had to remember to pass. One that forgot would
+    /// compile, pass its tests on the machine that wrote them, and store a row at
+    /// host-local midnight -- the exact defect this is here to prevent, and one
+    /// that is invisible until somebody reads the vault from another timezone.
+    /// Reads and query boundaries keep the host zone and so keep calling
+    /// `fromISO` directly; this is for writes.
+    public static func fromDateOnly(_ dateOnly: String) -> Double? {
+        fromISO(dateOnly, timeZone: dateOnlyTimeZone)
+    }
+
     public static func endOfDayExclusive(
         _ dateOnly: String,
         timeZone: TimeZone = .current
@@ -157,6 +170,33 @@ public enum DateConversion {
             byAdding: .day, value: 1, to: Date(timeIntervalSinceReferenceDate: startOfDay)
         ) else { return nil }
         return next.timeIntervalSinceReferenceDate
+    }
+
+    /// Render a date-only label as the sync-blob timestamp for the same instant
+    /// the Core Data write uses.
+    ///
+    /// The blob and Core Data must describe the same moment. When they disagreed,
+    /// a row could be written correctly and then described as UTC midnight in the
+    /// blob, letting a sync round-trip move the date.
+    ///
+    /// This runs the *same* conversion the Core Data write runs and formats the
+    /// result, rather than deriving an hour arithmetically -- so the two cannot
+    /// drift apart, and the result stays correct if `dateOnlyTimeZone` is ever
+    /// changed to a positive or half-hour offset.
+    /// Returns nil when `dateOnly` cannot be parsed.
+    ///
+    /// It used to return the input unchanged, which put an unparseable string into
+    /// the blob's `date` field and called that success. A caller cannot tell that
+    /// from a timestamp, so the failure travelled to the sync record instead of
+    /// stopping at the parse.
+    public static func syncBlobTimestamp(dateOnly: String) -> String? {
+        guard let ts = fromISO(dateOnly, timeZone: dateOnlyTimeZone) else { return nil }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZZZ"
+        return formatter.string(from: Date(timeIntervalSinceReferenceDate: ts))
     }
 
     /// Convert a Date to Core Data timestamp

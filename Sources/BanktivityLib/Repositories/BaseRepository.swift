@@ -6,9 +6,11 @@ import Foundation
 /// Base repository providing Core Data context access and common helpers
 open class BaseRepository: @unchecked Sendable {
     public let container: NSPersistentContainer
+    public let reportingCurrency: String
 
-    public init(container: NSPersistentContainer) {
+    public init(container: NSPersistentContainer, reportingCurrency: String = ReportingCurrency.defaultCode) {
         self.container = container
+        self.reportingCurrency = ReportingCurrency.resolve(reportingCurrency)
     }
 
     /// Get the view context for read operations
@@ -36,11 +38,15 @@ open class BaseRepository: @unchecked Sendable {
         }
     }
 
-    /// Perform a read on the view context's thread, returning a Sendable value.
+    /// Perform a read on a fresh background context, returning a Sendable value.
     /// Use this for all reads to avoid Core Data threading violations when called
     /// from Swift concurrency cooperative threads.
+    ///
+    /// A fresh context reads what is saved in the store. The view context only
+    /// catches up with background saves when the main queue runs its merge, so
+    /// reading through it could return stale objects right after a write.
     public func performRead<T: Sendable>(_ block: @escaping @Sendable (NSManagedObjectContext) throws -> T) throws -> T {
-        try perform(on: context, save: false, block)
+        try perform(on: container.newBackgroundContext(), save: false, block)
     }
 
     /// Save the context
@@ -94,7 +100,17 @@ open class BaseRepository: @unchecked Sendable {
             outcome = Result {
                 let value = try block(ctx)
                 if save && ctx.hasChanges {
+                    // Keep the desktop's cached running balances (its account cash) current.
+                    let stale = Self.accountsNeedingRunningBalance(in: ctx)
                     try ctx.save()
+                    if !stale.isEmpty {
+                        for (id, from) in stale {
+                            if let account = try? ctx.existingObject(with: id), !account.isDeleted {
+                                _ = try Self.recalculateRunningBalances(account: account, force: true, from: from, in: ctx)
+                            }
+                        }
+                        if ctx.hasChanges { try ctx.save() }
+                    }
                 }
                 return value
             }
@@ -118,7 +134,7 @@ open class BaseRepository: @unchecked Sendable {
         // Full ISO timestamps (creation/modification audit stamps) are unaffected --
         // fromISO only applies the zone to the 10-character date-only branch.
         guard let iso = isoString,
-              let ts = DateConversion.fromISO(iso, timeZone: DateConversion.dateOnlyTimeZone) else { return }
+              let ts = DateConversion.fromDateOnly(iso) else { return }
         object.setValue(DateConversion.toDate(ts), forKey: key)
     }
 
@@ -194,31 +210,7 @@ open class BaseRepository: @unchecked Sendable {
         return (object.value(forKey: key) as? Double) ?? 0.0
     }
 
-    /// The line item's exchange rate, with a missing or zero rate read as 1.
-    ///
-    /// `pTransactionAmount * pExchangeRate` is the account-currency amount. A
-    /// line with no rate, or a stored 0, would otherwise contribute nothing to
-    /// a balance -- the line silently drops out of the total. Banktivity
-    /// writes 1 for a same-currency line, so 1 is the neutral reading
-    /// (upstream #27 and #19 apply the same guard).
-    public static func effectiveExchangeRate(_ lineItem: NSManagedObject) -> Double {
-        let rate = doubleValue(lineItem, "pExchangeRate")
-        return rate == 0 ? 1.0 : rate
-    }
-
-    /// Read a decimal attribute WITHOUT going through `Double`.
-    ///
-    /// Money and share columns are `NSDecimalNumber` in the store, and
-    /// `doubleValue` above converts them the moment it reads them. That is fine
-    /// for display and wrong for arithmetic that is later rounded to cents:
-    /// binary doubles cannot hold most decimal fractions, so a running subtotal
-    /// accumulates residue until a value lands on the wrong side of a rounding
-    /// boundary. A realised-gain schedule computed through `Double` reproduces a
-    /// reference export to about 99.8% and looks correct; the same computation
-    /// in `Decimal` reproduces it exactly.
-    ///
-    /// Use this for anything that will be summed, apportioned or rounded. Use
-    /// `doubleValue` for anything merely displayed or compared loosely.
+    /// Read a decimal attribute without going through `Double`, for sums.
     public static func decimalValue(_ object: NSManagedObject, _ key: String) -> Decimal {
         if let decimal = object.value(forKey: key) as? NSDecimalNumber {
             return decimal.decimalValue
@@ -230,6 +222,162 @@ open class BaseRepository: @unchecked Sendable {
         }
         return 0
     }
+
+    /// The line item's exchange rate, with a missing or zero rate read as 1.
+    ///
+    /// `pTransactionAmount * pExchangeRate` is the account-currency amount. A
+    /// line with no rate, or a stored 0, would otherwise drop out of a
+    /// balance. Banktivity writes 1 for a same-currency line, so 1 is the
+    /// neutral reading (as in #27 and #19).
+    public static func effectiveExchangeRate(_ lineItem: NSManagedObject) -> Double {
+        let rate = doubleValue(lineItem, "pExchangeRate")
+        return rate == 0 ? 1.0 : rate
+    }
+
+    // MARK: - Running balances
+
+    public struct RunningBalanceRecalc: Sendable {
+        public let lineItemCount: Int
+        public let changedCount: Int
+        public let previousBalance: Double
+        public let balance: Double
+        public let wasStale: Bool
+    }
+
+    /// See `AccountRepository.recalculateRunningBalances(accountId:force:)`.
+    /// With `from` (a transaction date), only lines on or after it are
+    /// recomputed, continuing from the stored running balance of the last line
+    /// before it, as Banktivity's `recalculateBalanceForDate:` does.
+    public static func recalculateRunningBalances(account: NSManagedObject, force: Bool, from: Double? = nil, in ctx: NSManagedObjectContext) throws -> RunningBalanceRecalc {
+        let request = NSFetchRequest<NSManagedObject>(entityName: "LineItem")
+        request.predicate = NSPredicate(format: "pAccount == %@", account)
+        request.relationshipKeyPathsForPrefetching = ["pSecurityLineItem", "pTransaction.pTransactionType"]
+        let lines = try ctx.fetch(request)
+
+        func cents(_ value: Double) -> Decimal { Decimal(string: String(format: "%.2f", value)) ?? 0 }
+        let amounts = Dictionary(uniqueKeysWithValues: lines.map { ($0.objectID, cents(Self.accountAmount($0))) })
+        let date = { (li: NSManagedObject) in Self.relatedObject(li, "pTransaction").flatMap { Self.dateValue($0, "pDate") } ?? 0 }
+        let created = { (li: NSManagedObject) in Self.dateValue(li, "pCreationTime") ?? 0 }
+        let pk = { (li: NSManagedObject) in Self.extractPK(from: li.objectID) }
+        let intraday = { (li: NSManagedObject) in Self.intValue(li, "pIntraDaySortIndex") }
+        let byCreation = lines.sorted {
+            (date($0), created($0), intraday($0), pk($0)) < (date($1), created($1), intraday($1), pk($1))
+        }
+        let byRow = lines.sorted { (date($0), intraday($0), pk($0)) < (date($1), intraday($1), pk($1)) }
+
+        func balances(_ ordered: [NSManagedObject]) -> [Decimal] {
+            var running = Decimal(0)
+            if let from, let before = ordered.last(where: { date($0) < from }) {
+                running = decimalValue(before, "pRunningBalance")
+            }
+            return ordered.map {
+                if let from, date($0) < from { return decimalValue($0, "pRunningBalance") }
+                running += amounts[$0.objectID] ?? 0
+                return running
+            }
+        }
+        func matches(_ ordered: [NSManagedObject], _ values: [Decimal]) -> Int {
+            zip(ordered, values).filter { Self.decimalValue($0.0, "pRunningBalance") == $0.1 }.count
+        }
+        let creationValues = balances(byCreation), rowValues = balances(byRow)
+        let (ordered, values) = matches(byCreation, creationValues) >= matches(byRow, rowValues)
+            ? (byCreation, creationValues) : (byRow, rowValues)
+
+        let total = values.last ?? 0
+        // Banktivity's last row (in either order) already holds the total: not stale.
+        let lastDate = ordered.last.map(date)
+        let finalIsRight = lines.isEmpty || ordered.contains {
+            date($0) == lastDate && Self.decimalValue($0, "pRunningBalance") == total
+        }
+        let previous = byRow.last.map { Self.doubleValue($0, "pRunningBalance") } ?? 0
+
+        var changed = 0
+        if force || !finalIsRight {
+            for (line, value) in zip(ordered, values) where Self.decimalValue(line, "pRunningBalance") != value {
+                line.setValue(NSDecimalNumber(decimal: value), forKey: "pRunningBalance")
+                changed += 1
+            }
+        }
+        return RunningBalanceRecalc(
+            lineItemCount: lines.count, changedCount: changed, previousBalance: previous,
+            balance: NSDecimalNumber(decimal: total).doubleValue, wasStale: !finalIsRight)
+    }
+
+    /// Real (non-category) accounts whose cached running balances a pending
+    /// save will make stale: line amounts, rates, accounts or transactions
+    /// changed, security amounts changed, or a transaction's date or type
+    /// changed. Changes to `pRunningBalance` alone don't count.
+    static func accountsNeedingRunningBalance(in ctx: NSManagedObjectContext) -> [NSManagedObjectID: Double] {
+        // Account -> earliest affected transaction date.
+        var accounts: [NSManagedObjectID: Double] = [:]
+        func add(_ account: Any?, _ date: Double) {
+            guard let account = account as? NSManagedObject,
+                  intValue(account, "pAccountClass") < AccountClass.income else { return }
+            accounts[account.objectID] = min(accounts[account.objectID] ?? date, date)
+        }
+        func txDate(_ tx: Any?) -> Double {
+            guard let tx = tx as? NSManagedObject else { return 0 }
+            let now = dateValue(tx, "pDate") ?? 0
+            let then = (tx.committedValues(forKeys: ["pDate"])["pDate"] as? Date).map { DateConversion.fromDate($0) } ?? now
+            return min(now, then)
+        }
+        func lineAccounts(_ li: NSManagedObject) {
+            let tx = li.value(forKey: "pTransaction") ?? li.committedValues(forKeys: ["pTransaction"])["pTransaction"]
+            let date = txDate(tx)
+            add(li.value(forKey: "pAccount"), date)
+            add(li.committedValues(forKeys: ["pAccount"])["pAccount"], date)
+        }
+        let lineKeys: Set<String> = ["pTransactionAmount", "pExchangeRate", "pAccount", "pTransaction", "pSecurityLineItem"]
+        let securityKeys: Set<String> = ["pAmount", "pIncome", "pDistributionType", "pLineItem"]
+        let transactionKeys: Set<String> = ["pDate", "pTransactionType"]
+        for object in ctx.insertedObjects.union(ctx.updatedObjects).union(ctx.deletedObjects) {
+            let changed = Set(object.changedValues().keys)
+            let whole = object.isInserted || object.isDeleted
+            switch object.entity.name {
+            case "LineItem" where whole || !changed.isDisjoint(with: lineKeys):
+                lineAccounts(object)
+            case "SecurityLineItem" where whole || !changed.isDisjoint(with: securityKeys):
+                if let li = (object.value(forKey: "pLineItem") ?? object.committedValues(forKeys: ["pLineItem"])["pLineItem"]) as? NSManagedObject {
+                    lineAccounts(li)
+                }
+            case "Transaction" where !changed.isDisjoint(with: transactionKeys):
+                for li in relatedSet(object, "pLineItems") { lineAccounts(li) }
+            default:
+                break
+            }
+        }
+        return accounts
+    }
+
+    /// A line item's amount in its account's currency, as Banktivity computes it
+    /// for balances and statement totals (`-[IGGCAccountingLineItem accountAmount]`
+    /// in IGGAccounting).
+    ///
+    /// For an investment transaction (base type 100-310) with a security line,
+    /// Banktivity ignores `pTransactionAmount` and takes the security line's
+    /// figure: `pAmount` (0 for share moves, 210-212) plus `pIncome`, counted
+    /// only when the distribution type resolves to cash (1). An unset or 0
+    /// distribution type is cash, except for share adjustments (210-212, 250).
+    /// Types 2 and 3 (transfer, reinvest) count as non-cash here; Banktivity
+    /// falls back to cash when the transaction type cannot transfer or reinvest,
+    /// which this does not model. Every other line is amount x exchange rate.
+    public static func accountAmount(_ lineItem: NSManagedObject) -> Double {
+        let baseType = relatedObject(lineItem, "pTransaction")
+            .flatMap { relatedObject($0, "pTransactionType") }
+            .map { intValue($0, "pBaseType") }
+        if let baseType, (100...310).contains(baseType),
+           let sli = relatedObject(lineItem, "pSecurityLineItem") {
+            let raw = intValue(sli, "pDistributionType")
+            let distribution = raw == 0 ? (shareAdjustmentBaseTypes.contains(baseType) ? 0 : 1) : raw
+            guard distribution == 1 else { return 0 }
+            let amount = (210...212).contains(baseType) ? 0 : doubleValue(sli, "pAmount")
+            return amount + doubleValue(sli, "pIncome")
+        }
+        return doubleValue(lineItem, "pTransactionAmount") * effectiveExchangeRate(lineItem)
+    }
+
+    /// Move Shares In / Out, Transfer Shares, Split Shares: they move shares, not cash.
+    public static let shareAdjustmentBaseTypes: Set<Int> = [210, 211, 212, 250]
 
     /// Safely get a boolean value from a managed object
     public static func boolValue(_ object: NSManagedObject, _ key: String) -> Bool {

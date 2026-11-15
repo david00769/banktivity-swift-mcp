@@ -11,6 +11,7 @@ public final class ToolRegistry: @unchecked Sendable {
     private let container: NSPersistentContainer
     private let writeGuard: WriteGuard
     private let bankFilePath: String
+    private let reportingCurrency: String
 
     struct ToolDefinition: Sendable {
         let tool: Tool
@@ -20,10 +21,43 @@ public final class ToolRegistry: @unchecked Sendable {
 
     private var tools: [String: ToolDefinition] = [:]
 
-    public init(container: NSPersistentContainer, writeGuard: WriteGuard, bankFilePath: String) {
+    public init(
+        container: NSPersistentContainer,
+        writeGuard: WriteGuard,
+        bankFilePath: String,
+        reportingCurrency: String = ReportingCurrency.defaultCode
+    ) {
         self.container = container
         self.writeGuard = writeGuard
         self.bankFilePath = bankFilePath
+        self.reportingCurrency = ReportingCurrency.resolve(reportingCurrency)
+    }
+
+    /// Write tools that only ever add rows and never overwrite or remove
+    /// existing data. The MCP annotation `destructiveHint` is false for these.
+    /// Every other write tool is advertised as destructive: the cautious default
+    /// for a tool nobody listed here.
+    static let additiveToolNames: Set<String> = [
+        "create_category", "create_import_rule", "add_line_item",
+        "create_scheduled_transaction", "create_security", "create_share_adjustment",
+        "create_security_trade", "create_security_income", "create_statement",
+        "create_tag", "create_transaction_template", "create_transaction",
+    ]
+
+    /// MCP tool annotations, published so clients can tell reads from writes.
+    /// Derived from the compiler-checked `CapabilityAccess` the tool is
+    /// registered under, so the advertised label cannot drift from enforcement.
+    static func annotations(for name: String, access: CapabilityAccess) -> Tool.Annotations {
+        switch access {
+        case .read:
+            return .init(readOnlyHint: true, openWorldHint: false)
+        case .write:
+            return .init(
+                readOnlyHint: false,
+                destructiveHint: !additiveToolNames.contains(name),
+                openWorldHint: false
+            )
+        }
     }
 
     /// Register a tool with its handler.
@@ -41,7 +75,8 @@ public final class ToolRegistry: @unchecked Sendable {
         let tool = Tool(
             name: name,
             description: description,
-            inputSchema: inputSchema
+            inputSchema: inputSchema,
+            annotations: Self.annotations(for: name, access: access)
         )
         tools[name] = ToolDefinition(tool: tool, access: access, handler: handler)
     }
@@ -170,10 +205,11 @@ public final class ToolRegistry: @unchecked Sendable {
     public func registerAllTools(statementWrites: Bool = ToolRegistry.statementWritesEnabled()) {
         registerDiagnosticTools()
 
-        // Create repositories
+        // Create sync blob updater and repositories
+        let syncBlobUpdater = SyncBlobUpdater(container: container)
         let lineItemRepo = LineItemRepository(container: container)
-        let accountRepo = AccountRepository(container: container)
-        let transactionRepo = TransactionRepository(container: container, lineItemRepo: lineItemRepo)
+        let accountRepo = AccountRepository(container: container, reportingCurrency: reportingCurrency)
+        let transactionRepo = TransactionRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: syncBlobUpdater)
         let tagRepo = TagRepository(container: container)
         let categoryRepo = CategoryRepository(container: container)
         let templateRepo = TemplateRepository(container: container)

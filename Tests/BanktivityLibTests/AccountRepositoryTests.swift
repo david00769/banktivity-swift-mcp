@@ -79,7 +79,7 @@ struct AccountRepositoryTests {
 
         _ = try TestVaultHelper.seedCurrencies(in: vault.container)
 
-        let accounts = AccountRepository(container: vault.container)
+        let accounts = AccountRepository(container: vault.container, reportingCurrency: "USD")
         let account = try accounts.create(
             name: "Rate Guard",
             accountClass: AccountClass.checking,

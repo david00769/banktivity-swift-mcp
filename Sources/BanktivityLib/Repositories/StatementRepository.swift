@@ -6,9 +6,13 @@ import Foundation
 
 public final class StatementRepository: BaseRepository, @unchecked Sendable {
     private let lineItemRepo: LineItemRepository
+    /// Upstream's blob patching, kept alongside the fork's `pModificationDate`
+    /// upload signal. Optional: callers that omit it get the fork's behaviour.
+    private let syncBlobUpdater: SyncBlobUpdater?
 
-    public init(container: NSPersistentContainer, lineItemRepo: LineItemRepository) {
+    public init(container: NSPersistentContainer, lineItemRepo: LineItemRepository, syncBlobUpdater: SyncBlobUpdater? = nil) {
         self.lineItemRepo = lineItemRepo
+        self.syncBlobUpdater = syncBlobUpdater
         super.init(container: container)
     }
 
@@ -224,6 +228,45 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 statementCount: statements.count,
                 lastStatementId: lastStatementId,
                 lastReconciledStatementEndDate: lastEndDate
+            )
+        }
+    }
+
+    /// Where an account's reconciliation stands: its statements, which of them
+    /// don't add up, and how many line items are not on any statement.
+    public func status(accountId: Int) throws -> AccountReconciliationStatusDTO {
+        try performRead { [self] ctx in
+            guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
+                throw ToolError.notFound("Account not found: \(accountId)")
+            }
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Statement")
+            request.predicate = NSPredicate(format: "pAccount == %@", account)
+            request.sortDescriptors = [NSSortDescriptor(key: "pEndDate", ascending: true)]
+            let statements = try ctx.fetch(request)
+            let summaries = statements.map { self.mapToSummaryDTO($0) }
+            let last = statements.last
+
+            let unreconciled = NSFetchRequest<NSManagedObject>(entityName: "LineItem")
+            unreconciled.predicate = NSPredicate(format: "pAccount == %@ AND pStatement == nil", account)
+            let unreconciledCount = try ctx.count(for: unreconciled)
+            var sinceLast = unreconciledCount
+            if let lastEnd = last.flatMap({ Self.dateValue($0, "pEndDate") }) {
+                unreconciled.predicate = NSPredicate(
+                    format: "pAccount == %@ AND pStatement == nil AND pTransaction.pDate > %@",
+                    account, DateConversion.toDate(lastEnd) as NSDate)
+                sinceLast = try ctx.count(for: unreconciled)
+            }
+
+            return AccountReconciliationStatusDTO(
+                accountId: accountId,
+                accountName: Self.stringValue(account, "pName"),
+                statementCount: statements.count,
+                unbalancedStatementIds: summaries.filter { !$0.isBalanced }.map(\.id),
+                lastStatementId: last.map { Self.extractPK(from: $0.objectID) },
+                lastStatementEndDate: last.flatMap { Self.dateValue($0, "pEndDate") }.map { DateConversion.toISO($0) },
+                lastStatementEndingBalance: last.map { Self.doubleValue($0, "pEndingBalance") },
+                unreconciledLineItemCount: unreconciledCount,
+                unreconciledSinceLastStatement: sinceLast
             )
         }
     }
@@ -489,33 +532,60 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
     public func delete(statementId: Int, allowInternal: Bool = false) throws -> Bool {
         // One save: unreconcile the members, mark their transactions modified,
         // mark the statement's sync record deleted, delete the row.
-        try performWriteReturning { [self] ctx -> Bool in
-            guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else { return false }
+        let txLineItems: [String: [String]]? = try performWriteReturning { [self] ctx -> [String: [String]]? in
+            guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else { return nil }
             if !allowInternal {
                 try validateVisibleStatement(statement, statementId: statementId)
             }
+            var members: [String: [String]] = [:]
             for li in Self.relatedSet(statement, "pLineItems") {
+                // Leaving a statement does not un-tick the line: cleared is kept.
                 li.setValue(nil, forKey: "pStatement")
                 // Membership travels inside the Transaction's sync record.
                 if let tx = Self.relatedObject(li, "pTransaction") {
                     Self.setNow(tx, "pModificationDate")
+                    members[Self.stringValue(tx, "pUniqueID"), default: []].append(Self.stringValue(li, "pUniqueID"))
                 }
             }
             try SyncRecords.markDeletedIfPresent(
                 entityUUID: Self.stringValue(statement, "pUniqueID"), in: ctx
             )
             ctx.delete(statement)
-            return true
+            return members
+        }
+        guard let txLineItems else { return false }
+        patchStatementMembership(txLineItems, statementUUID: nil)
+        return true
+    }
+
+    /// Upstream's blob patch for membership changes (non-fatal, optional).
+    private func patchStatementMembership(_ txLineItems: [String: [String]], statementUUID: String?, cleared: Bool? = nil) {
+        guard let updater = syncBlobUpdater else { return }
+        for (txUUID, liUUIDs) in txLineItems {
+            updater.updateTransactionBlob(transactionUUID: txUUID) { xml in
+                var result = xml
+                for liUUID in liUUIDs {
+                    if let cleared {
+                        result = updater.patchCleared(xml: result, lineItemUUID: liUUID, cleared: cleared)
+                    }
+                    result = updater.patchStatement(xml: result, lineItemUUID: liUUID, statementUUID: statementUUID)
+                }
+                return result
+            }
         }
     }
 
     public func reconcileLineItems(
         statementId: Int,
         lineItemIds: [Int],
+        allowOutOfRange: Bool = false,
         operatorConfirmedVisible: Bool = false
     ) throws -> StatementDTO {
         struct StatementInfo: Sendable {
             let accountId: Int
+            let uuid: String
+            let startTs: Double?
+            let endTs: Double?
         }
         let info: StatementInfo = try performRead { [self] ctx in
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
@@ -530,13 +600,20 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 throw ToolError.invalidInput("Statement has no associated account")
             }
             return StatementInfo(
-                accountId: Self.extractPK(from: account.objectID)
+                accountId: Self.extractPK(from: account.objectID),
+                uuid: Self.stringValue(statement, "pUniqueID"),
+                startTs: Self.dateValue(statement, "pStartDate"),
+                endTs: Self.dateValue(statement, "pEndDate")
             )
         }
 
         let statementAccountId = info.accountId
+        let statementUUID = info.uuid
+        let startTs = info.startTs
+        let endTs = info.endTs
 
-        try performWrite { [self] ctx in
+        let txLineItems: [String: [String]] = try performWriteReturning { [self] ctx in
+            var blobItems: [String: [String]] = [:]
             guard let stmtInCtx = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
                 throw ToolError.notFound("Statement not found: \(statementId)")
             }
@@ -565,19 +642,34 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                     continue // already assigned to this statement
                 }
 
+                // Validate date range (allow 2-day buffer before start for credit card timing)
+                if !allowOutOfRange, let startTs = startTs, let endTs = endTs,
+                   let tx = Self.relatedObject(li, "pTransaction"),
+                   let txDate = Self.dateValue(tx, "pDate") {
+                    let bufferSeconds: Double = 2 * 86400
+                    guard txDate >= (startTs - bufferSeconds) && txDate <= endTs else {
+                        let dateStr = DateConversion.toISO(txDate)
+                        throw ToolError.invalidInput("Line item \(liId) transaction date \(dateStr) is outside statement date range (pass allowOutOfRange / --allow-out-of-range to override)")
+                    }
+                }
+
                 li.setValue(stmtInCtx, forKey: "pStatement")
                 li.setValue(true, forKey: "pCleared")
 
                 // Membership travels inside the Transaction's sync record
                 if let tx = Self.relatedObject(li, "pTransaction") {
                     Self.setNow(tx, "pModificationDate")
+                    blobItems[Self.stringValue(tx, "pUniqueID"), default: []].append(Self.stringValue(li, "pUniqueID"))
                 }
             }
 
             if !lineItemIds.isEmpty {
                 Self.setNow(stmtInCtx, "pModificationDate")
             }
+            return blobItems
         }
+
+        patchStatementMembership(txLineItems, statementUUID: statementUUID, cleared: true)
 
         guard let result = try get(statementId: statementId) else {
             throw ToolError.notFound("Statement not found after reconciliation: \(statementId)")
@@ -653,7 +745,8 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             throw ToolError.notFound("Statement not found: \(statementId)")
         }
 
-        try performWrite { [self] ctx in
+        let txLineItems: [String: [String]] = try performWriteReturning { [self] ctx in
+            var blobItems: [String: [String]] = [:]
             for liId in lineItemIds {
                 guard let li = try fetchByPK(entityName: "LineItem", pk: liId, in: ctx) else {
                     throw ToolError.notFound("Line item not found: \(liId)")
@@ -672,11 +765,19 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 // Membership travels inside the Transaction's sync record
                 if let tx = Self.relatedObject(li, "pTransaction") {
                     Self.setNow(tx, "pModificationDate")
+                    blobItems[Self.stringValue(tx, "pUniqueID"), default: []].append(Self.stringValue(li, "pUniqueID"))
                 }
 
+                // Leaving a statement does not un-tick the line: cleared is kept.
                 li.setValue(nil, forKey: "pStatement")
+                if let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) {
+                    Self.setNow(statement, "pModificationDate")
+                }
             }
+            return blobItems
         }
+
+        patchStatementMembership(txLineItems, statementUUID: nil)
 
         return try get(statementId: statementId)
     }
@@ -701,7 +802,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             || endDate != nil || trimmedName != nil else {
             throw ToolError.invalidInput("Statement update requires at least one field to change")
         }
-        try performWrite { [self] ctx in
+        let statementUUID: String = try performWriteReturning { [self] ctx in
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
                 throw ToolError.notFound("Statement not found: \(statementId)")
             }
@@ -762,12 +863,24 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 statement.setValue(trimmedName, forKey: "pName")
             }
             Self.setNow(statement, "pModificationDate")
+            return Self.stringValue(statement, "pUniqueID")
         }
+        syncBlobUpdater?.updateStatementBalances(
+            statementUUID: statementUUID, beginningBalance: beginningBalance, endingBalance: endingBalance)
 
         guard let result = try get(statementId: statementId) else {
             throw ToolError.notFound("Statement not found after update: \(statementId)")
         }
         return result
+    }
+
+    /// Upstream's argument order (beginning before ending), both required so it
+    /// never competes with the fork's `update` when only one is given.
+    public func update(statementId: Int, beginningBalance: Double?, endingBalance: Double?) throws -> StatementDTO {
+        guard beginningBalance != nil || endingBalance != nil else {
+            throw ToolError.missingParameter("Give a beginning balance, an ending balance, or both")
+        }
+        return try update(statementId: statementId, endingBalance: endingBalance, beginningBalance: beginningBalance)
     }
 
     public func getUnreconciledLineItems(accountId: Int, startDate: String? = nil, endDate: String? = nil) throws -> [LineItemDTO] {

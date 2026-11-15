@@ -10,19 +10,18 @@ import Foundation
 /// same vault.
 /// The one place a write can be refused regardless of how it was reached.
 ///
-/// Every guard that decided whether a write may proceed lived in a shell wrapper
-/// or in a per-verb call site, so a route that was neither -- a second entrance,
-/// a nested command, a verb someone forgot to annotate -- was unguarded by
-/// construction. `reconciliation execute-bundle` is the live example: it never
-/// calls `guardWrite` itself and relies entirely on the command it re-parses.
+/// Every guard deciding whether a write may proceed lived at a per-verb call
+/// site, so a route that was not one -- a second entrance, a nested command, a
+/// verb someone forgot to annotate -- was unguarded by construction. Guards you
+/// have to remember to call are guards that get missed.
 ///
 /// Installed once per process by whichever entry point opened the vault. The
-/// default is permissive: this is an MIT library that others embed, and a
+/// default is permissive on purpose: this is a library others embed, and a
 /// fail-closed default would refuse every write in a process that never opted
-/// in, including the test suite. That makes this a gate you can still forget to
-/// install, which is why it is the smaller half of backlog item 31 -- the half
-/// that closes it threads a vault handle through repository construction so
-/// there is no uninstalled state to have.
+/// in, including the test suite. That does leave a gate you can forget to
+/// install; removing that last gap means threading a vault handle through
+/// repository construction so there is no uninstalled state to have, which is
+/// a larger change than belongs here.
 public enum VaultWriteGate {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var refusalProvider: (@Sendable () -> String?)?

@@ -44,7 +44,8 @@ struct Statements: AsyncParsableCommand {
     }
 
     struct Status: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Get statement reconciliation status for an account")
+        static let configuration = CommandConfiguration(
+            abstract: "Where an account's reconciliation stands: statements, unbalanced ones, unreconciled line items")
 
         @OptionGroup var parent: GlobalOptions
 
@@ -58,12 +59,9 @@ struct Statements: AsyncParsableCommand {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
             let accountRepo = AccountRepository(container: container)
-            let lineItemRepo = LineItemRepository(container: container)
-            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
-
+            let statements = StatementRepository(container: container, lineItemRepo: LineItemRepository(container: container))
             let resolvedId = try accountRepo.resolveAccountId(id: accountId, name: accountName)
-            let result = try statements.getAccountReconciliationStatus(accountId: resolvedId)
-            try outputJSON(result, format: parent.format)
+            try outputJSON(try statements.status(accountId: resolvedId), format: parent.format)
         }
     }
 
@@ -403,7 +401,7 @@ struct Statements: AsyncParsableCommand {
             try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
 
             let lineItemRepo = LineItemRepository(container: container)
-            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
+            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: SyncBlobUpdater(container: container))
             let result = try statements.update(
                 statementId: statementId,
                 endingBalance: endingBalance,
@@ -446,11 +444,11 @@ struct Statements: AsyncParsableCommand {
             try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
 
             let lineItemRepo = LineItemRepository(container: container)
-            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
+            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: SyncBlobUpdater(container: container))
 
             let deleted = try statements.delete(statementId: statementId, allowInternal: allowInternal)
             if deleted {
-                try outputJSON(["message": "Statement \(statementId) deleted, line items unreconciled"] as [String: Any], format: parent.format)
+                try outputJSON(["message": "Statement \(statementId) deleted; its line items keep their cleared state"] as [String: Any], format: parent.format)
             } else {
                 throw ToolError.notFound("Statement not found: \(statementId)")
             }
@@ -480,12 +478,15 @@ struct Statements: AsyncParsableCommand {
         @Flag(name: .long, help: "Confirm the unnamed investment statement row was matched to the intended visible Banktivity Statements UI row")
         var operatorConfirmedVisible: Bool = false
 
+        @Flag(name: .long, help: "Allow line items dated outside the statement period (e.g. card charges posted late)")
+        var allowOutOfRange = false
+
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
 
             let lineItemRepo = LineItemRepository(container: container)
-            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
+            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: SyncBlobUpdater(container: container))
 
             let ids = lineItemIds.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
             guard !ids.isEmpty else {
@@ -509,6 +510,7 @@ struct Statements: AsyncParsableCommand {
             let result = try statements.reconcileLineItems(
                 statementId: statementId,
                 lineItemIds: ids,
+                allowOutOfRange: allowOutOfRange,
                 operatorConfirmedVisible: operatorConfirmedVisible
             )
             try outputJSON(result, format: parent.format)
@@ -543,7 +545,7 @@ struct Statements: AsyncParsableCommand {
             try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
 
             let lineItemRepo = LineItemRepository(container: container)
-            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
+            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: SyncBlobUpdater(container: container))
 
             let ids = lineItemIds.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
             guard !ids.isEmpty else {

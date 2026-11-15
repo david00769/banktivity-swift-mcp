@@ -7,8 +7,8 @@ import Testing
 
 // Runs on the main actor: see TestVaultHelper for why every suite that
 // touches a view context has to.
-@Suite("CategoryRepository", .serialized)
 @MainActor
+@Suite("CategoryRepository", .serialized)
 struct CategoryRepositoryTests {
 
     @Test("create stores categories as Category entities")
@@ -98,6 +98,40 @@ struct CategoryRepositoryTests {
         #expect(issue.type == "income")
         #expect(issue.actualEntity == "PrimaryAccount")
         #expect(issue.expectedEntity == "Category")
+    }
+
+    @Test("a malformed row is reported by the audit and kept out of the category list")
+    func malformedRowIsNotListedAsACategory() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        let repo = CategoryRepository(container: vault.container)
+        _ = try repo.create(name: "Groceries", type: "expense")
+
+        // The shape a vault is left in by the create bug this builds on: an
+        // income/expense row stored as PrimaryAccount. `Category` is a subentity
+        // of `Account`, so a fetch on "Account" happily returns both, and the
+        // corrupt row reads back as an ordinary category.
+        let ctx = vault.container.viewContext
+        let malformed = NSEntityDescription.insertNewObject(forEntityName: "PrimaryAccount", into: ctx)
+        malformed.setValue("Not A Category", forKey: "pName")
+        malformed.setValue("Not A Category", forKey: "pFullName")
+        malformed.setValue(AccountClass.expense, forKey: "pAccountClass")
+        malformed.setValue(false, forKey: "pHidden")
+        malformed.setValue(UUID().uuidString, forKey: "pUniqueID")
+        malformed.setValue(Date(), forKey: "pCreationTime")
+        malformed.setValue(Date(), forKey: "pModificationDate")
+        try ctx.save()
+
+        let listed = try repo.list().map(\.name)
+        #expect(listed.contains("Groceries"))
+        #expect(
+            !listed.contains("Not A Category"),
+            "a PrimaryAccount row must not read back as a category: \(listed)"
+        )
+
+        // It is not ignored, it is reportable -- that is what the audit is for.
+        #expect(try repo.auditCategoryEntities().contains { $0.name == "Not A Category" })
     }
 
     private func fetchCategoryEntityName(id: Int, in container: NSPersistentContainer) throws -> String {

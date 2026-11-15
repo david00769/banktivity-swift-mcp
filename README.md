@@ -108,6 +108,12 @@ Three related projects come up when you search for a Banktivity MCP server:
 If you want an AI assistant to write to a vault that syncs through iCloud,
 use one of the Core Data projects. All three can read a vault.
 
+Writes are serialized within each running process, which covers concurrent MCP tool calls handled by one `banktivity-mcp` server and overlapping writes inside a single CLI command. It is not a cross-process file lock: run one `banktivity-cli` or `banktivity-mcp` process per vault at a time, and shut them down before opening the same vault in Banktivity.app.
+
+**The numeric IDs this tool returns are local to one store, not to the vault.** They are Core Data row ids assigned by whichever SQLite file you opened. The same logical record — the same transaction, account, statement or category — carries a *different* number on a second Mac syncing the same vault through Banktivity's own sync, and can change again after restoring from backup, importing, or migrating a Banktivity 10 vault. The stable identifier is the record's `pUniqueID`.
+
+The consequence is worth stating plainly, because it is the failure this tool cannot detect for you: an id captured on one machine and replayed on another does not point at nothing, it points at **a different real record**. A delete or an amount correction aimed that way succeeds, reports success, and hits the wrong row. So resolve ids on the machine you are about to write on, in the same session, and read the row back to confirm it is the one you meant before mutating it.
+
 ## Requirements
 
 - macOS 14 or later
@@ -208,6 +214,8 @@ git tag -a v0.18.0 -m "v0.18.0" && git push origin v0.18.0
 `Version.swift`, runs the tests, builds the tarball and publishes the release.
 The CHANGELOG section becomes the release notes.
 
+`make test` builds the CLI first and runs the suite single-worker under the same release configuration and Xcode framework paths as `make release`, so a test failure reproduces the way a release build would hit it. Use `make test-filter FILTER=TestName` when iterating on one test.
+
 ## Configuration
 
 ### Where is my vault?
@@ -290,7 +298,8 @@ Add to a project's `.mcp.json`, or to `~/.claude.json` for every project
     "banktivity": {
       "command": "/Users/you/.local/bin/banktivity-mcp",
       "env": {
-        "BANKTIVITY_FILE_PATH": "/Users/you/Documents/Banktivity/My Accounts.bank8"
+        "BANKTIVITY_FILE_PATH": "/Users/you/Documents/Banktivity/My Accounts.bank8",
+        "BANKTIVITY_REPORTING_CURRENCY": "USD"
       }
     }
   }
@@ -404,8 +413,8 @@ security's price multiplier. It is shown next to `balance`, never added to it.
 
 ### Accounts
 - `list_accounts` — List all accounts with balances
-- `get_account_balance` — Get balance for a specific account
-- `get_net_worth` — Calculate total net worth
+- `get_account_balance` — Get balance for a specific account (investment accounts: cash balance, with `holdingsValue` beside it)
+- `get_net_worth` — Net worth in the reporting currency: cash plus holdings, each account converted at the vault's latest exchange rate, with a per-currency breakdown and warnings for missing or stale rates
 - `get_spending_by_category` — Spending breakdown by category for a date range
 - `get_income_by_category` — Income breakdown by category for a date range
 - `get_summary` — Overall financial summary
@@ -492,7 +501,7 @@ banktivity-cli transactions repair-forex \
 - `get_category` — Get a specific category
 - `get_category_tree` — Get the full category hierarchy
 - `create_category` — Create a new category
-- `audit_category_entities` — Find categories stored under the wrong internal type, a fault older tools could leave behind
+- `audit_category_entities` — Find income/expense categories stored under the wrong Core Data entity
 
 ### Categorization
 - `get_uncategorized_transactions` — Find transactions without categories
@@ -533,12 +542,13 @@ banktivity-cli transactions repair-forex \
 
 ### Statements (Reconciliation)
 - `list_statements` — List statements for an account
-- `get_account_reconciliation_status` — Get statement count and latest statement end date for an account
-- `get_statement` — Get a statement with reconciliation progress
+- `get_statement` — Get a statement with reconciliation progress and its line items
+- `get_account_reconciliation_status` — Statement count, unbalanced statements, last statement, and line items on no statement
+- `update_statement` — Change a statement's beginning and/or ending balance
 - `create_statement` — Create a new statement with balance validation
-- `delete_statement` — Delete a statement and unreconcile its line items; internal/unnamed investment rows require explicit `allow_internal`
+- `delete_statement` — Delete a statement; its line items keep their cleared state; internal/unnamed investment rows require explicit `allow_internal`
 - `reconcile_line_items` — Assign line items to a statement
-- `unreconcile_line_items` — Remove line items from a statement
+- `unreconcile_line_items` — Remove line items from a statement (they stay cleared)
 - `get_unreconciled_line_items` — List unreconciled line items for an account
 - `update_statement` — Correct a statement's ending balance to match what Banktivity's window shows
 - `plan_statement_visible_row_correction` — Turn the start, end and missing amounts you read off Banktivity's statement window into a correction plan (it does not read Banktivity's screen itself)
@@ -556,14 +566,15 @@ trade can move cash that the raw amounts don't show.
 - `get_security_trades` — Get trade history (buys, sells, transfers) with shares, prices, and commissions
 - `get_security_realized_gains` — Get realised capital gains per closed lot (acquisition date, proceeds, cost basis, gain, short/long term)
 - `get_security_income` — Get investment income (dividends, interest, capital gains distributions)
-- `create_security_trade` — Record a buy or sell (positive shares buy, negative shares sell), with its cash line
-- `update_security_trade` — Change an existing trade's shares, price, amount, commission or security
+- `create_security_trade` — Record a buy or sell (positive shares buy, negative shares sell), with its cash and balancing line items
+- `update_security_trade` — Correct an existing trade's shares, price, amount, commission or security; `basis_only_transfer` for a zero-cash transfer-in
+- `audit_security_prices` — List trades stored with a price per share of 0, flagging those that make other devices value a holding at 0
+- `rename_security` — Change a security's ticker, display name, or both (refuses a ticker another security holds)
 - `create_security_income` — Create native security income, currently dividend income
-- `rename_security` — Change a security's ticker, name or both (refused if another security already has that ticker)
 - `create_share_adjustment` — Create a share adjustment (e.g. charges, stock splits, position corrections)
 - `import_security_prices` — Import prices from a CSV file (Yahoo Finance, OHLCV, or Date/Close)
 - `delete_security_prices` — Delete price history for a security (optional date range)
-- `reset_security_price_range` — Forget which price history is known for a security, without deleting any of it
+- `reset_security_price_range` — Forget a security's known price range without deleting any prices
 - `delete_security` — Delete a security record that no trade references
 
 ### Export
@@ -651,6 +662,23 @@ Copy-paste commands for common jobs. Set `BANKTIVITY_FILE_PATH` once, or add
 not accepted before it). Every command takes
 `--format compact` for one-line JSON, which is easier for scripts and agents to
 parse.
+
+Commands available:
+
+- `accounts list`, `accounts balance`, `accounts net-worth`, `accounts spending`, `accounts income`, `accounts summary`, `accounts update`, `accounts recalc-balances` (writes also keep running balances current)
+- `transactions list`, `transactions search`, `transactions get`, `transactions create`, `transactions update`, `transactions delete`
+- `categories list`, `categories get`, `categories tree`, `categories audit-entities`, `categories create`, `categories delete`
+- `tags list`, `tags create`, `tags tag-transaction`, `tags get-by-tag`, `tags bulk-tag`
+- `uncategorized list`, `uncategorized suggest`, `uncategorized recategorize`, `uncategorized bulk-recategorize`, `uncategorized review`, `uncategorized payee-summary`
+- `line-items get`, `line-items add`, `line-items update`, `line-items delete`, `line-items source`
+- `templates list`, `templates get`, `templates create`, `templates update`, `templates delete`
+- `import-rules list`, `import-rules get`, `import-rules match`, `import-rules create`, `import-rules update`, `import-rules delete`
+- `scheduled list`, `scheduled get`, `scheduled create`, `scheduled update`, `scheduled delete`
+- `statements list`, `statements status`, `statements get`, `statements create`, `statements update`, `statements delete`, `statements reconcile`, `statements unreconcile`, `statements unreconciled`
+- `securities list`, `securities create`, `securities delete`, `securities rename`, `securities audit-prices`, `securities prices`, `securities holdings`, `securities trades`, `securities realized-gains`, `securities income`, `securities create-trade`, `securities create-income`, `securities adjust`, `securities update-trade`, `securities import-prices`, `securities delete-prices`, `securities reset-price-range`, `securities fix-prices`
+  - `securities delete` refuses while any trade still references the security, because deleting it would orphan the line items carrying its cost basis and realized gain. Merge those trades onto the surviving security with `securities update-trade --security-id` first. Price history is kept unless `--with-prices` is given.
+- `export turtle`
+- `schema`
 
 ```sh
 export BANKTIVITY_FILE_PATH=~/Documents/Banktivity/My\ Accounts.bank8

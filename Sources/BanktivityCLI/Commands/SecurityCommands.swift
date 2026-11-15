@@ -7,8 +7,34 @@ import Foundation
 struct Securities: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Security and price history operations",
-        subcommands: [List.self, Create.self, Delete.self, Prices.self, ImportPrices.self, DeletePrices.self, ResetPriceRange.self, FixPrices.self, Holdings.self, Trades.self, RealizedGains.self, Income.self, CreateTrade.self, CreateIncome.self, Adjust.self, UpdateTrade.self, Rename.self, LinkIncomeCategory.self]
+        subcommands: [List.self, Create.self, Delete.self, Rename.self, AuditPrices.self, Prices.self, ImportPrices.self, DeletePrices.self, ResetPriceRange.self, FixPrices.self, Holdings.self, Trades.self, RealizedGains.self, Income.self, CreateTrade.self, CreateIncome.self, Adjust.self, UpdateTrade.self, LinkIncomeCategory.self]
     )
+
+    struct AuditPrices: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "audit-prices",
+            abstract: "List trades stored with a price per share of 0",
+            discussion: """
+            Other devices write a received trade's price into the security's price
+            history for its date, zero included. zeroesHolding=true marks trades that
+            make them value a held security at 0. Fix with 'securities update-trade
+            <id> --price-per-share <price>' and, if needed, a later-dated price via
+            'securities import-prices'.
+            """
+        )
+
+        @OptionGroup var parent: GlobalOptions
+
+        @Flag(name: .long, help: "Only trades that zero a held security")
+        var atRiskOnly = false
+
+        func run() async throws {
+            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
+            let container = try BanktivityCLI.createContainer(vaultPath: path)
+            let results = try SecurityRepository(container: container).auditZeroPrices()
+            try outputJSON(atRiskOnly ? results.filter(\.zeroesHolding) : results, format: parent.format)
+        }
+    }
 
     struct Rename: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
@@ -46,7 +72,10 @@ struct Securities: AsyncParsableCommand {
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
 
-            let securities = SecurityRepository(container: container)
+            let securities = SecurityRepository(
+                container: container,
+                syncBlobUpdater: SyncBlobUpdater(container: container)
+            )
             let result = try securities.renameSecurity(
                 symbol: symbol, id: id, newSymbol: newSymbol, newName: newName
             )
@@ -277,7 +306,18 @@ struct Securities: AsyncParsableCommand {
 
     struct Delete: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Delete a security record that no trade references"
+            abstract: "Delete a security record that no trade references",
+            discussion: """
+            Removes a security identity from the vault. A security that any trade
+            still points at is refused: deleting it would orphan the line items
+            carrying its cost basis and realized gain. Merge those trades onto the
+            surviving security with 'securities update-trade --security-id' first.
+
+            Price history is kept unless --with-prices is given, so a security that
+            still has prices is refused rather than silently losing them.
+
+            Use --dry-run to see what would be removed before writing.
+            """
         )
 
         @OptionGroup var parent: GlobalOptions
@@ -306,7 +346,8 @@ struct Securities: AsyncParsableCommand {
             }
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
-            let securities = SecurityRepository(container: container)
+            let syncBlobUpdater = SyncBlobUpdater(container: container)
+            let securities = SecurityRepository(container: container, syncBlobUpdater: syncBlobUpdater)
 
             guard let info = try securities.inspectForDeletion(symbol: symbol, id: id) else {
                 throw ToolError.notFound("Security not found: \(symbol ?? String(id ?? 0))")
@@ -578,7 +619,8 @@ struct Securities: AsyncParsableCommand {
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
 
-            let securities = SecurityRepository(container: container)
+            let syncBlobUpdater = SyncBlobUpdater(container: container)
+            let securities = SecurityRepository(container: container, syncBlobUpdater: syncBlobUpdater)
             let result = try securities.createSecurityTrade(
                 accountId: accountId,
                 symbol: symbol,
@@ -629,7 +671,7 @@ struct Securities: AsyncParsableCommand {
         @Option(name: .long, help: "Income/expense category ID for the balancing line. Defaults to an unknown balancing line")
         var offsetCategoryId: Int?
 
-        @Option(name: .long, help: "Income type: dividend, return-of-capital, capital-gains-short, capital-gains-long, interest, investment-income. A spin-off distributes as return-of-capital, not a dividend")
+        @Option(name: .long, help: "Income type. Accepts: \(SecurityRepository.incomeTypeNames)")
         var incomeType: String = "dividend"
 
         @Option(name: .long, help: "Tax withheld at source. --amount stays the GROSS: the account receives the net, the income category is credited the gross, and this sits on its own line")
@@ -644,7 +686,8 @@ struct Securities: AsyncParsableCommand {
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
 
-            let securities = SecurityRepository(container: container)
+            let syncBlobUpdater = SyncBlobUpdater(container: container)
+            let securities = SecurityRepository(container: container, syncBlobUpdater: syncBlobUpdater)
             let result = try securities.createSecurityIncome(
                 accountId: accountId,
                 symbol: symbol,
@@ -688,8 +731,11 @@ struct Securities: AsyncParsableCommand {
         @Option(name: .long, parsing: .unconditional, help: "Security cost/principal amount. This does not change investment-account cash line items unless --cash-line-amount is also supplied")
         var amount: Double?
 
-        @Option(name: .long, help: "Movement type: split-shares, move-shares-in, move-shares-out, transfer-shares, buy, sell. Without it the type is buy or sell by sign, which cannot express a corporate action")
+        @Option(name: .long, help: "Movement type. Accepts: \(SecurityRepository.shareMovementTypeNames). Defaults to buy or sell by the sign of --shares")
         var transactionType: String?
+
+        @Option(name: .long, help: "Price per share. Required for a buy or sell unless --amount is given (it is then amount / shares); never 0")
+        var pricePerShare: Double?
 
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
@@ -701,7 +747,7 @@ struct Securities: AsyncParsableCommand {
             let result = try securities.createShareAdjustment(
                 accountId: accountId, symbol: symbol, id: id,
                 shares: shares, date: date, title: title, amount: amount,
-                transactionType: transactionType
+                transactionType: transactionType, pricePerShare: pricePerShare
             )
             try outputJSON(result, format: parent.format)
         }

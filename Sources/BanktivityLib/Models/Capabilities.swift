@@ -214,6 +214,7 @@ public enum CapabilityRegistry {
             writeMCP("create_security"),
             writeMCP("create_share_adjustment"),
             readMCP("get_security_prices"),
+            readMCP("audit_security_prices"),
             writeMCP("import_security_prices"),
             readMCP("get_security_holdings", note: "Aggregate cost basis is best-effort and not lot-aware. For lot-level basis and realised gains, use 'get_security_realized_gains'."),
             readMCP("get_security_trades"),

@@ -23,7 +23,7 @@ List all accounts in Banktivity with their types and current balances.
 ```
 
 ### get_account_balance
-Get the current balance for a specific account.
+Get the current balance for a specific account. For investment accounts `balance` is the cash balance (a trade's cash comes from its security line when the line item amount is 0, matching Banktivity's running balance) and `holdingsValue` is the market value of open positions, reported beside it.
 
 ```json
 {
@@ -106,7 +106,7 @@ Find transactions without any category assigned.
 ```
 
 ### get_net_worth
-Calculate current net worth (assets minus liabilities).
+Calculate current net worth (assets minus liabilities) in the reporting currency (`BANKTIVITY_REPORTING_CURRENCY`, default EUR). Each account's cash balance plus holdings value is converted with the vault's latest exchange rate (direct, reverse, or via USD). The response includes `breakdown.byCurrency` and `warnings` for stale or missing rates; an account with no usable rate is left out.
 
 ```json
 {
@@ -193,6 +193,13 @@ Create a new income or expense category.
   },
   "required": ["name", "type"]
 }
+```
+
+### audit_category_entities
+Find income/expense category rows stored under the wrong Core Data entity (e.g. created as `PrimaryAccount` instead of `Category`). Returns an empty array on a healthy vault. CLI: `categories audit-entities`. Remove a bad, unused row with `categories delete <id>` (CLI only).
+
+```json
+{ "properties": {} }
 ```
 
 ### get_spending_by_category
@@ -382,7 +389,7 @@ Update an existing transaction's title, note, date, cleared status, or transacti
     "note": { "type": "string", "description": "New note" },
     "date": { "type": "string", "description": "New date in ISO format (YYYY-MM-DD)" },
     "cleared": { "type": "boolean", "description": "Set cleared status" },
-    "transaction_type": { "type": "string", "description": "New transaction type: deposit, withdrawal, transfer, check, buy, sell, move-shares-in, move-shares-out, dividend, etc." }
+    "transaction_type": { "type": "string", "description": "New transaction type: deposit, withdrawal, transfer, check, charge, refund, payment, buy, sell, move-shares-in, move-shares-out, dividend, etc." }
   },
   "required": ["transaction_id"]
 }
@@ -489,7 +496,7 @@ List statements for an account, sorted by start date.
 ```
 
 ### get_statement
-Get a statement with reconciliation progress (reconciled balance, difference, isBalanced).
+Get a statement with reconciliation progress (reconciled balance, difference, isBalanced) and its `lineItems`. The total follows Banktivity's own rule: for investment transactions it uses the security line's amount + income, not the line item's amount.
 
 ```json
 {
@@ -519,8 +526,34 @@ Create a new statement for an account with beginning/ending balance validation.
 }
 ```
 
+### get_account_reconciliation_status
+Where an account's reconciliation stands: `statementCount`, `unbalancedStatementIds`, the last statement's ID, end date and ending balance, `unreconciledLineItemCount`, and `unreconciledSinceLastStatement`. CLI: `statements status`.
+
+```json
+{
+  "properties": {
+    "account_id": { "type": "number", "description": "The account ID" },
+    "account_name": { "type": "string", "description": "The account name (alternative to account_id)" }
+  }
+}
+```
+
+### update_statement
+Change a statement's beginning and/or ending balance in place; also patches its sync record. CLI: `statements update <id> [--beginning-balance X] [--ending-balance Y]`.
+
+```json
+{
+  "properties": {
+    "statement_id": { "type": "number", "description": "The statement ID" },
+    "beginning_balance": { "type": "number", "description": "New beginning balance" },
+    "ending_balance": { "type": "number", "description": "New ending balance" }
+  },
+  "required": ["statement_id"]
+}
+```
+
 ### delete_statement
-Delete a statement and unreconcile all its line items.
+Delete a statement. Its line items leave it but keep their cleared state.
 
 ```json
 {
@@ -538,14 +571,15 @@ Assign line items to a statement (sets pCleared=true). Validates account ownersh
 {
   "properties": {
     "statement_id": { "type": "number", "description": "The statement ID" },
-    "line_item_ids": { "type": "array", "description": "Array of line item IDs to reconcile" }
+    "line_item_ids": { "type": "array", "description": "Array of line item IDs to reconcile" },
+    "allow_out_of_range": { "type": "boolean", "description": "Allow line items dated outside the statement period, e.g. card charges posted on a later statement (default false)" }
   },
   "required": ["statement_id", "line_item_ids"]
 }
 ```
 
 ### unreconcile_line_items
-Remove line items from a statement (sets pCleared=false).
+Remove line items from a statement. They keep their cleared state, as in Banktivity.
 
 ```json
 {
@@ -892,6 +926,71 @@ Get investment income history (dividends, interest, capital gains distributions)
     "start_date": { "type": "string", "description": "Start date in YYYY-MM-DD format" },
     "end_date": { "type": "string", "description": "End date in YYYY-MM-DD format" }
   }
+}
+```
+
+### update_security_trade
+Correct security fields on an existing trade transaction. `amount` is the security cost/principal and does not change the investment account's cash line. `basis_only_transfer` validates a zero-cash transfer-in (a SECURITY ADJUSTMENT whose cash line is 0) and updates only its basis fields. CLI: `securities update-trade`.
+
+```json
+{
+  "properties": {
+    "transaction_id": { "type": "number", "description": "Transaction ID" },
+    "shares": { "type": "number", "description": "Number of shares" },
+    "price_per_share": { "type": "number", "description": "Price per share" },
+    "amount": { "type": "number", "description": "Security cost/principal amount. This does not change investment-account cash line items." },
+    "commission": { "type": "number", "description": "Commission or fee amount" },
+    "symbol": { "type": "string", "description": "Security ticker symbol" },
+    "security_id": { "type": "number", "description": "Security ID (alternative to symbol)" },
+    "basis_only_transfer": { "type": "boolean", "description": "Validate a zero-cash transfer-in row and update security basis fields without changing cash line items" }
+  },
+  "required": ["transaction_id"]
+}
+```
+
+### audit_security_prices
+List trades stored with a price per share of 0. A device that receives a trade writes its price into the security's price history for that date, zero included, so `zeroesHolding: true` marks trades that make other devices (e.g. the mobile app) value a held security at 0. Fix with `update_security_trade --price_per_share`, plus a later-dated price via `import_security_prices` if the phone has already taken the 0. CLI: `securities audit-prices [--at-risk-only]`.
+
+```json
+{ "properties": { "at_risk_only": { "type": "boolean", "description": "Only trades that zero a held security" } } }
+```
+
+### rename_security
+Rename a security's ticker symbol, display name, or both. Refuses a symbol another security already holds (that is a merge, not a rename) and refuses blank values. Also updates the security's sync record. CLI: `securities rename`.
+
+```json
+{
+  "properties": {
+    "symbol": { "type": "string", "description": "Current ticker symbol" },
+    "id": { "type": "number", "description": "Security ID (alternative to symbol)" },
+    "new_symbol": { "type": "string", "description": "New ticker symbol" },
+    "new_name": { "type": "string", "description": "New display name" }
+  }
+}
+```
+
+### create_security_trade
+Create a security buy or sell with its investment-account cash line and a
+balancing unknown/category line. Positive shares create a buy; negative shares
+create a sell.
+
+```json
+{
+  "properties": {
+    "account_id": { "type": "number", "description": "Investment account ID" },
+    "symbol": { "type": "string", "description": "Security ticker symbol" },
+    "id": { "type": "number", "description": "Security ID (alternative to symbol)" },
+    "shares": { "type": "number", "description": "Number of shares. Negative creates a sell; positive creates a buy" },
+    "price_per_share": { "type": "number", "description": "Price per share" },
+    "amount": { "type": "number", "description": "Security trade amount/cost" },
+    "commission": { "type": "number", "description": "Commission or fee amount" },
+    "cash_line_amount": { "type": "number", "description": "Investment account cash line amount. Positive for sell inflow, negative for buy outflow" },
+    "date": { "type": "string", "description": "Trade date in YYYY-MM-DD format" },
+    "title": { "type": "string", "description": "Transaction title" },
+    "memo": { "type": "string", "description": "Cash line memo" },
+    "offset_category_id": { "type": "number", "description": "Income/expense category ID for the balancing line. Omit to create an unknown balancing line" }
+  },
+  "required": ["account_id", "shares", "price_per_share", "amount", "cash_line_amount", "date"]
 }
 ```
 

@@ -17,6 +17,10 @@ XCODE_FRAMEWORKS := $(firstword $(wildcard \
 
 # $(HOME), not ~ — the install rules quote this path, and a quoted tilde is not expanded.
 INSTALL_DIR := $(HOME)/.local/bin
+# Local signing identity (self-signed cert in the login keychain). With a stable identity and
+# identifier, macOS keeps Full Disk Access across rebuilds; ad-hoc signatures lose it every time.
+CODESIGN_IDENTITY ?= Banktivity MCP Code Signing
+CODESIGN_ID := $(shell security find-identity -p codesigning 2>/dev/null | grep -q "$(CODESIGN_IDENTITY)" && echo "$(CODESIGN_IDENTITY)" || echo -)
 VERSION := $(shell grep 'public let version' Sources/BanktivityLib/Version.swift | sed 's/.*"\(.*\)"/\1/')
 
 export DEVELOPER_DIR
@@ -106,7 +110,7 @@ _install-from:
 	trap 'rm -f "$(INSTALL_DIR)/banktivity-cli.new" "$(INSTALL_DIR)/banktivity-mcp.new"' EXIT; \
 	for b in banktivity-cli banktivity-mcp; do \
 	  cp "$(BIN)/$$b" "$(INSTALL_DIR)/$$b.new"; \
-	  codesign -fs - "$(INSTALL_DIR)/$$b.new"; \
+	  codesign -f -s "$(CODESIGN_ID)" --identifier com.flinter.$$b "$(INSTALL_DIR)/$$b.new"; \
 	done; \
 	for b in banktivity-cli banktivity-mcp; do \
 	  mv -f "$(INSTALL_DIR)/$$b.new" "$(INSTALL_DIR)/$$b"; \
@@ -135,7 +139,7 @@ verify: ## Verify installed binaries exec (catches the invalid-signature SIGKILL
 	echo "verify: binaries exec cleanly"
 
 package: release ## Build release and create tarball
-	cd .build/apple/Products/Release && \
+	cd $(shell swift build -c release --arch arm64 --arch x86_64 --show-bin-path) && \
 	codesign -fs - banktivity-cli && \
 	codesign -fs - banktivity-mcp && \
 	tar czf /tmp/banktivity-swift-mcp-v$(VERSION)-macos-universal.tar.gz banktivity-cli banktivity-mcp

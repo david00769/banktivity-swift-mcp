@@ -17,6 +17,18 @@ do {
 }
 FileHandle.standardError.write("Vault: \(bankFilePath)\n".data(using: .utf8)!)
 
+let rawReportingCurrency = ProcessInfo.processInfo.environment["BANKTIVITY_REPORTING_CURRENCY"]
+let reportingCurrency = ReportingCurrency.resolve(rawReportingCurrency)
+if let rawReportingCurrency,
+   !rawReportingCurrency.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+   rawReportingCurrency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() != reportingCurrency
+{
+    FileHandle.standardError.write(
+        "Warning: Unknown BANKTIVITY_REPORTING_CURRENCY '\(rawReportingCurrency)'; falling back to \(reportingCurrency)\n"
+            .data(using: .utf8)!
+    )
+}
+
 // MARK: - Core Data Setup
 
 let container: NSPersistentContainer
@@ -52,7 +64,8 @@ VaultWriteGate.install(writeGuard.monitor.writeRefusal)
 let registry = ToolRegistry(
     container: container,
     writeGuard: writeGuard,
-    bankFilePath: bankFilePath
+    bankFilePath: bankFilePath,
+    reportingCurrency: reportingCurrency
 )
 registry.registerAllTools()
 

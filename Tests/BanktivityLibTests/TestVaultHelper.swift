@@ -32,18 +32,13 @@ enum TestVaultHelper {
 
     /// A fresh vault at a path nothing else uses.
     ///
-    /// Serialization is the suites' job, declared with `.serialized`, not this
-    /// helper's. It used to hold an `NSLock` here and release it in `cleanup`,
-    /// which split acquisition and release across two functions with arbitrary
-    /// caller code in between, and that produced two failures. A helper that
-    /// threw after this returned -- seeding, say -- never reached the caller's
-    /// `defer { cleanup }`, so the permit leaked and the next test blocked
-    /// forever: one observed run held 70 locks against 69 unlocks and hung.
-    /// And `cleanup` released unconditionally, so an unbalanced or cross-thread
-    /// unlock hit `NSLock`'s undefined behaviour, which is what the intermittent
-    /// SIGSEGV at a different test each time was.
-    ///
-    /// Every vault already has a UUID path, so nothing here is shared state.
+    /// Every vault gets a UUID path, so this helper guards no shared state and
+    /// takes no lock. What needs serializing is the Core Data work the suites do
+    /// against these vaults, and swift-testing expresses that directly: the
+    /// vault-using suites declare `.serialized`. Do not move that in here -- a
+    /// lock taken in this function and released in `cleanup` would split
+    /// acquisition from release across two functions with arbitrary caller code
+    /// in between, and a helper that threw in between would leak the permit.
     static func createFreshVault() throws -> TestVault {
         do {
             let tmpDir = NSTemporaryDirectory()

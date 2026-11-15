@@ -745,7 +745,8 @@ struct StatementRepositoryTests {
 
         let result = try repos.statements.reconcileLineItems(
             statementId: statement.id,
-            lineItemIds: [lineItemId]
+            lineItemIds: [lineItemId],
+            allowOutOfRange: true
         )
 
         #expect(result.reconciledLineItemCount == 1)
