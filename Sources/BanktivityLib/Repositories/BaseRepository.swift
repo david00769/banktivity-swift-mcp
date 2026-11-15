@@ -111,13 +111,17 @@ open class BaseRepository: @unchecked Sendable {
                         do {
                             // Real primary keys, so the recalculation's tie-break matches a later one.
                             try ctx.obtainPermanentIDs(for: Array(ctx.insertedObjects))
+                            // Every line the recalculation may rewrite (inserted and
+                            // user-edited ones included), so a failure can put them all back.
+                            let snapshot = Self.runningBalanceSnapshot(accounts: Array(stale.keys), in: ctx)
                             for (id, from) in stale {
                                 guard let account = try? ctx.existingObject(with: id), !account.isDeleted else { continue }
                                 do {
                                     try Self.runningBalanceFailureHook?(ctx)
                                     _ = try Self.recalculateRunningBalances(account: account, force: true, from: from, in: ctx)
+                                    try Self.runningBalanceAfterRecalcHook?(ctx)
                                 } catch {
-                                    Self.dropRunningBalanceChanges(in: ctx)
+                                    Self.restoreRunningBalances(snapshot)
                                     throw error
                                 }
                             }
@@ -136,12 +140,29 @@ open class BaseRepository: @unchecked Sendable {
     /// Test seam: when set, throws from the post-write running-balance recalculation.
     nonisolated(unsafe) static var runningBalanceFailureHook: ((NSManagedObjectContext) throws -> Void)?
 
-    /// Discard pending changes that touch only `pRunningBalance` on existing line items.
-    private static func dropRunningBalanceChanges(in ctx: NSManagedObjectContext) {
-        for object in ctx.updatedObjects where object.entity.name == "LineItem" {
-            if Set(object.changedValues().keys) == ["pRunningBalance"] {
-                ctx.refresh(object, mergeChanges: false)
+    /// Test seam: when set, throws after a recalculation has rewritten balances.
+    nonisolated(unsafe) static var runningBalanceAfterRecalcHook: ((NSManagedObjectContext) throws -> Void)?
+
+    /// Each line of the given accounts with its current `pRunningBalance`.
+    private static func runningBalanceSnapshot(
+        accounts: [NSManagedObjectID], in ctx: NSManagedObjectContext
+    ) -> [(line: NSManagedObject, balance: Any?)] {
+        var snapshot: [(NSManagedObject, Any?)] = []
+        for id in accounts {
+            guard let account = try? ctx.existingObject(with: id), !account.isDeleted else { continue }
+            let request = NSFetchRequest<NSManagedObject>(entityName: "LineItem")
+            request.predicate = NSPredicate(format: "pAccount == %@", account)
+            for line in (try? ctx.fetch(request)) ?? [] {
+                snapshot.append((line, line.value(forKey: "pRunningBalance")))
             }
+        }
+        return snapshot
+    }
+
+    /// Put every snapshotted line's `pRunningBalance` back as it was.
+    private static func restoreRunningBalances(_ snapshot: [(line: NSManagedObject, balance: Any?)]) {
+        for (line, balance) in snapshot where !line.isDeleted {
+            line.setValue(balance, forKey: "pRunningBalance")
         }
     }
 
