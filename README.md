@@ -70,7 +70,7 @@ A `.bank8` vault is a Core Data store, and Banktivity syncs it through CloudKit.
 
 This is david00769's maintained fork of Steve Flinter's
 [banktivity-swift-mcp](https://github.com/sflinter/banktivity-swift-mcp). It
-has everything upstream has: v0.18.3 is in sync with upstream main
+has everything upstream has: v1.0.0 is in sync with upstream main (it includes upstream v0.18.0). Fork releases are numbered from 1.0.0 so that their tags never collide with upstream's 0.x releases; each [CHANGELOG](CHANGELOG.md) entry names the upstream version it includes. It is in sync with upstream main
 as of `660cbc3`. Upstream has merged most of this fork's work, including sync
 by modification date (2026-11-15), so edits are signalled to Banktivity's sync
 the way the app itself does and are not reverted by a remote copy. What is
@@ -142,18 +142,18 @@ The consequence is worth stating plainly, because it is the failure this tool ca
 
 Each [release](https://github.com/david00769/banktivity-swift-mcp/releases)
 has one universal download (Apple Silicon and Intel) and a checksum file. CI
-builds and tests the release from the tagged commit. For v0.18.3:
+builds and tests the release from the tagged commit. For v1.0.0:
 
 ```sh
-base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.18.3
-curl -LO "$base/banktivity-swift-mcp-v0.18.3-macos-universal.tar.gz"
-curl -LO "$base/banktivity-swift-mcp-v0.18.3-macos-universal.tar.gz.sha256"
-shasum -a 256 -c banktivity-swift-mcp-v0.18.3-macos-universal.tar.gz.sha256   # prints "OK"
+base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v1.0.0
+curl -LO "$base/banktivity-swift-mcp-v1.0.0-macos-universal.tar.gz"
+curl -LO "$base/banktivity-swift-mcp-v1.0.0-macos-universal.tar.gz.sha256"
+shasum -a 256 -c banktivity-swift-mcp-v1.0.0-macos-universal.tar.gz.sha256   # prints "OK"
 
-tar xzf banktivity-swift-mcp-v0.18.3-macos-universal.tar.gz
+tar xzf banktivity-swift-mcp-v1.0.0-macos-universal.tar.gz
 xattr -d com.apple.quarantine banktivity-cli banktivity-mcp 2>/dev/null || true
 mkdir -p ~/.local/bin && mv banktivity-cli banktivity-mcp ~/.local/bin/
-banktivity-cli --version   # 0.18.3
+banktivity-cli --version   # 1.0.0
 ```
 
 The binaries are signed ad hoc, not notarized. The `xattr` line removes the

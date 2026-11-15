@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.0.0 (2026-11-16): fork versioning; includes upstream v0.18.0 @ 660cbc3
+
+Same code as v0.18.3. Only the version number changes.
+
+From this release the fork numbers its releases on its own major line, starting at 1.0.0, so its tags can no longer collide with upstream's 0.x tags: upstream released its own v0.18.0 on 2026-11-15, the same day as the fork's v0.18.0. Each fork release's entry here names the upstream version and commit it includes. Fork versions 0.17.x to 0.18.3 keep their existing tags.
+
 ## v0.18.3 (2026-11-16): in sync with upstream 660cbc3
 
 ### Upstream v0.18.0 (7165a8b)

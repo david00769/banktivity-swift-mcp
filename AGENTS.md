@@ -184,3 +184,7 @@ Some code here came from other people's forks. [ACKNOWLEDGEMENTS.md](ACKNOWLEDGE
 *Renamed from `CLAUDE.md` on 2026-09-21. One instruction file per
 directory, and it is `AGENTS.md`: Claude Code, Codex and the xAI CLI all read
 it, so a per-agent file only creates a split brain. Content is unchanged.*
+
+## Fork release numbering (2026-11-16)
+
+Fork releases use their own major line (1.x and up), never upstream's 0.x numbers, because the two repositories' tags otherwise collide. Bump the version in `Sources/BanktivityLib/Version.swift`, `server.json` (both `version` and the `.mcpb` file name in the identifier URL; the release workflow checks them) and the README download snippet. Every CHANGELOG entry names the upstream version and commit it includes ("includes upstream vX @ sha"). The local clone fetches upstream with `remote.upstream.tagOpt --no-tags`.
