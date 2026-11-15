@@ -175,4 +175,24 @@ struct RunningBalanceWriteTests {
         let injected = WriteWarnings.process.inject(into: "{\"id\":1}")
         #expect(injected.contains("balancesStale"))
     }
+
+    @Test("MCP integer arguments reject fractions instead of truncating them")
+    func fractionalIntegerArgumentsAreRejected() async throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+        let registry = ToolRegistry(
+            container: repos.vault.container,
+            writeGuard: WriteGuard(dbPath: repos.vault.path),
+            bankFilePath: repos.vault.path
+        )
+        #expect(ToolHelpers.getInt(["n": .double(3.7)], key: "n") == nil)
+        #expect(ToolHelpers.getInt(["n": .double(3.0)], key: "n") == 3)
+        #expect(ToolHelpers.intList([.int(1), .double(2.5)]) == nil)
+        #expect(ToolHelpers.intList([.int(1), .double(2.0)]) == [1, 2])
+
+        let result = await registry.callTool(
+            name: "unreconcile_line_items",
+            arguments: ["statement_id": .int(1), "line_item_ids": .array([.double(2.5)])])
+        #expect(result.isError == true)
+    }
 }

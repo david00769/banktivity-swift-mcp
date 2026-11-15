@@ -70,8 +70,24 @@ enum ToolHelpers {
     static func getInt(_ arguments: [String: Value]?, key: String) -> Int? {
         guard let value = arguments?[key] else { return nil }
         if case .int(let i) = value { return i }
-        if case .double(let d) = value { return Int(d) }
+        if case .double(let d) = value { return Int(exactly: d) }
         return nil
+    }
+
+    /// Every element as an integer, or nil if any is missing a whole-number value
+    /// (a fractional or non-numeric element must not be silently dropped or truncated).
+    static func intList(_ values: [Value]) -> [Int]? {
+        var out: [Int] = []
+        for v in values {
+            switch v {
+            case .int(let i): out.append(i)
+            case .double(let d):
+                guard let i = Int(exactly: d) else { return nil }
+                out.append(i)
+            default: return nil
+            }
+        }
+        return out
     }
 
     /// Extract a double value from tool arguments

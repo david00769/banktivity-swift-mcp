@@ -163,13 +163,11 @@ func registerStatementTools(
 
             var lineItemIds: [Int] = []
             if let idsArray = ToolHelpers.getArray(arguments, key: "line_item_ids") {
-                lineItemIds = idsArray.compactMap { v -> Int? in
-                    if case .int(let i) = v { return i }
-                    if case .double(let d) = v { return Int(d) }
-                    return nil
+                guard let parsed = ToolHelpers.intList(idsArray) else {
+                    return ToolHelpers.errorResponse("line_item_ids must be a non-empty, unique list of positive integers")
                 }
+                lineItemIds = parsed
                 if lineItemIds.isEmpty
-                    || lineItemIds.count != idsArray.count
                     || lineItemIds.contains(where: { $0 <= 0 })
                     || Set(lineItemIds).count != lineItemIds.count {
                     return ToolHelpers.errorResponse("line_item_ids must be a non-empty, unique list of positive integers")
@@ -311,10 +309,8 @@ func registerStatementTools(
             guard let idsArray = ToolHelpers.getArray(arguments, key: "line_item_ids") else {
                 return ToolHelpers.errorResponse("line_item_ids is required")
             }
-            let lineItemIds = idsArray.compactMap { v -> Int? in
-                if case .int(let i) = v { return i }
-                if case .double(let d) = v { return Int(d) }
-                return nil
+            guard let lineItemIds = ToolHelpers.intList(idsArray) else {
+                return ToolHelpers.errorResponse("line_item_ids must be whole numbers")
             }
 
             if ToolHelpers.getBool(arguments, key: "dry_run") {
@@ -362,10 +358,8 @@ func registerStatementTools(
             guard let idsArray = ToolHelpers.getArray(arguments, key: "line_item_ids") else {
                 return ToolHelpers.errorResponse("line_item_ids is required")
             }
-            let lineItemIds = idsArray.compactMap { v -> Int? in
-                if case .int(let i) = v { return i }
-                if case .double(let d) = v { return Int(d) }
-                return nil
+            guard let lineItemIds = ToolHelpers.intList(idsArray) else {
+                return ToolHelpers.errorResponse("line_item_ids must be whole numbers")
             }
 
             guard let result = try statements.unreconcileLineItems(
