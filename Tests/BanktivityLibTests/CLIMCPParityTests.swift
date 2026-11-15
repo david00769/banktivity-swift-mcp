@@ -189,6 +189,14 @@ struct CLIMCPParityTests {
         return out
     }
 
+    @Test("the CLI capability registry lists exactly the CLI verbs")
+    func capabilityRegistryMatchesCLI() throws {
+        let registry = Set(CapabilityRegistry.cliCapabilities().map(\.name))
+        let verbs = try Self.cliVerbs()
+        #expect(verbs.subtracting(registry).sorted().isEmpty, "CLI verbs missing from cliCapabilities(): \(verbs.subtracting(registry).sorted())")
+        #expect(registry.subtracting(verbs).sorted().isEmpty, "cliCapabilities() entries with no CLI verb: \(registry.subtracting(verbs).sorted())")
+    }
+
     @Test("every registered MCP tool is mapped to a CLI verb")
     func everyToolIsMapped() throws {
         let missing = try registeredTools().subtracting(Self.toolToVerb.keys).sorted()
