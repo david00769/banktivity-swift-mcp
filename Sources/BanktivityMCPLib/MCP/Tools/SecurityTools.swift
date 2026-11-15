@@ -308,7 +308,7 @@ func registerSecurityTools(
                 "shares": ToolHelpers.property(type: "number", description: "Number of shares. Negative creates a sell; positive creates a buy"),
                 "price_per_share": ToolHelpers.property(type: "number", description: "Price per share. Must be positive, or 0 together with worthless"),
                 "worthless": ToolHelpers.property(type: "boolean", description: "Record a sale (negative shares) of a worthless security: price_per_share must be 0 and no price is stored, so no device writes a 0 into price history"),
-                "amount": ToolHelpers.property(type: "number", description: "Security trade amount/cost. Informational only: balances use cash_line_amount, which is stored as the security line amount"),
+                "amount": ToolHelpers.property(type: "number", description: "Gross trade value (price x shares). Cross-checked against cash_line_amount and commission (buy: cash = -(amount + commission); sell: cash = amount - commission); 0 skips the check"),
                 "commission": ToolHelpers.property(type: "number", description: "Commission or fee amount"),
                 "cash_line_amount": ToolHelpers.property(type: "number", description: "Investment account cash line amount. Positive for sell inflow, negative for buy outflow"),
                 "date": ToolHelpers.property(type: "string", description: "Trade date in YYYY-MM-DD format"),

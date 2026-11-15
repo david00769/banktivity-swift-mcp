@@ -410,7 +410,7 @@ struct SecurityUpdateTests {
             symbol: BaseRepository.stringValue(security, "pSymbol"),
             shares: -2.5,
             pricePerShare: 12.34,
-            amount: 30.85,
+            amount: 597.29,
             commission: 1.23,
             cashLineItemAmount: 596.06,
             date: "2026-04-15",

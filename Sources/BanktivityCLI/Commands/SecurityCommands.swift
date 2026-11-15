@@ -595,7 +595,7 @@ struct Securities: AsyncParsableCommand {
         @Flag(name: .long, help: "Record a sale (negative --shares) of a worthless security: --price-per-share must be 0 and no price is stored, so no device writes a 0 into price history")
         var worthless: Bool = false
 
-        @Option(name: .long, parsing: .unconditional, help: "Security trade amount/cost. Informational only: Banktivity balances use --cash-line-amount, which is stored as the security line amount")
+        @Option(name: .long, parsing: .unconditional, help: "Gross trade value (price x shares). Cross-checked against --cash-line-amount and --commission (buy: cash = -(amount + commission); sell: cash = amount - commission). Cash must be negative for a buy, positive for a sell; 0 only with --worthless")
         var amount: Double
 
         @Option(name: .long, parsing: .unconditional, help: "Commission or fee amount")

@@ -187,6 +187,25 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         guard shares != 0 else {
             throw ToolError.invalidInput("shares must be non-zero")
         }
+        // Cash moves the opposite way to shares: a buy pays (negative cash), a
+        // sell receives (positive). Zero cash is only a worthless disposal.
+        if cashLineItemAmount == 0 {
+            guard worthless else {
+                throw ToolError.invalidInput("cash line amount 0 is only valid for a worthless sale (--worthless)")
+            }
+        } else if (shares > 0) != (cashLineItemAmount < 0) {
+            throw ToolError.invalidInput(
+                "cash line amount \(cashLineItemAmount) has the wrong sign for \(shares > 0 ? "a buy (shares > 0): cash must be negative" : "a sell (shares < 0): cash must be positive")")
+        }
+        // amount is the gross value: cash = -(amount + commission) on a buy,
+        // amount - commission on a sell.
+        if amount != 0 {
+            let expected = shares > 0 ? -(abs(amount) + commission) : abs(amount) - commission
+            guard abs(expected - cashLineItemAmount) < 0.01 else {
+                throw ToolError.invalidInput(
+                    "amount \(amount) with commission \(commission) implies cash \(expected), not \(cashLineItemAmount)")
+            }
+        }
         // A worthless disposal stores no price at all, so nothing can write a 0
         // into price history on another device (see `zeroPriceMessage`).
         let storedPrice: Double? = try Self.validatedPricePerShare(

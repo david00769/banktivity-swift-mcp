@@ -101,7 +101,7 @@ struct SecurityTradeCreationTests {
             symbol: BaseRepository.stringValue(security, "pSymbol"),
             shares: -2.5,
             pricePerShare: 12.34,
-            amount: 30.85,
+            amount: 597.29,
             commission: 1.23,
             cashLineItemAmount: 596.06,
             date: "2026-04-15",
@@ -583,6 +583,35 @@ struct SecurityTradeCreationTests {
 
         _ = try repo.updateSecurityLineItem(transactionId: buy.id, amount: -900, cashLineItemAmount: -900)
         #expect(abs(try accounts.getBalance(accountId: accountPK) + 900) < 0.000001)
+    }
+
+    @Test("create-trade refuses cash with the wrong sign and an amount that contradicts the cash")
+    func tradeSignAndAmountChecks() throws {
+        let (vault, repo, accountPK) = try zeroPriceFixture()
+        defer { TestVaultHelper.cleanup(vault) }
+        #expect(throws: ToolError.self) {
+            try repo.createSecurityTrade(
+                accountId: accountPK, symbol: "DEAD", shares: 10, pricePerShare: 2,
+                amount: 20, cashLineItemAmount: 20, date: "2026-06-01")
+        }
+        #expect(throws: ToolError.self) {
+            try repo.createSecurityTrade(
+                accountId: accountPK, symbol: "DEAD", shares: -10, pricePerShare: 2,
+                amount: 20, cashLineItemAmount: -20, date: "2026-06-01")
+        }
+        #expect(throws: ToolError.self) {
+            try repo.createSecurityTrade(
+                accountId: accountPK, symbol: "DEAD", shares: 10, pricePerShare: 2,
+                amount: 20, cashLineItemAmount: 0, date: "2026-06-01")
+        }
+        #expect(throws: ToolError.self) {
+            try repo.createSecurityTrade(
+                accountId: accountPK, symbol: "DEAD", shares: 10, pricePerShare: 2,
+                amount: 20, cashLineItemAmount: -35, date: "2026-06-01")
+        }
+        _ = try repo.createSecurityTrade(
+            accountId: accountPK, symbol: "DEAD", shares: 10, pricePerShare: 2,
+            amount: 20, commission: 1, cashLineItemAmount: -21, date: "2026-06-01")
     }
 
     // MARK: - Zero-price guard (upstream c96dea6) and its sanctioned exceptions
