@@ -79,7 +79,7 @@ Three-target package structure:
 
 ```
 BanktivityLib        ← Pure domain library (no MCP dependency)
-  CoreData/          PersistentContainer, DateConversion, WriteGuard, SyncRecords
+  CoreData/          PersistentContainer, DateConversion, WriteGuard, SyncRecords, SyncBlobUpdater (no-op updates)
   Repositories/      BaseRepository + 10 domain repositories
   Models/            DTOs, Constants, Errors, Formatting
   Export/            RDF export: TurtleWriter, TurtleSerializer, VaultExporter
@@ -171,7 +171,7 @@ Evidence on inserts: CLI creates did reach the cloud under the old model (a CLI-
 
 **LineItems have no separate sync records.** A Statement `SyncedHostedEntity` can exist, but historical vaults can legitimately omit an individual Statement record; typed statement replacement must never synthesize one. When an individual Statement record is present, its deleted/restore state is a strict part of the atomic forward/inverse contract: the inspection preimage records its `pSyncedModificationDate` (`syncedModificationTimestamp`) and restore puts back exactly that value. Replace/restore refuses a record already pending deletion.
 
-**Upstream blob patching also exists (upstream sync, 2026-11-16).** `SyncBlobUpdater` is restored and upstream's call sites patch `pRemoteEntityData`, nulling `pSyncedModificationDate` on normal records (state-0 records in a live vault have it NULL; only state-3 tombstones carry a date). What actually triggers an upload of a modified record is unverified; the fork's measurement above says the modification date. Keep both: always set `pModificationDate` on the entity you change, and do not drop either mechanism until a controlled round trip settles it.
+**Upstream sync design adopted (upstream 699dc3a, merged 2026-11-16).** `SyncBlobUpdater`'s update methods (`updateTransactionBlob`, `replaceTransactionLineItems`, `updateSecurityLatestPrice`, `updateSecurityIdentity`, `updateStatementBalances`) are deliberate no-ops: the blob is the three-way merge base (base == local -> take remote), so patching it on an edit lets an incoming remote copy silently undo the edit, and uploads don't need it. Edits are signalled by `pModificationDate` only. Line items, security lines and prices travel inside their Transaction or Security record, so `BaseRepository.markOwnersModified` (run on every save) stamps the owning Transaction or Security; a change to the cached `pRunningBalance` alone never counts, so recalculation never triggers uploads. New-row sync records (`createTransactionSyncRecord`) and state-3 tombstones are unchanged. `pSyncedModificationDate` is NULL on normal records and is not an upload flag. Receiving side: a device applying an incoming transaction writes each security line's `pricePerShare` into that security's price history for the trade date, zero included (hence the zero-price rule above); an incoming Security record writes its `latestSecurityPrice`.
 
 `SyncRecords` is the only code that touches `SyncedHostedEntity`: static helpers that run inside the caller's context and never save on their own (`markDeletedIfPresent`, `requireNotPendingDelete`, `syncedModificationDate`, `restoreDeletedStatementRecordIfPresent`), plus the read-only `inspect` behind `transactions sync-info` and `statements inspect-sync-record`. Repositories take no sync dependency.
 

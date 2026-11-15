@@ -43,6 +43,10 @@ A `.bank8` vault is a Core Data store, and Banktivity syncs it through CloudKit.
   and the write guard now refuses when it cannot tell and is enforced where
   every write is saved. See
   [Safety Features](#safety-features).
+- **Edits sync by modification date.** The CLI never patches a record's sync
+  blob (Banktivity's merge base) on an edit; it stamps `pModificationDate` on
+  the owning Transaction or Security, which is what makes Banktivity upload it.
+  Changes to cached running balances alone never stamp anything.
 
 > **Warning: this tool changes your Banktivity data.** Write commands make real
 > changes to your vault, and AI assistants make mistakes. Back up the vault before
@@ -674,7 +678,7 @@ parse.
 Commands available:
 
 - `accounts list`, `accounts balance`, `accounts net-worth`, `accounts spending`, `accounts income`, `accounts summary`, `accounts update`, `accounts recalc-balances` (writes also keep running balances current)
-- `transactions list`, `transactions search`, `transactions get`, `transactions create`, `transactions update`, `transactions delete`
+- `transactions list`, `transactions search`, `transactions get`, `transactions create`, `transactions repair-forex`, `transactions update`, `transactions delete`
 - `categories list`, `categories get`, `categories tree`, `categories audit-entities`, `categories create`, `categories delete`
   - `categories delete --category-id N` refuses a category that has line items or subcategories, or that a template, scheduled transaction or import rule still uses.
 - `tags list`, `tags create`, `tags tag-transaction`, `tags get-by-tag`, `tags bulk-tag`

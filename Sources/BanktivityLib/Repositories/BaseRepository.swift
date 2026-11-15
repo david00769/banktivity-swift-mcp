@@ -101,6 +101,9 @@ open class BaseRepository: @unchecked Sendable {
             outcome = Result {
                 let value = try block(ctx)
                 if save && ctx.hasChanges {
+                    // Mark the synced records that own any changed rows as modified,
+                    // which is what makes Banktivity upload them.
+                    try Self.markOwnersModified(in: ctx)
                     // Keep the desktop's cached running balances (its account cash) current.
                     // Recalculate in the same context before the single save, so the
                     // write and its balances commit together. A recalculation failure
@@ -356,6 +359,48 @@ open class BaseRepository: @unchecked Sendable {
             balance: NSDecimalNumber(decimal: total).doubleValue, wasStale: !finalIsRight)
     }
 
+    /// Banktivity uploads a record when its `pModificationDate` is after the
+    /// last sync (`+[IGGCAccountingSyncedDocument enitities:modifiedAfterDate:]`).
+    /// Line items, security lines and prices have no sync record of their own:
+    /// they travel inside their Transaction or Security. So any real change to
+    /// them marks the owner modified. A change to the cached `pRunningBalance`
+    /// alone does not, so recalculation never triggers uploads.
+    static func markOwnersModified(in ctx: NSManagedObjectContext) throws {
+        var transactions = Set<NSManagedObject>()
+        var securityIDs = Set<String>()
+        func addTx(_ tx: Any?) {
+            if let tx = tx as? NSManagedObject, !tx.isDeleted { transactions.insert(tx) }
+        }
+        func addLine(_ li: NSManagedObject) {
+            addTx(li.value(forKey: "pTransaction"))
+            addTx(li.committedValues(forKeys: ["pTransaction"])["pTransaction"])
+        }
+        for object in ctx.insertedObjects.union(ctx.updatedObjects).union(ctx.deletedObjects) {
+            let changed = Set(object.changedValues().keys).subtracting(["pRunningBalance"])
+            guard object.isInserted || object.isDeleted || !changed.isEmpty else { continue }
+            switch object.entity.name {
+            case "LineItem":
+                addLine(object)
+            case "SecurityLineItem":
+                let li = object.value(forKey: "pLineItem") ?? object.committedValues(forKeys: ["pLineItem"])["pLineItem"]
+                if let li = li as? NSManagedObject { addLine(li) }
+            case "SecurityPrice":
+                let item = object.value(forKey: "pSecurityPriceItem") ?? object.committedValues(forKeys: ["pSecurityPriceItem"])["pSecurityPriceItem"]
+                if let item = item as? NSManagedObject { securityIDs.insert(stringValue(item, "pSecurityID")) }
+            default:
+                break
+            }
+        }
+        for tx in transactions where !tx.isInserted {
+            setNow(tx, "pModificationDate")
+        }
+        if !securityIDs.isEmpty {
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Security")
+            request.predicate = NSPredicate(format: "pUniqueID IN %@", Array(securityIDs))
+            for security in try ctx.fetch(request) { setNow(security, "pModificationDate") }
+        }
+    }
+
     /// Real (non-category) accounts whose cached running balances a pending
     /// save will make stale: line amounts, rates, accounts or transactions
     /// changed, security amounts changed, or a transaction's date or type
@@ -394,7 +439,8 @@ open class BaseRepository: @unchecked Sendable {
                     lineAccounts(li)
                 }
             case "Transaction" where !changed.isDisjoint(with: transactionKeys):
-                for li in relatedSet(object, "pLineItems") { lineAccounts(li) }
+                // Transaction -> lines is `lineItems` (no p prefix) in Banktivity's model.
+                for li in relatedSet(object, "lineItems") { lineAccounts(li) }
             default:
                 break
             }
