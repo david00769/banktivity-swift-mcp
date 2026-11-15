@@ -131,6 +131,8 @@ func registerStatementTools(
                     "ending_balance": ToolHelpers.property(type: "number", description: "Ending balance"),
                     "name": ToolHelpers.property(type: "string", description: "Optional statement name"),
                     "note": ToolHelpers.property(type: "string", description: "Optional note"),
+                    "line_item_ids": ToolHelpers.property(type: "array", description: "Line item IDs to reconcile as part of this create contract; a failed reconcile rolls the new statement back"),
+                    "operator_confirmed_visible": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; unnamed statements are ordinary app-created rows and need no confirmation"),
                     "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
                     "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
                 ],
@@ -159,7 +161,22 @@ func registerStatementTools(
             let name = ToolHelpers.getString(arguments, key: "name")
             let note = ToolHelpers.getString(arguments, key: "note")
 
-            let result = try statements.create(
+            var lineItemIds: [Int] = []
+            if let idsArray = ToolHelpers.getArray(arguments, key: "line_item_ids") {
+                lineItemIds = idsArray.compactMap { v -> Int? in
+                    if case .int(let i) = v { return i }
+                    if case .double(let d) = v { return Int(d) }
+                    return nil
+                }
+                if lineItemIds.isEmpty
+                    || lineItemIds.count != idsArray.count
+                    || lineItemIds.contains(where: { $0 <= 0 })
+                    || Set(lineItemIds).count != lineItemIds.count {
+                    return ToolHelpers.errorResponse("line_item_ids must be a non-empty, unique list of positive integers")
+                }
+            }
+
+            let created = try statements.create(
                 accountId: accountId,
                 startDate: startDate,
                 endDate: endDate,
@@ -168,7 +185,24 @@ func registerStatementTools(
                 name: name,
                 note: note
             )
-            return try ToolHelpers.jsonResponse(result)
+            if lineItemIds.isEmpty {
+                return try ToolHelpers.jsonResponse(created)
+            }
+            do {
+                let result = try statements.reconcileLineItems(
+                    statementId: created.id,
+                    lineItemIds: lineItemIds,
+                    operatorConfirmedVisible: ToolHelpers.getBool(arguments, key: "operator_confirmed_visible")
+                )
+                return try ToolHelpers.jsonResponse(result)
+            } catch {
+                do {
+                    _ = try statements.delete(statementId: created.id)
+                } catch let rollbackError {
+                    return ToolHelpers.errorResponse("Statement create failed and rollback also failed: \(error); rollback: \(rollbackError)")
+                }
+                throw error
+            }
         }
     }
 
@@ -177,16 +211,21 @@ func registerStatementTools(
         registry.register(
             name: "update_statement",
             access: .write,
-            description: "Update a visible statement row's ending balance after an operator-entered UI correction plan.",
+            description: "Update a visible statement row's ending balance, beginning balance, dates or name after an operator-entered UI correction plan. Give at least one field to change; beginning_balance, start_date, end_date and name mirror the CLI.",
             inputSchema: ToolHelpers.schema(
                 properties: [
                     "statement_id": ToolHelpers.property(type: "number", description: "The visible statement ID to update"),
                     "ending_balance": ToolHelpers.property(type: "number", description: "Corrected ending balance"),
+                    "beginning_balance": ToolHelpers.property(type: "number", description: "Corrected beginning balance for an explicit internal-row repair"),
+                    "start_date": ToolHelpers.property(type: "string", description: "Corrected statement start date, YYYY-MM-DD"),
+                    "end_date": ToolHelpers.property(type: "string", description: "Corrected statement end date, YYYY-MM-DD"),
+                    "name": ToolHelpers.property(type: "string", description: "Statement display name (trimmed, non-empty)"),
+                    "allow_internal": ToolHelpers.property(type: "boolean", description: "Deliberately allow an update on an internal investment statement row"),
                     "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
                     "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
                     "operator_confirmed_visible": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; unnamed statements are ordinary app-created rows and need no confirmation"),
                 ],
-                required: ["statement_id", "ending_balance"]
+                required: ["statement_id"]
             )
         ) { arguments in
             if let msg = await writeGuard.guardWriteAccess() {
@@ -195,13 +234,14 @@ func registerStatementTools(
             guard let statementId = ToolHelpers.getInt(arguments, key: "statement_id") else {
                 return ToolHelpers.errorResponse("statement_id is required")
             }
-            guard let endingBalance = ToolHelpers.getDouble(arguments, key: "ending_balance") else {
-                return ToolHelpers.errorResponse("ending_balance is required")
-            }
-
             let result = try statements.update(
                 statementId: statementId,
-                endingBalance: endingBalance,
+                endingBalance: ToolHelpers.getDouble(arguments, key: "ending_balance"),
+                beginningBalance: ToolHelpers.getDouble(arguments, key: "beginning_balance"),
+                startDate: ToolHelpers.getString(arguments, key: "start_date"),
+                endDate: ToolHelpers.getString(arguments, key: "end_date"),
+                name: ToolHelpers.getString(arguments, key: "name"),
+                allowInternal: ToolHelpers.getBool(arguments, key: "allow_internal"),
                 operatorConfirmedVisible: ToolHelpers.getBool(arguments, key: "operator_confirmed_visible")
             )
             return try ToolHelpers.jsonResponse(result)
@@ -220,6 +260,7 @@ func registerStatementTools(
                     "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
                     "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
                     "allow_internal": ToolHelpers.property(type: "boolean", description: "Deliberately allow deleting an internal investment statement row after a diagnostic repair plan"),
+                    "operator_confirmed_visible": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; unnamed statements are ordinary app-created rows and need no confirmation"),
                 ],
                 required: ["statement_id"]
             )
@@ -252,6 +293,7 @@ func registerStatementTools(
                 properties: [
                     "statement_id": ToolHelpers.property(type: "number", description: "The statement ID"),
                     "line_item_ids": ToolHelpers.property(type: "array", description: "Array of line item IDs to reconcile"),
+                    "dry_run": ToolHelpers.property(type: "boolean", description: "Preview the statement as it would be after reconciling, without writing"),
                     "allow_out_of_range": ToolHelpers.property(type: "boolean", description: "Allow line items dated outside the statement period, e.g. card charges posted on a later statement (default false)"),
                     "backup_confirmed": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
                     "post_ui_verification_required": ToolHelpers.property(type: "boolean", description: "Accepted for compatibility; not required for ordinary statements"),
@@ -273,6 +315,15 @@ func registerStatementTools(
                 if case .int(let i) = v { return i }
                 if case .double(let d) = v { return Int(d) }
                 return nil
+            }
+
+            if ToolHelpers.getBool(arguments, key: "dry_run") {
+                let preview = try statements.previewReconcileLineItems(
+                    statementId: statementId,
+                    lineItemIds: lineItemIds,
+                    operatorConfirmedVisible: ToolHelpers.getBool(arguments, key: "operator_confirmed_visible")
+                )
+                return try ToolHelpers.jsonResponse(preview)
             }
 
             let result = try statements.reconcileLineItems(

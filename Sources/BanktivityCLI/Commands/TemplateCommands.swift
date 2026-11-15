@@ -62,11 +62,29 @@ struct Templates: AsyncParsableCommand {
         @Option(name: .long, help: "Currency UUID")
         var currencyId: String?
 
+        @Option(name: .long, help: "JSON array of template line items, e.g. '[{\"account_id\":\"<account UUID>\",\"amount\":-50,\"memo\":\"x\"}]'")
+        var lineItems: String?
+
         func run() async throws {
             let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
             let container = try BanktivityCLI.createContainer(vaultPath: path)
             let writeGuard = BanktivityCLI.createWriteGuard(vaultPath: path)
             try await guardWrite(writeGuard)
+
+            var parsedLineItems: [(accountId: String, amount: Double, memo: String?)]?
+            if let lineItems {
+                guard let data = lineItems.data(using: .utf8),
+                      let array = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                    throw ToolError.invalidInput("--line-items must be a valid JSON array")
+                }
+                parsedLineItems = try array.map { item in
+                    guard let accountId = item["account_id"] as? String else {
+                        throw ToolError.missingParameter("Each line item requires an 'account_id' (account UUID string)")
+                    }
+                    let amount = item["amount"] as? Double ?? (item["amount"] as? Int).map(Double.init) ?? 0.0
+                    return (accountId: accountId, amount: amount, memo: item["memo"] as? String)
+                }
+            }
 
             let templates = TemplateRepository(container: container)
             let result = try templates.create(
@@ -74,7 +92,7 @@ struct Templates: AsyncParsableCommand {
                 amount: amount,
                 note: note,
                 currencyId: currencyId,
-                lineItems: nil
+                lineItems: parsedLineItems
             )
             try outputJSON(result, format: parent.format)
         }

@@ -23,6 +23,7 @@ func registerTransactionTools(
             "end_date": ToolHelpers.property(type: "string", description: "End date in ISO format (YYYY-MM-DD)"),
             "limit": ToolHelpers.property(type: "number", description: "Maximum number of transactions to return"),
             "offset": ToolHelpers.property(type: "number", description: "Number of transactions to skip"),
+            "show_instant": ToolHelpers.property(type: "boolean", description: "Also report the instant each date is stored at. A date-only value is anchored at 10:00 UTC, so an anchored row reads exactly T10:00:00Z"),
         ])
     ) { arguments in
         let accountId: Int?
@@ -42,7 +43,8 @@ func registerTransactionTools(
             startDate: startDate,
             endDate: endDate,
             limit: limit,
-            offset: offset
+            offset: offset,
+            includeInstant: ToolHelpers.getBool(arguments, key: "show_instant")
         )
 
         return try ToolHelpers.jsonResponse(results)
@@ -79,6 +81,7 @@ func registerTransactionTools(
         inputSchema: ToolHelpers.schema(
             properties: [
                 "transaction_id": ToolHelpers.property(type: "number", description: "The transaction ID"),
+                "show_instant": ToolHelpers.property(type: "boolean", description: "Also report the instant each date is stored at. A date-only value is anchored at 10:00 UTC, so an anchored row reads exactly T10:00:00Z"),
             ],
             required: ["transaction_id"]
         )
@@ -87,7 +90,10 @@ func registerTransactionTools(
             return ToolHelpers.errorResponse("transaction_id is required")
         }
 
-        guard let transaction = try transactions.get(transactionId: transactionId) else {
+        guard let transaction = try transactions.get(
+            transactionId: transactionId,
+            includeInstant: ToolHelpers.getBool(arguments, key: "show_instant")
+        ) else {
             return ToolHelpers.errorResponse("Transaction not found: \(transactionId)")
         }
 

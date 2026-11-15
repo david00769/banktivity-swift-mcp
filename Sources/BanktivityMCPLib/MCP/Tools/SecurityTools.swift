@@ -416,6 +416,8 @@ func registerSecurityTools(
                 "memo": ToolHelpers.property(type: "string", description: "Cash line memo"),
                 "offset_category_id": ToolHelpers.property(type: "number", description: "Income/expense category ID for the balancing line. Omit to create an unknown balancing line"),
                 "income_type": ToolHelpers.property(type: "string", description: "Income type: dividend, return-of-capital, capital-gains-short, capital-gains-long, interest, investment-income. A spin-off distributes as return-of-capital, not a dividend"),
+                "withheld_amount": ToolHelpers.property(type: "number", description: "Tax withheld at source. amount stays the GROSS: the account receives the net, the income category is credited the gross, and this sits on its own line"),
+                "withholding_category_id": ToolHelpers.property(type: "number", description: "Category ID for the withheld tax line (required with withheld_amount)"),
             ],
             required: ["account_id", "amount", "date"]
         )
@@ -443,7 +445,9 @@ func registerSecurityTools(
             title: ToolHelpers.getString(arguments, key: "title"),
             memo: ToolHelpers.getString(arguments, key: "memo"),
             offsetCategoryId: ToolHelpers.getInt(arguments, key: "offset_category_id"),
-            incomeType: ToolHelpers.getString(arguments, key: "income_type") ?? "dividend"
+            incomeType: ToolHelpers.getString(arguments, key: "income_type") ?? "dividend",
+            withheldAmount: ToolHelpers.getDouble(arguments, key: "withheld_amount"),
+            withholdingCategoryId: ToolHelpers.getInt(arguments, key: "withholding_category_id")
         )
         return try ToolHelpers.jsonResponse(result)
     }
