@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased: upstream sync
+## v0.18.0 (2026-11-16): in sync with upstream adc3220 + 699dc3a
 
 ### Removed
 - **`statements replace-internal-row-with-visible-statement` and `statements restore-internal-row-from-preimage`:** statements have no name property and the so-called internal rows are ordinary reconciled monthly statements, so these verbs would rework real statements.

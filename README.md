@@ -70,19 +70,31 @@ A `.bank8` vault is a Core Data store, and Banktivity syncs it through CloudKit.
 
 This is david00769's maintained fork of Steve Flinter's
 [banktivity-swift-mcp](https://github.com/sflinter/banktivity-swift-mcp). It
-has everything upstream has.
-Upstream merged nine of this fork's pull requests on 2026-11-03, so much of the
-fork's earlier work is in upstream too. Some of what is listed below is still
-offered upstream as
-[pull requests](https://github.com/sflinter/banktivity-swift-mcp/pulls?q=is%3Apr+is%3Aopen+author%3Adavid00769);
-the rest is only here.
+has everything upstream has: v0.18.0 (2026-11-16) is in sync with upstream main
+as of `699dc3a`. Upstream has merged most of this fork's work, including sync
+by modification date (2026-11-15), so edits are signalled to Banktivity's sync
+the way the app itself does and are not reverted by a remote copy. What is
+listed below is only here, or is still offered upstream as
+[pull requests](https://github.com/sflinter/banktivity-swift-mcp/pulls?q=is%3Apr+is%3Aopen+author%3Adavid00769).
+
+**Use `banktivity-cli` first.** Every MCP tool has a CLI verb (a parity test
+keeps the two in step), and the CLI is the primary, documented interface. The
+MCP server is for clients that can only speak MCP.
 
 What the fork adds:
 
-- **Edits that survive sync.** Changes made with the CLI are no longer reverted
-  the next time Banktivity syncs.
+- **Safer writes:** running balances are recalculated in the same save as the
+  write, and a failed recalculation is reported in the result
+  (`balancesStale`) instead of failing a write that committed. Trade cash
+  signs are checked, a zero price is never written into price history
+  (`--worthless` records a worthless disposal), and `categories delete`
+  refuses while a template, schedule or import rule still uses the category.
+- **Net worth you can trust:** totals convert to `BANKTIVITY_REPORTING_CURRENCY`,
+  and accounts with no stored rate are listed in `excludedAccounts` with
+  `complete: false`, not dropped silently.
 - **Statements:** reconciliation that selects the same rows the Banktivity app
-  does, plus repair commands for statement rows.
+  does. Statements have no name in Banktivity, so an unnamed statement is
+  ordinary and needs no extra confirmation.
 - **Investments:** create security trades and income, and see realised capital
   gains per lot.
 - **Safety and reporting:** a machine-readable list of which commands write,
@@ -129,18 +141,18 @@ The consequence is worth stating plainly, because it is the failure this tool ca
 
 Each [release](https://github.com/david00769/banktivity-swift-mcp/releases)
 has one universal download (Apple Silicon and Intel) and a checksum file. CI
-builds and tests the release from the tagged commit. For v0.17.4:
+builds and tests the release from the tagged commit. For v0.18.0:
 
 ```sh
-base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.17.4
-curl -LO "$base/banktivity-swift-mcp-v0.17.4-macos-universal.tar.gz"
-curl -LO "$base/banktivity-swift-mcp-v0.17.4-macos-universal.tar.gz.sha256"
-shasum -a 256 -c banktivity-swift-mcp-v0.17.4-macos-universal.tar.gz.sha256   # prints "OK"
+base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.18.0
+curl -LO "$base/banktivity-swift-mcp-v0.18.0-macos-universal.tar.gz"
+curl -LO "$base/banktivity-swift-mcp-v0.18.0-macos-universal.tar.gz.sha256"
+shasum -a 256 -c banktivity-swift-mcp-v0.18.0-macos-universal.tar.gz.sha256   # prints "OK"
 
-tar xzf banktivity-swift-mcp-v0.17.4-macos-universal.tar.gz
+tar xzf banktivity-swift-mcp-v0.18.0-macos-universal.tar.gz
 xattr -d com.apple.quarantine banktivity-cli banktivity-mcp 2>/dev/null || true
 mkdir -p ~/.local/bin && mv banktivity-cli banktivity-mcp ~/.local/bin/
-banktivity-cli --version   # 0.17.4
+banktivity-cli --version   # 0.18.0
 ```
 
 The binaries are signed ad hoc, not notarized. The `xattr` line removes the
