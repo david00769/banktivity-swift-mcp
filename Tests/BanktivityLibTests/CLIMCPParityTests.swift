@@ -112,8 +112,6 @@ struct CLIMCPParityTests {
         "categories delete",
         "statements inspect-membership",
         "statements inspect-sync-record",
-        "statements replace-internal-row-with-visible-statement",
-        "statements restore-internal-row-from-preimage",
         "securities fix-prices",
         "securities link-income-category",
         "transactions sync-info",

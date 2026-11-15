@@ -138,20 +138,6 @@ struct CLIStatementContractTests {
         #expect(syncInspection.status == 0)
         #expect(syncInspection.output.contains("<statement-id>"))
 
-        let replacement = try runCLI(["statements", "replace-internal-row-with-visible-statement", "--help"])
-        #expect(replacement.status == 0)
-        #expect(replacement.output.contains("--preimage-sha256"))
-        #expect(replacement.output.contains("--membership-preimage-sha256"))
-        #expect(replacement.output.contains("--replacement-membership-preimage-sha256"))
-
-        let restore = try runCLI(["statements", "restore-internal-row-from-preimage", "--help"])
-        #expect(restore.status == 0)
-        #expect(restore.output.contains("--statement-preimage-json"))
-        #expect(restore.output.contains("--line-item-memberships-json"))
-        #expect(restore.output.contains("--replacement-line-item-ids"))
-        #expect(restore.output.contains("--replacement-membership-preimage-sha256"))
-        #expect(restore.output.contains("--replacement-preimage-sha256"))
-
         let update = try runCLI(["statements", "update", "--help"])
         #expect(update.status == 0)
         #expect(update.output.contains("--name"))

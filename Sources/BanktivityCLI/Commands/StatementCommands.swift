@@ -7,7 +7,7 @@ import Foundation
 struct Statements: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Statement reconciliation operations",
-        subcommands: [List.self, Status.self, Get.self, InspectMembership.self, InspectSyncRecord.self, ReplaceInternalRow.self, RestoreInternalRow.self, CorrectionPlan.self, Create.self, Update.self, Delete.self, Reconcile.self, Unreconcile.self, Unreconciled.self]
+        subcommands: [List.self, Status.self, Get.self, InspectMembership.self, InspectSyncRecord.self, CorrectionPlan.self, Create.self, Update.self, Delete.self, Reconcile.self, Unreconcile.self, Unreconciled.self]
     )
 
     struct List: AsyncParsableCommand {
@@ -151,78 +151,6 @@ struct Statements: AsyncParsableCommand {
                 options: [.prettyPrinted, .sortedKeys]
             )
             print(String(data: data, encoding: .utf8)!)
-        }
-    }
-
-    struct ReplaceInternalRow: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(commandName: "replace-internal-row-with-visible-statement", abstract: "Atomically replace an inspected internal statement row with a visible provider-period row (refuses a named, user-curated source statement; --allow-internal does not apply here)")
-        @OptionGroup var parent: GlobalOptions
-        @Option(name: .long) var sourceStatementId: Int
-        @Option(name: .long) var accountId: Int
-        @Option(name: .long) var startDate: String
-        @Option(name: .long) var endDate: String
-        @Option(name: .long) var beginningBalance: Double
-        @Option(name: .long) var endingBalance: Double
-        @Option(name: .long) var name: String
-        @Option(name: .long) var lineItemIds: String
-        @Option(name: .long) var preimageSha256: String
-        @Option(name: .long) var membershipPreimageSha256: String
-        @Option(name: .long) var replacementMembershipPreimageSha256: String
-        @Option(name: .long) var positionIndex: Int
-        @Option(name: .long) var beforeStatementId: Int?
-        @Option(name: .long) var afterStatementId: Int?
-        @Flag(name: .long) var backupConfirmed = false
-        @Flag(name: .long) var postUIVerificationRequired = false
-
-        func run() async throws {
-            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
-            let container = try BanktivityCLI.createContainer(vaultPath: path)
-            let guarder = BanktivityCLI.createWriteGuard(vaultPath: path); try await guardWrite(guarder)
-            try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
-            let rawIds = lineItemIds.split(separator: ",", omittingEmptySubsequences: false)
-            let ids = rawIds.compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-            guard !ids.isEmpty, ids.count == rawIds.count else {
-                throw ToolError.invalidInput("Replacement line-item IDs must be a comma-separated integer list")
-            }
-            let repo = StatementRepository(container: container, lineItemRepo: LineItemRepository(container: container))
-            let result = try repo.replaceInternalRowWithVisibleStatement(sourceStatementId: sourceStatementId, accountId: accountId, startDate: startDate, endDate: endDate, beginningBalance: beginningBalance, endingBalance: endingBalance, name: name, lineItemIds: ids, preimageSha256: preimageSha256, membershipPreimageSha256: membershipPreimageSha256, replacementMembershipPreimageSha256: replacementMembershipPreimageSha256, positionIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId)
-            try outputJSON(result, format: parent.format)
-        }
-    }
-
-    struct RestoreInternalRow: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(commandName: "restore-internal-row-from-preimage", abstract: "Restore an internal statement row only from its exact hash-bound preimage")
-        @OptionGroup var parent: GlobalOptions
-        @Option(name: .long) var replacementStatementId: Int
-        @Option(name: .long) var accountId: Int
-        @Option(name: .long) var statementPreimageJson: String
-        @Option(name: .long) var lineItemMembershipsJson: String
-        @Option(name: .long) var preimageSha256: String
-        @Option(name: .long) var membershipPreimageSha256: String
-        @Option(name: .long) var replacementLineItemIds: String
-        @Option(name: .long) var replacementMembershipPreimageSha256: String
-        @Option(name: .long) var replacementPreimageSha256: String
-        @Option(name: .long) var positionIndex: Int
-        @Option(name: .long) var beforeStatementId: Int?
-        @Option(name: .long) var afterStatementId: Int?
-        @Flag(name: .long) var backupConfirmed = false
-        @Flag(name: .long) var postUIVerificationRequired = false
-
-        func run() async throws {
-            let preimage = try JSONDecoder().decode(StatementDTO.self, from: Data(statementPreimageJson.utf8))
-            let memberships = try JSONDecoder().decode([StatementLineItemMembershipPreimageDTO].self, from: Data(lineItemMembershipsJson.utf8))
-            let rawReplacementIds = replacementLineItemIds.split(separator: ",", omittingEmptySubsequences: false)
-            let replacementIds = rawReplacementIds.compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-            guard !replacementIds.isEmpty, replacementIds.count == rawReplacementIds.count else {
-                throw ToolError.invalidInput("Restore replacement line-item IDs must be a comma-separated integer list")
-            }
-            let path = try BanktivityCLI.resolveVaultPath(vault: parent.vault)
-            let container = try BanktivityCLI.createContainer(vaultPath: path)
-            let guarder = BanktivityCLI.createWriteGuard(vaultPath: path); try await guardWrite(guarder)
-            try requireStatementWriteSafety(backupConfirmed: backupConfirmed, postUIVerificationRequired: postUIVerificationRequired)
-            let repo = StatementRepository(container: container, lineItemRepo: LineItemRepository(container: container))
-            let result = try repo.restoreInternalRowFromPreimage(replacementStatementId: replacementStatementId, accountId: accountId, statementPreimage: preimage, memberships: memberships, preimageSha256: preimageSha256, membershipPreimageSha256: membershipPreimageSha256, replacementLineItemIds: replacementIds, replacementMembershipPreimageSha256: replacementMembershipPreimageSha256, replacementPreimageSha256: replacementPreimageSha256, positionIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId)
-            try outputJSON(result, format: parent.format)
         }
     }
 

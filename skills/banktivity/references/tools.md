@@ -10,8 +10,7 @@ hyphenated names (`get_transactions --account_id` here is `transactions list
 the CLI has: `accounts create`, `accounts recalc-balances`, `categories delete`,
 `reconciliation execute-bundle`, `securities fix-prices`,
 `securities link-income-category`, `statements inspect-membership`,
-`statements inspect-sync-record`, the two `statements ...-internal-row...` repairs,
-and `transactions sync-info`.
+`statements inspect-sync-record` and `transactions sync-info`.
 
 ---
 

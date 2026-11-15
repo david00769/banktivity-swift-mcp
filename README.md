@@ -823,7 +823,7 @@ The command groups below are the complete CLI surface. Use a group's
 - `templates`: `list`, `get`, `create`, `update`, `delete`
 - `import-rules`: `list`, `get`, `match`, `create`, `update`, `delete`
 - `scheduled`: `list`, `get`, `create`, `update`, `delete`
-- `statements`: `list`, `status`, `get`, `inspect-membership`, `inspect-sync-record`, `replace-internal-row-with-visible-statement`, `restore-internal-row-from-preimage`, `visible-row-correction-plan`, `create`, `update`, `delete`, `reconcile`, `unreconcile`, `unreconciled`
+- `statements`: `list`, `status`, `get`, `inspect-membership`, `inspect-sync-record`, `visible-row-correction-plan`, `create`, `update`, `delete`, `reconcile`, `unreconcile`, `unreconciled`
 - `securities`: `list`, `create`, `rename`, `delete`, `prices`, `import-prices`, `delete-prices`, `reset-price-range`, `fix-prices`, `holdings`, `trades`, `realized-gains`, `income`, `create-trade`, `create-income`, `link-income-category`, `adjust`, `update-trade`
 - `reconciliation`: `execute-bundle` runs a reviewed JSON plan of repairs, checked against its SHA-256 digest
 - `export`: `turtle`

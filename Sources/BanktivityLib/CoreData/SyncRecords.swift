@@ -102,29 +102,6 @@ public enum SyncRecords {
             .value(forKey: "pSyncedModificationDate") as? Date
     }
 
-    /// Undo `markDeletedIfPresent` for a hash-bound statement-row
-    /// restore: put the record back to `pSyncedState = 0` with exactly the
-    /// `pSyncedModificationDate` the inspected preimage recorded. Returns
-    /// `false` when there is no record (historical vaults can legitimately have
-    /// no separate Statement record; membership travels with the affected
-    /// transactions). A present record must be the one the forward operation
-    /// marked deleted.
-    public static func restoreDeletedStatementRecordIfPresent(
-        entityUUID: String,
-        priorSyncedModificationDate: Date?,
-        in context: NSManagedObjectContext
-    ) throws -> Bool {
-        guard let record = try fetchSyncRecord(entityUUID: entityUUID, in: context) else {
-            return false
-        }
-        guard (record.value(forKey: "pSyncedState") as? NSNumber)?.intValue == 3 else {
-            throw ToolError.invalidInput("Statement sync record was not deleted by the forward operation")
-        }
-        record.setValue(Int16(0), forKey: "pSyncedState")
-        record.setValue(priorSyncedModificationDate, forKey: "pSyncedModificationDate")
-        return true
-    }
-
     // MARK: - Gzip (diagnostic reads)
 
     static func decompressGzip(_ data: Data) -> Data? {

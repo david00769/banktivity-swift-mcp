@@ -26,8 +26,6 @@ struct CapabilityRegistryTests {
             "statements inspect-sync-record",
             "statements visible-row-correction-plan",
             "statements update",
-            "statements replace-internal-row-with-visible-statement",
-            "statements restore-internal-row-from-preimage",
             "securities create-trade",
             "securities create-income",
             "securities delete",

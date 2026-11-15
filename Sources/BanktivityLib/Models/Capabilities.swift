@@ -144,8 +144,6 @@ public enum CapabilityRegistry {
             writeCLI("statements create", uiVerificationRequired: true),
             writeCLI("statements delete", uiVerificationRequired: true, note: "Internal investment statement rows require an explicit diagnostic plan plus allow_internal."),
             writeCLI("statements update", uiVerificationRequired: true, note: "Visible-row metadata repair; internal-row updates require the explicit internal and operator-visible safeguards."),
-            writeCLI("statements replace-internal-row-with-visible-statement", confirmations: ["backup_confirmed", "post_ui_verification_required"], uiVerificationRequired: true, note: "Typed forward repair bound to exact statement, membership, and SHA-256 preimages."),
-            writeCLI("statements restore-internal-row-from-preimage", confirmations: ["backup_confirmed", "post_ui_verification_required"], uiVerificationRequired: true, note: "Typed inverse repair bound to the exact forward replacement and post-forward preimages."),
             writeCLI("statements reconcile", supportsDryRun: true, uiVerificationRequired: true),
             writeCLI("statements unreconcile", uiVerificationRequired: true),
             readCLI("statements unreconciled"),

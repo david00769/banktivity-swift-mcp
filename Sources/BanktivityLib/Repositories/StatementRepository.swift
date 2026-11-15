@@ -37,7 +37,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
 
             let statements = try ctx.fetch(request)
             return statements
-                .filter { !Self.isInternalInvestmentStatement($0) }
                 .map { self.mapToSummaryDTO($0) }
         }
     }
@@ -271,216 +270,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
-    /// Typed replacement for an inspected unnamed investment row.  It is
-    /// intentionally the only automatic route which changes such a row; the
-    /// generic --allow-internal flags are not part of this contract.
-    public func replaceInternalRowWithVisibleStatement(
-        sourceStatementId: Int, accountId: Int, startDate: String, endDate: String,
-        beginningBalance: Double, endingBalance: Double, name: String,
-        lineItemIds: [Int], preimageSha256: String, membershipPreimageSha256: String,
-        replacementMembershipPreimageSha256: String,
-        positionIndex: Int, beforeStatementId: Int?, afterStatementId: Int?
-    ) throws -> StatementDTO {
-        guard let startTimestamp = DateConversion.fromISO(startDate, timeZone: DateConversion.dateOnlyTimeZone),
-              let endTimestamp = DateConversion.fromISO(endDate, timeZone: DateConversion.dateOnlyTimeZone),
-              endTimestamp > startTimestamp else {
-            throw ToolError.invalidInput("Replacement requires valid ordered statement dates")
-        }
-        guard beginningBalance.isFinite, endingBalance.isFinite else {
-            throw ToolError.invalidInput("Replacement balances must be finite")
-        }
-        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ToolError.invalidInput("Replacement statement name must be non-empty")
-        }
-        guard Set(lineItemIds).count == lineItemIds.count else {
-            throw ToolError.invalidInput("Replacement line-item IDs must be unique")
-        }
-        guard Self.replacementMembershipPreimageHash(lineItemIds) == replacementMembershipPreimageSha256 else {
-            throw ToolError.invalidInput("Replacement selection preimage hash does not match")
-        }
-        let selectedIds = Set(lineItemIds)
-        let newId: Int = try performWriteReturning { [self] ctx in
-            guard let source = try fetchByPK(entityName: "Statement", pk: sourceStatementId, in: ctx),
-                  let account = Self.relatedObject(source, "pAccount") else {
-                throw ToolError.notFound("Internal statement not found: \(sourceStatementId)")
-            }
-            guard Self.stringValue(source, "pName").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw ToolError.invalidInput("Statement \(sourceStatementId) is named, so it is a user-curated visible statement, not an internal row; replacement refused")
-            }
-            guard Self.extractPK(from: account.objectID) == accountId,
-                  Self.isInvestmentStatement(source),
-                  Self.statementPreimageHash(try self.preimageDTO(source, in: ctx)) == preimageSha256 else {
-                throw ToolError.invalidInput("Internal statement replacement preimage or account scope does not match")
-            }
-            try self.validateStatementPosition(source, account: account, expectedIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId, in: ctx)
-            let sourceLines = Self.relatedSet(source, "pLineItems")
-            let sourceIds = Set(sourceLines.map { Self.extractPK(from: $0.objectID) })
-            guard Set(lineItemIds).isSubset(of: sourceIds), !lineItemIds.isEmpty else {
-                throw ToolError.invalidInput("Replacement membership is not a non-empty subset of the inspected source row")
-            }
-            let actualMembership = sourceLines.map {
-                StatementLineItemMembershipPreimageDTO(
-                    lineItemId: Self.extractPK(from: $0.objectID), statementId: sourceStatementId,
-                    cleared: $0.value(forKey: "pCleared") as? Bool ?? false
-                )
-            }.sorted { $0.lineItemId < $1.lineItemId }
-            guard Self.membershipPreimageHash(actualMembership) == membershipPreimageSha256 else {
-                throw ToolError.invalidInput("Internal statement replacement membership preimage does not match")
-            }
-            let sourceStatementUUID = Self.stringValue(source, "pUniqueID")
-            guard !sourceStatementUUID.isEmpty else {
-                throw ToolError.invalidInput("Internal statement replacement requires the stable source identity")
-            }
-            let affectedTransactions = try Set(sourceLines.map { line -> NSManagedObject in
-                guard let transaction = Self.relatedObject(line, "pTransaction") else {
-                    throw ToolError.invalidInput("Internal statement replacement line item has no transaction")
-                }
-                let transactionUUID = Self.stringValue(transaction, "pUniqueID")
-                guard !transactionUUID.isEmpty else {
-                    throw ToolError.invalidInput("Internal statement replacement sync identity is missing")
-                }
-                try SyncRecords.requireNotPendingDelete(entityUUID: transactionUUID, in: ctx)
-                return transaction
-            })
-            let replacement = Self.createObject(entityName: "Statement", in: ctx)
-            replacement.setValue(account, forKey: "pAccount")
-            Self.setDate(replacement, "pStartDate", isoString: startDate); Self.setDate(replacement, "pEndDate", isoString: endDate)
-            replacement.setValue(beginningBalance as NSNumber, forKey: "pBeginningBalance"); replacement.setValue(endingBalance as NSNumber, forKey: "pEndingBalance")
-            let replacementUUID = Self.generateUUID()
-            replacement.setValue(name, forKey: "pName"); replacement.setValue(replacementUUID, forKey: "pUniqueID")
-            Self.setNow(replacement, "pCreationTime"); Self.setNow(replacement, "pModificationDate")
-            for line in sourceLines { line.setValue(nil, forKey: "pStatement") }
-            for line in sourceLines where selectedIds.contains(Self.extractPK(from: line.objectID)) {
-                line.setValue(replacement, forKey: "pStatement"); line.setValue(true, forKey: "pCleared")
-            }
-            // The source must not already be pending deletion: the forward
-            // operation's inverse restores exactly the state it found.
-            try SyncRecords.requireNotPendingDelete(entityUUID: sourceStatementUUID, in: ctx)
-            try SyncRecords.markDeletedIfPresent(
-                entityUUID: sourceStatementUUID,
-                in: ctx
-            )
-            // Membership travels inside each Transaction's sync record.
-            for transaction in affectedTransactions { Self.setNow(transaction, "pModificationDate") }
-            ctx.delete(source); try ctx.obtainPermanentIDs(for: [replacement])
-            return Self.extractPK(from: replacement.objectID)
-        }
-        guard let result = try get(statementId: newId) else { throw RepositoryError.unexpectedNilResult }
-        return result
-    }
-
-    public func restoreInternalRowFromPreimage(
-        replacementStatementId: Int, accountId: Int, statementPreimage: StatementDTO,
-        memberships: [StatementLineItemMembershipPreimageDTO], preimageSha256: String,
-        membershipPreimageSha256: String, replacementLineItemIds: [Int],
-        replacementMembershipPreimageSha256: String, replacementPreimageSha256: String,
-        positionIndex: Int,
-        beforeStatementId: Int?, afterStatementId: Int?
-    ) throws -> StatementDTO {
-        guard Self.statementPreimageHash(statementPreimage) == preimageSha256 else {
-            throw ToolError.invalidInput("Internal statement restore preimage hash does not match the supplied preimage")
-        }
-        guard !replacementLineItemIds.isEmpty,
-              Set(replacementLineItemIds).count == replacementLineItemIds.count,
-              Self.replacementMembershipPreimageHash(replacementLineItemIds) == replacementMembershipPreimageSha256 else {
-            throw ToolError.invalidInput("Restore replacement selection preimage does not match")
-        }
-        guard let restoredUniqueId = statementPreimage.uniqueId, !restoredUniqueId.isEmpty else {
-            throw ToolError.invalidInput("Internal statement restore requires the stable preimage identity")
-        }
-        let restoredId: Int = try performWriteReturning { [self] ctx in
-            guard let replacement = try fetchByPK(entityName: "Statement", pk: replacementStatementId, in: ctx),
-                  let account = Self.relatedObject(replacement, "pAccount") else { throw ToolError.notFound("Replacement statement not found: \(replacementStatementId)") }
-            guard Self.extractPK(from: account.objectID) == accountId,
-                  statementPreimage.accountId == accountId else { throw ToolError.invalidInput("Restore account scope does not match") }
-            guard Self.statementPreimageHash(try self.preimageDTO(replacement, in: ctx)) == replacementPreimageSha256 else {
-                throw ToolError.invalidInput("Replacement statement preimage has drifted from the exact forward state")
-            }
-            let sortedMemberships = memberships.sorted { $0.lineItemId < $1.lineItemId }
-            guard Self.membershipPreimageHash(sortedMemberships) == membershipPreimageSha256 else { throw ToolError.invalidInput("Restore membership preimage hash does not match") }
-            // The replacement occupies the original position during inverse;
-            // anchors are checked before mutating so failed restores roll back.
-            try self.validateStatementPosition(replacement, account: account, expectedIndex: positionIndex, beforeStatementId: beforeStatementId, afterStatementId: afterStatementId, in: ctx)
-            let expectedMembershipIDs = Set(sortedMemberships.map(\.lineItemId))
-            let expectedReplacementMembershipIDs = Set(replacementLineItemIds)
-            guard expectedReplacementMembershipIDs.isSubset(of: expectedMembershipIDs) else {
-                throw ToolError.invalidInput("Restore replacement selection is outside the inspected inverse scope")
-            }
-            let replacementMembershipIDs = Set(Self.relatedSet(replacement, "pLineItems").map {
-                Self.extractPK(from: $0.objectID)
-            })
-            guard replacementMembershipIDs == expectedReplacementMembershipIDs else {
-                throw ToolError.invalidInput("Replacement statement membership has drifted from the inspected inverse scope")
-            }
-            let membershipLinesAndTransactions = try sortedMemberships.map { membership -> (NSManagedObject, NSManagedObject) in
-                guard let line = try fetchByPK(entityName: "LineItem", pk: membership.lineItemId, in: ctx),
-                      let lineAccount = Self.relatedObject(line, "pAccount"),
-                      Self.extractPK(from: lineAccount.objectID) == accountId,
-                      let transaction = Self.relatedObject(line, "pTransaction") else {
-                    throw ToolError.invalidInput("Restore line item is missing or outside account scope")
-                }
-                let currentStatement = Self.relatedObject(line, "pStatement")
-                let currentCleared = line.value(forKey: "pCleared") as? Bool ?? false
-                if expectedReplacementMembershipIDs.contains(membership.lineItemId) {
-                    guard currentStatement?.objectID == replacement.objectID, currentCleared else {
-                        throw ToolError.invalidInput("Selected replacement membership has drifted from the exact forward state")
-                    }
-                } else {
-                    guard currentStatement == nil, currentCleared == membership.cleared else {
-                        throw ToolError.invalidInput("Unselected replacement membership has drifted from the exact forward state")
-                    }
-                }
-                let transactionUUID = Self.stringValue(transaction, "pUniqueID")
-                guard !transactionUUID.isEmpty else {
-                    throw ToolError.invalidInput("Restore line item sync identity is missing")
-                }
-                try SyncRecords.requireNotPendingDelete(entityUUID: transactionUUID, in: ctx)
-                return (line, transaction)
-            }
-            let restored = Self.createObject(entityName: "Statement", in: ctx)
-            restored.setValue(account, forKey: "pAccount"); Self.setDate(restored, "pStartDate", isoString: statementPreimage.startDate); Self.setDate(restored, "pEndDate", isoString: statementPreimage.endDate)
-            restored.setValue(statementPreimage.beginningBalance as NSNumber, forKey: "pBeginningBalance"); restored.setValue(statementPreimage.endingBalance as NSNumber, forKey: "pEndingBalance")
-            restored.setValue(statementPreimage.name, forKey: "pName"); restored.setValue(statementPreimage.note, forKey: "pNote")
-            restored.setValue(restoredUniqueId, forKey: "pUniqueID")
-            for (index, membership) in sortedMemberships.enumerated() {
-                let line = membershipLinesAndTransactions[index].0
-                line.setValue(restored, forKey: "pStatement"); line.setValue(membership.cleared, forKey: "pCleared")
-            }
-            // Sync metadata is part of this reversible operation.  These
-            // strict context-local updates execute before the context save, so
-            // any failure rolls back the restored row, memberships, and
-            // replacement deletion together.
-            let revivedSyncRecord = try SyncRecords.restoreDeletedStatementRecordIfPresent(
-                entityUUID: restoredUniqueId,
-                priorSyncedModificationDate: statementPreimage.syncedModificationTimestamp
-                    .map { Date(timeIntervalSinceReferenceDate: $0) },
-                in: ctx
-            )
-            // The restored row must upload, so it is stamped now rather than
-            // given the preimage's old modification date. A row whose sync
-            // record was revived is one the server already knows, so it keeps
-            // its original creation time and uploads as a modification; one
-            // that never synced is a fresh insert.
-            if revivedSyncRecord, let createdAt = statementPreimage.createdAt {
-                Self.setDate(restored, "pCreationTime", isoString: createdAt)
-            } else {
-                Self.setNow(restored, "pCreationTime")
-            }
-            Self.setNow(restored, "pModificationDate")
-            for transaction in Set(membershipLinesAndTransactions.map(\.1)) {
-                Self.setNow(transaction, "pModificationDate")
-            }
-            // The replacement may have uploaded since the forward operation;
-            // tombstone its record in this save or the server re-serves it.
-            try SyncRecords.markDeletedIfPresent(
-                entityUUID: Self.stringValue(replacement, "pUniqueID"), in: ctx
-            )
-            ctx.delete(replacement); try ctx.obtainPermanentIDs(for: [restored]); return Self.extractPK(from: restored.objectID)
-        }
-        guard let result = try get(statementId: restoredId) else { throw RepositoryError.unexpectedNilResult }
-        return result
-    }
-
     // MARK: - Write Operations
 
     public func create(
@@ -577,9 +366,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             try ctx.obtainPermanentIDs(for: [statement])
             let newId = Self.extractPK(from: statement.objectID)
 
-            // Same gate reconcile applies to an existing statement.
-            try validateVisibleStatement(statement, statementId: newId, operatorConfirmedVisible: operatorConfirmedVisible)
-
             let blob = try attachLineItems(
                 lineItemIds, to: statement, statementId: newId, statementAccountId: accountId,
                 startTs: startTs, endTs: endTs, allowOutOfRange: false, in: ctx)
@@ -596,9 +382,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         // mark the statement's sync record deleted, delete the row.
         let txLineItems: [String: [String]]? = try performWriteReturning { [self] ctx -> [String: [String]]? in
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else { return nil }
-            if !allowInternal {
-                try validateVisibleStatement(statement, statementId: statementId)
-            }
             var members: [String: [String]] = [:]
             for li in Self.relatedSet(statement, "pLineItems") {
                 // Leaving a statement does not un-tick the line: cleared is kept.
@@ -653,11 +436,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
                 throw ToolError.notFound("Statement not found: \(statementId)")
             }
-            try validateVisibleStatement(
-                statement,
-                statementId: statementId,
-                operatorConfirmedVisible: operatorConfirmedVisible
-            )
             guard let account = Self.relatedObject(statement, "pAccount") else {
                 throw ToolError.invalidInput("Statement has no associated account")
             }
@@ -769,11 +547,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
                 throw ToolError.notFound("Statement not found: \(statementId)")
             }
-            try validateVisibleStatement(
-                statement,
-                statementId: statementId,
-                operatorConfirmedVisible: operatorConfirmedVisible
-            )
             guard let account = Self.relatedObject(statement, "pAccount") else {
                 throw ToolError.invalidInput("Statement has no associated account")
             }
@@ -817,11 +590,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
                 return false
             }
-            try validateVisibleStatement(
-                statement,
-                statementId: statementId,
-                operatorConfirmedVisible: operatorConfirmedVisible
-            )
             return true
         }
         guard exists else {
@@ -888,13 +656,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         let statementUUID: String = try performWriteReturning { [self] ctx in
             guard let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) else {
                 throw ToolError.notFound("Statement not found: \(statementId)")
-            }
-            if !allowInternal {
-                try validateVisibleStatement(
-                    statement,
-                    statementId: statementId,
-                    operatorConfirmedVisible: operatorConfirmedVisible
-                )
             }
             if let beginningBalance {
                 statement.setValue(beginningBalance as NSNumber, forKey: "pBeginningBalance")
@@ -1046,18 +807,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         }
         guard count == 0 else {
             throw ToolError.invalidInput("Date range overlaps with an existing statement for this account")
-        }
-    }
-
-    private func validateVisibleStatement(
-        _ statement: NSManagedObject,
-        statementId: Int,
-        operatorConfirmedVisible: Bool = false
-    ) throws {
-        // An unnamed statement is an ordinary app-created one, not an internal
-        // row, so there is nothing to confirm; the flag is accepted for compatibility.
-        if Self.isInternalInvestmentStatement(statement) && !operatorConfirmedVisible {
-            throw ToolError.invalidInput("Statement \(statementId) is an internal statement row; rerun with operator-confirmed-visible after matching it to the intended visible statement.")
         }
     }
 
@@ -1276,15 +1025,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             .map { isInvestmentAccountClass(intValue($0, "pAccountClass")) } ?? false
     }
 
-    /// Banktivity's own statement entity has no name property, so a statement
-    /// the app created is always unnamed; only CLI-created ones carry a pName.
-    /// A missing name therefore says nothing about whether a row is internal,
-    /// and no non-name evidence of an internal row exists in the store model,
-    /// so nothing is classified internal.
-    private static func isInternalInvestmentStatement(_ statement: NSManagedObject) -> Bool {
-        false
-    }
-
     private static func statementRowClassification(_ statement: NSManagedObject) -> StatementRowClassification {
         let isInvestment = isInvestmentStatement(statement)
         let hasDisplayName = !(string(statement, "pName")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
@@ -1294,7 +1034,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             kind: kind,
             isVisibleNamedRow: hasDisplayName,
             isUnnamedInvestmentRow: isInvestment && !hasDisplayName,
-            isInternalRowCandidate: isInternalInvestmentStatement(statement),
+            isInternalRowCandidate: false,
             operatorConfirmedVisibleRequired: false
         )
     }
@@ -1312,15 +1052,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         guard let data = try? encoder.encode(memberships.sorted { $0.lineItemId < $1.lineItemId }) else { return nil }
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
-
-    /// Canonical hash used by both the forward operation and its inverse to
-    /// bind the exact subset moved onto the visible replacement statement.
-    static func replacementMembershipPreimageHash(_ lineItemIds: [Int]) -> String? {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        guard let data = try? encoder.encode(lineItemIds.sorted()) else { return nil }
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
