@@ -699,10 +699,25 @@ struct SecurityTradeCreationTests {
         let (vault, repo, accountPK) = try zeroPriceFixture()
         defer { TestVaultHelper.cleanup(vault) }
 
-        let trade = try repo.createSecurityTrade(
+        // A priced buy keeps its price: clear-price is refused on it.
+        let buy = try repo.createSecurityTrade(
             accountId: accountPK, symbol: "DEAD", shares: 10, pricePerShare: 2,
             amount: 20, cashLineItemAmount: -20, date: "2026-06-01")
+        #expect(throws: ToolError.self) {
+            try repo.updateSecurityLineItem(transactionId: buy.id, clearPrice: true)
+        }
         #expect(try storedSLIPrice(vault)?.value(forKey: "pPricePerShare") != nil)
+
+        // A worthless sale stored with a price can have it cleared.
+        let trade = try repo.createSecurityTrade(
+            accountId: accountPK, symbol: "DEAD", shares: -10, pricePerShare: 0,
+            amount: 0, cashLineItemAmount: 0, date: "2026-06-02", worthless: true)
+        let ctx0 = vault.container.viewContext
+        ctx0.refreshAllObjects()
+        let slis = try ctx0.fetch(NSFetchRequest<NSManagedObject>(entityName: "SecurityLineItem"))
+        let sale = try #require(slis.first { BaseRepository.doubleValue($0, "pShares") < 0 })
+        sale.setValue(2.0 as NSNumber, forKey: "pPricePerShare")
+        try ctx0.save()
 
         #expect(throws: (any Error).self) {
             try repo.updateSecurityLineItem(transactionId: trade.id, pricePerShare: 3, clearPrice: true)
@@ -712,7 +727,7 @@ struct SecurityTradeCreationTests {
 
         let ctx = vault.container.viewContext
         let txReq = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
-        let tx = try #require(try ctx.fetch(txReq).first)
+        let tx = try #require(try ctx.fetch(txReq).first { BaseRepository.extractPK(from: $0.objectID) == trade.id })
         let syncRequest = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
         syncRequest.predicate = NSPredicate(format: "pLocalID == %@", BaseRepository.stringValue(tx, "pUniqueID"))
         let record = try #require(try ctx.fetch(syncRequest).first)

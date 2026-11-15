@@ -1194,19 +1194,29 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 throw ToolError.invalidInput("transaction \(transactionId) is not a security trade")
             }
 
+            let baseType = (Self.relatedObject(tx, "pTransactionType")).map { Int16(exactly: Self.intValue($0, "pBaseType")) ?? 0 } ?? 0
             if let shares = shares {
                 sli.setValue(shares as NSNumber, forKey: "pShares")
             }
             if let pricePerShare = pricePerShare {
                 sli.setValue(pricePerShare as NSNumber, forKey: "pPricePerShare")
             } else if clearPrice {
+                // A priced buy or sell needs its price (a nil price is read as 0
+                // elsewhere); only a worthless sale or a non-trade type may drop it.
+                if baseType == 100 || baseType == 101 {
+                    let proceeds = abs(Self.doubleValue(sli, "pAmount"))
+                    let worthlessSale = baseType == 101 && Self.doubleValue(sli, "pShares") < 0
+                        && proceeds <= Self.doubleValue(sli, "pCommission") + 0.005
+                    guard worthlessSale else {
+                        throw ToolError.invalidInput("clear-price is only for a worthless sale (no proceeds) or a non-buy/sell type; a priced buy/sell needs its price")
+                    }
+                }
                 sli.setValue(nil, forKey: "pPricePerShare")
             }
             // What kind of row this is decides which field money lands on. A buy
             // or sell counts pAmount (the cash); an income row counts pIncome and
             // keeps pAmount at 0 (see createSecurityIncome), so writing pAmount
             // there would count the money twice.
-            let baseType = (Self.relatedObject(tx, "pTransactionType")).map { Int16(exactly: Self.intValue($0, "pBaseType")) ?? 0 } ?? 0
             let isBuySell = baseType == 100 || baseType == 101
             let isIncomeRow = Self.incomeBaseTypes.values.contains(baseType)
             if isBuySell, !basisOnlyTransfer, let amount {
