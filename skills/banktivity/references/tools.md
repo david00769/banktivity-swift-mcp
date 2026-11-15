@@ -1,10 +1,17 @@
 # Banktivity MCP tool reference
 
-These are the MCP server's tools and their input schemas, for an assistant that
-talks to `banktivity-mcp`. The server has 80; `banktivity-cli capabilities`
-lists every one. The command line uses different names and hyphenated options
-(`get_transactions --account_id` here is `transactions list --account-id` on the
-CLI); see `SKILL.md` and `banktivity-cli <group> <command> --help`.
+**Prefer `banktivity-cli`; use these tools only when you cannot run shell
+commands.** This is the fallback MCP server's tool list with input schemas, for
+an assistant that talks to `banktivity-mcp`. The server has 80 tools, and every one
+has a CLI verb taking the same parameters (the tests enforce it). The CLI uses
+hyphenated names (`get_transactions --account_id` here is `transactions list
+--account-id`); the mapping is the `CLI:` note on a tool, or the table in
+`CLIMCPParityTests`. `banktivity-cli capabilities` lists both surfaces. Verbs only
+the CLI has: `accounts create`, `accounts recalc-balances`, `categories delete`,
+`reconciliation execute-bundle`, `securities fix-prices`,
+`securities link-income-category`, `statements inspect-membership`,
+`statements inspect-sync-record`, the two `statements ...-internal-row...` repairs,
+and `transactions sync-info`.
 
 ---
 
@@ -45,7 +52,8 @@ Get transactions with optional filtering by account and date range.
     "start_date": { "type": "string", "description": "Start date in ISO format (YYYY-MM-DD)" },
     "end_date": { "type": "string", "description": "End date in ISO format (YYYY-MM-DD)" },
     "limit": { "type": "number", "description": "Maximum number of transactions to return" },
-    "offset": { "type": "number", "description": "Number of transactions to skip" }
+    "offset": { "type": "number", "description": "Number of transactions to skip" },
+    "show_instant": { "type": "boolean", "description": "Also report the instant each date is stored at (CLI: --show-instant)" }
   }
 }
 ```
@@ -56,7 +64,8 @@ Get a single transaction by ID with all its line items.
 ```json
 {
   "properties": {
-    "transaction_id": { "type": "number", "description": "The transaction ID" }
+    "transaction_id": { "type": "number", "description": "The transaction ID" },
+    "show_instant": { "type": "boolean", "description": "Also report the instant each date is stored at (CLI: --show-instant)" }
   },
   "required": ["transaction_id"]
 }
@@ -106,7 +115,7 @@ Find transactions without any category assigned.
 ```
 
 ### get_net_worth
-Calculate current net worth (assets minus liabilities) in the reporting currency (`BANKTIVITY_REPORTING_CURRENCY`, default EUR). Each account's cash balance plus holdings value is converted with the vault's latest exchange rate (direct, reverse, or via USD). The response includes `breakdown.byCurrency` and `warnings` for stale or missing rates; an account with no usable rate is left out.
+Calculate current net worth (assets minus liabilities) in the reporting currency (`BANKTIVITY_REPORTING_CURRENCY`, default EUR). Each account's cash balance plus holdings value is converted with the vault's latest exchange rate (direct, reverse, or via USD). The response includes `breakdown.byCurrency` and `warnings` for stale or missing rates; an account with no usable rate is left out, and then `complete` is `false` and `excludedAccounts` lists each one (name and currency). CLI: `accounts net-worth`.
 
 ```json
 {
@@ -520,7 +529,11 @@ Create a new statement for an account with beginning/ending balance validation.
     "beginning_balance": { "type": "number", "description": "Beginning balance" },
     "ending_balance": { "type": "number", "description": "Ending balance" },
     "name": { "type": "string", "description": "Optional statement name" },
-    "note": { "type": "string", "description": "Optional note" }
+    "note": { "type": "string", "description": "Optional note" },
+    "line_item_ids": { "type": "array", "description": "Line item IDs to reconcile as part of the create; a failed reconcile rolls the new statement back" },
+    "backup_confirmed": { "type": "boolean", "description": "Accepted for compatibility; not required" },
+    "post_ui_verification_required": { "type": "boolean", "description": "Accepted for compatibility; not required" },
+    "operator_confirmed_visible": { "type": "boolean", "description": "Accepted for compatibility; not required for unnamed statements" }
   },
   "required": ["start_date", "end_date", "beginning_balance", "ending_balance"]
 }
@@ -539,14 +552,18 @@ Where an account's reconciliation stands: `statementCount`, `unbalancedStatement
 ```
 
 ### update_statement
-Change a statement's beginning and/or ending balance in place; also patches its sync record. CLI: `statements update <id> [--beginning-balance X] [--ending-balance Y]`.
+Change a statement's balances, dates or name in place; also patches its sync record. Give at least one field. CLI: `statements update <id> [--beginning-balance X] [--ending-balance Y] [--start-date D] [--end-date D] [--name N]`. The confirmation flags are optional and accepted for compatibility.
 
 ```json
 {
   "properties": {
     "statement_id": { "type": "number", "description": "The statement ID" },
     "beginning_balance": { "type": "number", "description": "New beginning balance" },
-    "ending_balance": { "type": "number", "description": "New ending balance" }
+    "ending_balance": { "type": "number", "description": "New ending balance" },
+    "start_date": { "type": "string", "description": "New start date, YYYY-MM-DD" },
+    "end_date": { "type": "string", "description": "New end date, YYYY-MM-DD" },
+    "name": { "type": "string", "description": "Statement display name (trimmed, non-empty)" },
+    "allow_internal": { "type": "boolean", "description": "Deliberately allow an update on an internal investment statement row" }
   },
   "required": ["statement_id"]
 }
@@ -558,7 +575,8 @@ Delete a statement. Its line items leave it but keep their cleared state.
 ```json
 {
   "properties": {
-    "statement_id": { "type": "number", "description": "The statement ID to delete" }
+    "statement_id": { "type": "number", "description": "The statement ID to delete" },
+    "allow_internal": { "type": "boolean", "description": "Deliberately allow deleting an internal investment statement row after a diagnostic repair plan" }
   },
   "required": ["statement_id"]
 }
@@ -572,7 +590,8 @@ Assign line items to a statement (sets pCleared=true). Validates account ownersh
   "properties": {
     "statement_id": { "type": "number", "description": "The statement ID" },
     "line_item_ids": { "type": "array", "description": "Array of line item IDs to reconcile" },
-    "allow_out_of_range": { "type": "boolean", "description": "Allow line items dated outside the statement period, e.g. card charges posted on a later statement (default false)" }
+    "allow_out_of_range": { "type": "boolean", "description": "Allow line items dated outside the statement period, e.g. card charges posted on a later statement (default false)" },
+    "dry_run": { "type": "boolean", "description": "Preview the statement as it would be after reconciling, without writing (CLI: --dry-run)" }
   },
   "required": ["statement_id", "line_item_ids"]
 }
@@ -937,7 +956,8 @@ Correct security fields on an existing trade transaction. `amount` is the securi
   "properties": {
     "transaction_id": { "type": "number", "description": "Transaction ID" },
     "shares": { "type": "number", "description": "Number of shares" },
-    "price_per_share": { "type": "number", "description": "Price per share" },
+    "price_per_share": { "type": "number", "description": "Price per share. Must be positive, or 0 together with worthless" },
+    "clear_price": { "type": "boolean", "description": "Clear the stored price to nil; cannot be combined with price_per_share (CLI: --clear-price)" },
     "amount": { "type": "number", "description": "Security cost/principal amount. This does not change investment-account cash line items." },
     "commission": { "type": "number", "description": "Commission or fee amount" },
     "symbol": { "type": "string", "description": "Security ticker symbol" },
@@ -981,7 +1001,8 @@ create a sell.
     "symbol": { "type": "string", "description": "Security ticker symbol" },
     "id": { "type": "number", "description": "Security ID (alternative to symbol)" },
     "shares": { "type": "number", "description": "Number of shares. Negative creates a sell; positive creates a buy" },
-    "price_per_share": { "type": "number", "description": "Price per share" },
+    "price_per_share": { "type": "number", "description": "Price per share. Must be positive, or 0 together with worthless" },
+    "worthless": { "type": "boolean", "description": "Record a sale (negative shares) of a worthless security: price_per_share must be 0 and no price is stored (CLI: --worthless)" },
     "amount": { "type": "number", "description": "Security trade amount/cost" },
     "commission": { "type": "number", "description": "Commission or fee amount" },
     "cash_line_amount": { "type": "number", "description": "Investment account cash line amount. Positive for sell inflow, negative for buy outflow" },
@@ -1010,7 +1031,9 @@ reads.
     "title": { "type": "string", "description": "Transaction title" },
     "memo": { "type": "string", "description": "Cash line memo" },
     "offset_category_id": { "type": "number", "description": "Income/expense category ID for the balancing line" },
-    "income_type": { "type": "string", "description": "Income type. Currently only dividend is supported" }
+    "income_type": { "type": "string", "description": "Income type: dividend, return-of-capital, capital-gains-short, capital-gains-long, interest, investment-income" },
+    "withheld_amount": { "type": "number", "description": "Tax withheld at source; amount stays the gross, and the withholding goes on its own line" },
+    "withholding_category_id": { "type": "number", "description": "Category ID for the withheld tax line (required with withheld_amount)" }
   },
   "required": ["account_id", "amount", "date"]
 }
@@ -1028,7 +1051,10 @@ Create a share adjustment transaction (e.g. for charges that cancel units, stock
     "shares": { "type": "number", "description": "Number of shares to adjust (negative to reduce)" },
     "date": { "type": "string", "description": "Date of adjustment in YYYY-MM-DD format" },
     "title": { "type": "string", "description": "Transaction title/memo" },
-    "amount": { "type": "number", "description": "Cash amount (negative for buy outflow, positive for sell inflow)" }
+    "amount": { "type": "number", "description": "Cash amount (negative for buy outflow, positive for sell inflow)" },
+    "transaction_type": { "type": "string", "description": "Movement type: split-shares, move-shares-in, move-shares-out, transfer-shares, buy, sell" },
+    "price_per_share": { "type": "number", "description": "Price per share; never 0. For gifted or free shares use move-shares-in" },
+    "worthless": { "type": "boolean", "description": "Record a sale of a worthless security (negative shares) with no price stored; amount is then only the fee (CLI: --worthless)" }
   },
   "required": ["account_id", "shares", "date"]
 }

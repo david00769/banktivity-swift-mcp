@@ -9,6 +9,10 @@ allowed-tools: Bash, Read
 You have `banktivity-cli`, a command-line tool that reads and writes a
 Banktivity personal finance vault.
 
+Prefer the CLI to the MCP server. Every MCP tool has a CLI verb with the same
+parameters, so use `banktivity-cli`; fall back to `banktivity-mcp` only if you
+cannot run shell commands. `references/tools.md` maps each tool to its verb.
+
 ## Setup
 
 - **Binary**: `~/.local/bin/banktivity-cli` (on PATH)
@@ -44,8 +48,10 @@ flags each needs. Neither needs a vault.
 - After a vault is restored, imported or migrated in Banktivity 10, look up
   account, transaction, statement and category IDs again. They can change.
 - Some writes refuse to run without confirmation flags (for example
-  `--operator-reviewed-target`, `--backup-confirmed`). Only add them after the
-  user has confirmed what they assert.
+  `--operator-reviewed-target` on `securities delete`). Only add them after the
+  user has confirmed what they assert. The statement flags (`--backup-confirmed`,
+  `--post-ui-verification-required`, `--operator-confirmed-visible`) are
+  optional: ordinary statements need none.
 
 ## Output
 
@@ -62,7 +68,7 @@ flags each needs. Neither needs a vault.
 |---|---|---|
 | All accounts with balances | `accounts list` | `--include-hidden`, `--include-categories` |
 | One account's balance | `accounts balance --account-name "Checking"` | or `--account-id N` |
-| Net worth | `accounts net-worth` | Set `BANKTIVITY_REPORTING_CURRENCY=USD` for totals converted into one currency |
+| Net worth | `accounts net-worth` | Set `BANKTIVITY_REPORTING_CURRENCY=USD` for totals converted into one currency (default EUR). If `complete` is `false`, `excludedAccounts` lists accounts left out for lack of an exchange rate: the total is not the whole |
 | Vault overview | `accounts summary` | Account counts and totals |
 | Spending or income by category | `accounts spending --start-date 2026-01-01 --end-date 2026-03-31` | `accounts income` for income |
 | Transactions in an account | `transactions list --account-name "Checking" --start-date 2026-01-01 --limit 50` | `--offset` to page |
@@ -112,9 +118,9 @@ unless the user asks for something different.
 | Income | `securities income --account-id N --start-date 2026-01-01` | Dividends, interest, distributions |
 | Create a security | `securities create --symbol SYM --name "Name" --currency USD` | |
 | Rename a security | `securities rename --symbol OLD --new-symbol NEW --new-name "New name"` | Refuses a ticker another security already has |
-| Record a buy or sell | `securities create-trade ...` | Positive shares buy, negative sell; see `--help` for the cash-line options |
+| Record a buy or sell | `securities create-trade ...` | Positive shares buy, negative sell; see `--help` for the cash-line options. `--worthless` (negative shares, `--price-per-share 0`) records a worthless sale and stores no price |
 | Record a dividend | `securities create-income --account-id N --amount 12.34 --date 2026-03-31 ...` | See `--help` for the security and offset category |
-| Change a trade | `securities update-trade 1234 --shares 10 --price-per-share 101.5` | Also `--amount`, `--commission`, `--symbol`; `--basis-only-transfer` for a zero-cash transfer-in |
+| Change a trade | `securities update-trade 1234 --shares 10 --price-per-share 101.5` | Also `--amount`, `--commission`, `--symbol`; `--basis-only-transfer` for a zero-cash transfer-in; `--clear-price` removes the stored price (not with `--price-per-share`) |
 | Share adjustment | `securities adjust --symbol SYM --account-id N --shares=-10 --date 2026-03-31` | Splits, charges, corrections |
 | Import prices | `securities import-prices --symbol AAPL --file prices.csv` | Yahoo Finance, OHLCV or Date/Close CSV |
 | Delete prices | `securities delete-prices --symbol AAPL --start-date ... --end-date ...` | Date range optional |
@@ -135,7 +141,7 @@ unless the user asks for something different.
 | Create a tag | `tags create --name "Vacation"` | |
 | Create a category | `categories create --name "Tolls" --type expense --parent-path "Motor"` | |
 | Find miscategorised categories | `categories audit-entities` | Income/expense rows stored as the wrong entity; should be empty |
-| Delete a category | `categories delete 123` | Refuses if any line item uses it |
+| Delete a category | `categories delete --category-id 123` | Refuses a category with line items or subcategories, or one a template, scheduled transaction or import rule still uses |
 | Rename, retype or hide an account | `accounts update --account-name "Old" --name "New"` | `--type savings`, `--hidden` / `--no-hidden`. A new type must stay on the same side of the investment line; categories are refused |
 
 ### Repairing a cross-currency transfer
@@ -168,8 +174,8 @@ RDF/Turtle (to stdout without `--output`).
 ### Everything else
 
 `banktivity-cli --help` lists the groups and `<group> --help` the commands.
-`references/tools.md` documents the MCP tools (the server's equivalents of these
-commands) with their input schemas.
+`references/tools.md` documents the MCP tools, the fallback for clients with no
+shell, with their input schemas and the CLI verb each one matches.
 
 ## Common gotchas
 

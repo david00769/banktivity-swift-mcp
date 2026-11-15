@@ -15,8 +15,8 @@ accounts, transactions, splits, categories, payees, tags, templates, import
 rules, scheduled transactions, statements and securities. It can also export a
 vault as RDF.
 
-- **banktivity-cli** is the command-line tool, for scripts, for AI agents that run shell commands, and for looking things up yourself.
-- **banktivity-mcp** is an MCP server with 80 tools, so an AI assistant such as Claude can work with your vault.
+- **banktivity-cli** is the primary interface: for scripts, for AI agents that run shell commands, and for looking things up yourself. Every MCP tool has a CLI verb (the tests enforce it), plus a few maintenance verbs that only the CLI has.
+- **banktivity-mcp** is the fallback for clients that cannot run shell commands: an MCP server with 80 tools, so an AI assistant such as Claude can work with your vault.
 - **BanktivityLib** is the library both are built on. It has no server dependencies.
 
 Every change goes through Core Data, the way Banktivity itself writes, so
@@ -393,7 +393,11 @@ reports:
 - `currencyBreakdown`: for each currency, the cash, holdings, exchange rate used
   and converted amounts;
 - `warnings`: for example, an account left out because the vault has no
-  exchange rate for its currency.
+  exchange rate for its currency;
+- `complete` and `excludedAccounts`: `complete` is `false` when any account with a
+  balance had no exchange rate to the reporting currency, and `excludedAccounts`
+  lists those accounts (name and currency) so a total that silently omits one
+  cannot pass for the whole. The CLI also prints a warning on stderr.
 
 Choose the currency with `BANKTIVITY_REPORTING_CURRENCY` (an ISO code such as
 `USD`). If it is unset, EUR is used, the label the totals have always carried.
@@ -586,6 +590,10 @@ trade can move cash that the raw amounts don't show.
 
 ## CLI or MCP server: which to run, and keeping the vault safe
 
+**Default to the CLI.** Use `banktivity-mcp` only where the client cannot run
+shell commands. Both call the same library functions with the same parameters;
+`CLIMCPParityTests` fails if an MCP tool has no CLI verb.
+
 The CLI is a first-class part of this project, and the reason is the vault's
 safety.
 
@@ -668,6 +676,7 @@ Commands available:
 - `accounts list`, `accounts balance`, `accounts net-worth`, `accounts spending`, `accounts income`, `accounts summary`, `accounts update`, `accounts recalc-balances` (writes also keep running balances current)
 - `transactions list`, `transactions search`, `transactions get`, `transactions create`, `transactions update`, `transactions delete`
 - `categories list`, `categories get`, `categories tree`, `categories audit-entities`, `categories create`, `categories delete`
+  - `categories delete --category-id N` refuses a category that has line items or subcategories, or that a template, scheduled transaction or import rule still uses.
 - `tags list`, `tags create`, `tags tag-transaction`, `tags get-by-tag`, `tags bulk-tag`
 - `uncategorized list`, `uncategorized suggest`, `uncategorized recategorize`, `uncategorized bulk-recategorize`, `uncategorized review`, `uncategorized payee-summary`
 - `line-items get`, `line-items add`, `line-items update`, `line-items delete`, `line-items source`
@@ -675,7 +684,9 @@ Commands available:
 - `import-rules list`, `import-rules get`, `import-rules match`, `import-rules create`, `import-rules update`, `import-rules delete`
 - `scheduled list`, `scheduled get`, `scheduled create`, `scheduled update`, `scheduled delete`
 - `statements list`, `statements status`, `statements get`, `statements create`, `statements update`, `statements delete`, `statements reconcile`, `statements unreconcile`, `statements unreconciled`
+  - The statement confirmation flags (`--backup-confirmed`, `--post-ui-verification-required`, `--operator-confirmed-visible`) are optional: ordinary, unnamed statements need none, and they are accepted only for compatibility.
 - `securities list`, `securities create`, `securities delete`, `securities rename`, `securities audit-prices`, `securities prices`, `securities holdings`, `securities trades`, `securities realized-gains`, `securities income`, `securities create-trade`, `securities create-income`, `securities adjust`, `securities update-trade`, `securities import-prices`, `securities delete-prices`, `securities reset-price-range`, `securities fix-prices`
+  - `securities create-trade --worthless` records a sale of a worthless security (`--price-per-share 0`) without storing a price, so no device writes a 0 into price history; `securities update-trade --clear-price` clears a trade's stored price (not with `--price-per-share`).
   - `securities delete` refuses while any trade still references the security, because deleting it would orphan the line items carrying its cost basis and realized gain. Merge those trades onto the surviving security with `securities update-trade --security-id` first. Price history is kept unless `--with-prices` is given.
 - `export turtle`
 - `schema`
