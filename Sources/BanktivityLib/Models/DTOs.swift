@@ -175,18 +175,39 @@ public struct NetWorthDTO: Codable, Sendable {
     /// Per account currency: what it held and how it was converted.
     public let currencyBreakdown: [String: CurrencyBreakdownDTO]?
     public let warnings: [String]?
+    /// Accounts with a balance that the totals leave out (no exchange rate to the
+    /// reporting currency). `complete` is false whenever this is not empty.
+    public let excludedAccounts: [ExcludedNetWorthAccountDTO]
+    public let complete: Bool
 
     public init(
         assets: Double, liabilities: Double, netWorth: Double,
         formattedAssets: String?, formattedLiabilities: String?, formattedNetWorth: String?,
         reportingCurrency: String? = nil, converted: ConvertedNetWorthDTO? = nil,
-        currencyBreakdown: [String: CurrencyBreakdownDTO]? = nil, warnings: [String]? = nil
+        currencyBreakdown: [String: CurrencyBreakdownDTO]? = nil, warnings: [String]? = nil,
+        excludedAccounts: [ExcludedNetWorthAccountDTO] = []
     ) {
         self.assets = assets; self.liabilities = liabilities; self.netWorth = netWorth
         self.formattedAssets = formattedAssets; self.formattedLiabilities = formattedLiabilities
         self.formattedNetWorth = formattedNetWorth
         self.reportingCurrency = reportingCurrency; self.converted = converted
         self.currencyBreakdown = currencyBreakdown; self.warnings = warnings
+        self.excludedAccounts = excludedAccounts; self.complete = excludedAccounts.isEmpty
+    }
+}
+
+/// An account left out of the converted net worth, with the balance that is missing.
+public struct ExcludedNetWorthAccountDTO: Codable, Sendable {
+    public let accountId: Int
+    public let name: String
+    public let currency: String
+    public let cash: Double
+    public let holdings: Double
+    public let reason: String
+
+    public init(accountId: Int, name: String, currency: String, cash: Double, holdings: Double, reason: String) {
+        self.accountId = accountId; self.name = name; self.currency = currency
+        self.cash = cash; self.holdings = holdings; self.reason = reason
     }
 }
 

@@ -446,6 +446,7 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
 
     /// One account's contribution to net worth, in its own currency.
     struct NetWorthAccountBalance: Sendable {
+        var id: Int = 0
         let name: String
         let accountClass: Int
         let currency: String?
@@ -457,6 +458,7 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
         let converted: ConvertedNetWorthDTO
         let breakdown: [String: CurrencyBreakdownDTO]
         let warnings: [String]
+        var excluded: [ExcludedNetWorthAccountDTO] = []
     }
 
     private func convertedNetWorth(in ctx: NSManagedObjectContext) throws -> NetWorthConversion {
@@ -469,6 +471,7 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
             let cash = try sumLineItemAmounts(predicate: NSPredicate(format: "pAccount == %@", account), in: ctx)
             let holdings = Self.isInvestmentAccountClass(accountClass) ? try holdingsValue(account: account, in: ctx) : 0
             balances.append(NetWorthAccountBalance(
+                id: Self.extractPK(from: account.objectID),
                 name: Self.stringValue(account, "pName"),
                 accountClass: accountClass,
                 currency: Self.currencyCode(account),
@@ -485,7 +488,8 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
             conversion = NetWorthConversion(
                 converted: conversion.converted,
                 breakdown: conversion.breakdown,
-                warnings: [warning] + conversion.warnings
+                warnings: [warning] + conversion.warnings,
+                excluded: conversion.excluded
             )
         }
         return conversion
@@ -513,13 +517,18 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
         var liabilities = Decimal(0)
         var holdings = Decimal(0)
         var warnings: [String] = []
+        var excluded: [ExcludedNetWorthAccountDTO] = []
 
         for account in accounts {
             // An account with no currency is read as already in the reporting currency.
             let currency = account.currency?.uppercased() ?? reportingCurrency
             guard let lookup = ExchangeRateRepository.resolve(from: currency, to: reportingCurrency, rates: rates) else {
                 if account.cash != 0 || account.holdings != 0 {
-                    warnings.append("Account \(account.name) (\(currency)) left out: no \(currency)->\(reportingCurrency) exchange rate in the vault")
+                    let reason = "no \(currency)->\(reportingCurrency) exchange rate in the vault"
+                    warnings.append("Account \(account.name) (\(currency)) left out: \(reason)")
+                    excluded.append(ExcludedNetWorthAccountDTO(
+                        accountId: account.id, name: account.name, currency: currency,
+                        cash: double(account.cash), holdings: double(account.holdings), reason: reason))
                 }
                 continue
             }
@@ -565,7 +574,8 @@ public final class AccountRepository: BaseRepository, @unchecked Sendable {
                 holdingsValue: double(holdings)
             ),
             breakdown: breakdown,
-            warnings: warnings.sorted()
+            warnings: warnings.sorted(),
+            excluded: excluded
         )
     }
 

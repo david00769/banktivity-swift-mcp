@@ -110,7 +110,7 @@ struct Accounts: AsyncParsableCommand {
     }
 
     struct NetWorth: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Calculate net worth")
+        static let configuration = CommandConfiguration(abstract: "Calculate net worth (output has `complete` and `excludedAccounts`; a stderr notice is printed when accounts are left out for lack of an exchange rate)")
 
         @OptionGroup var parent: GlobalOptions
 
@@ -120,6 +120,10 @@ struct Accounts: AsyncParsableCommand {
             let accounts = AccountRepository(container: container)
 
             let netWorth = try accounts.getNetWorth()
+            if !netWorth.complete {
+                let names = netWorth.excludedAccounts.map { "\($0.name) (\($0.currency))" }.joined(separator: ", ")
+                FileHandle.standardError.write(Data("warning: net worth is INCOMPLETE: \(netWorth.excludedAccounts.count) account(s) left out for lack of an exchange rate: \(names)\n".utf8))
+            }
             try outputJSON(netWorth, format: parent.format)
         }
     }
