@@ -70,8 +70,10 @@ A `.bank8` vault is a Core Data store, and Banktivity syncs it through CloudKit.
 
 This is david00769's maintained fork of Steve Flinter's
 [banktivity-swift-mcp](https://github.com/sflinter/banktivity-swift-mcp). It
-has everything upstream has: v1.0.0 is in sync with upstream main (it includes upstream v0.18.0). Fork releases are numbered from 1.0.0 so that their tags never collide with upstream's 0.x releases; each [CHANGELOG](CHANGELOG.md) entry names the upstream version it includes. It is in sync with upstream main
-as of `660cbc3`. Upstream has merged most of this fork's work, including sync
+has everything upstream has: v1.0.0 is in sync with upstream main as of
+`660cbc3`, which includes upstream's v0.18.0. Fork releases are numbered from
+1.0.0 so that their tags never collide with upstream's 0.x releases, and each
+[CHANGELOG](CHANGELOG.md) entry names the upstream version it includes. Upstream has merged most of this fork's work, including sync
 by modification date (2026-11-15), so edits are signalled to Banktivity's sync
 the way the app itself does and are not reverted by a remote copy. What is
 listed below is only here, or is still offered upstream as
