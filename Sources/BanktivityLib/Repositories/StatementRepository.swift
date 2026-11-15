@@ -304,6 +304,9 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                   let account = Self.relatedObject(source, "pAccount") else {
                 throw ToolError.notFound("Internal statement not found: \(sourceStatementId)")
             }
+            guard Self.stringValue(source, "pName").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ToolError.invalidInput("Statement \(sourceStatementId) is named, so it is a user-curated visible statement, not an internal row; replacement refused")
+            }
             guard Self.extractPK(from: account.objectID) == accountId,
                   Self.isInvestmentStatement(source),
                   Self.statementPreimageHash(try self.preimageDTO(source, in: ctx)) == preimageSha256 else {

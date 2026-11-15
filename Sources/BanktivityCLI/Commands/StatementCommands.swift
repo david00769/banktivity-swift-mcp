@@ -155,7 +155,7 @@ struct Statements: AsyncParsableCommand {
     }
 
     struct ReplaceInternalRow: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(commandName: "replace-internal-row-with-visible-statement", abstract: "Atomically replace an inspected internal statement row with a visible provider-period row")
+        static let configuration = CommandConfiguration(commandName: "replace-internal-row-with-visible-statement", abstract: "Atomically replace an inspected internal statement row with a visible provider-period row (refuses a named, user-curated source statement; --allow-internal does not apply here)")
         @OptionGroup var parent: GlobalOptions
         @Option(name: .long) var sourceStatementId: Int
         @Option(name: .long) var accountId: Int

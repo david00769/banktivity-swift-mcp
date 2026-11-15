@@ -382,6 +382,42 @@ struct StatementRepositoryTests {
         #expect((try syncFixture.statements.inspectMembership(lineItemId: lineItemId)).referencedStatementId == replayReplacement.id)
     }
 
+    @Test("Typed internal replacement refuses a named (user-curated) investment statement")
+    func typedInternalReplacementRefusesNamedStatement() throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+
+        let investment = try createInvestmentAccount(named: "Named Source Guard", using: repos.accounts)
+        let transaction = try repos.transactions.create(
+            date: "2026-04-10", title: "Membership",
+            lineItems: [(accountId: investment.id, amount: 10, memo: nil)]
+        )
+        let lineItemId = try accountLineItemId(in: transaction, accountId: investment.id)
+        let named = try repos.statements.create(
+            accountId: investment.id, startDate: "2026-04-01", endDate: "2026-04-30",
+            beginningBalance: 0, endingBalance: 10, name: "Curated April"
+        )
+        _ = try repos.statements.reconcileLineItems(
+            statementId: named.id, lineItemIds: [lineItemId], operatorConfirmedVisible: true
+        )
+        let inspection = try repos.statements.inspectMembership(lineItemId: lineItemId)
+        let preimageHash = try #require(inspection.preimageSha256)
+        let membershipHash = try #require(inspection.membershipPreimageSha256)
+        let index = try #require(inspection.positionAnchors["statement_index"] ?? nil)
+        #expect(throws: ToolError.self) {
+            _ = try repos.statements.replaceInternalRowWithVisibleStatement(
+                sourceStatementId: named.id, accountId: investment.id,
+                startDate: "2026-04-01", endDate: "2026-04-30", beginningBalance: 0,
+                endingBalance: 10, name: "Replacement", lineItemIds: [lineItemId],
+                preimageSha256: preimageHash, membershipPreimageSha256: membershipHash,
+                replacementMembershipPreimageSha256: try replacementMembershipHash([lineItemId]),
+                positionIndex: index, beforeStatementId: inspection.positionAnchors["before_statement_id"] ?? nil,
+                afterStatementId: inspection.positionAnchors["after_statement_id"] ?? nil
+            )
+        }
+        #expect(try repos.statements.get(statementId: named.id) != nil)
+    }
+
     @Test("Typed internal replacement round-trips without an individual statement sync record")
     func typedInternalReplacementRoundTripsWithoutStatementSyncRecord() throws {
         let repos = try makeRepositories()
