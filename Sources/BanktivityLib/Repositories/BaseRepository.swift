@@ -96,6 +96,7 @@ open class BaseRepository: @unchecked Sendable {
         _ block: @escaping @Sendable (NSManagedObjectContext) throws -> T
     ) throws -> T {
         nonisolated(unsafe) var outcome: Result<T, Error>!
+        nonisolated(unsafe) var recalcWarning: String?
         ctx.performAndWait {
             outcome = Result {
                 let value = try block(ctx)
@@ -126,13 +127,17 @@ open class BaseRepository: @unchecked Sendable {
                                 }
                             }
                         } catch {
-                            FileHandle.standardError.write(Data("warning: write committed but running balances were not updated (\(error)); run `accounts recalc-balances`\n".utf8))
+                            recalcWarning = "write committed but running balances were not updated (\(error)); run `accounts recalc-balances`"
                         }
                     }
                     try ctx.save()
                 }
                 return value
             }
+        }
+        if let recalcWarning {
+            FileHandle.standardError.write(Data("warning: \(recalcWarning)\n".utf8))
+            WriteWarnings.active.add(recalcWarning)
         }
         return try outcome.get()
     }

@@ -4,6 +4,8 @@ import CoreData
 import Foundation
 import Testing
 @testable import BanktivityLib
+@testable import BanktivityMCPLib
+import MCP
 
 @Suite("Running balance on write", .serialized)
 @MainActor
@@ -130,5 +132,47 @@ struct RunningBalanceWriteTests {
         for (id, value) in after where before[id] == nil { #expect(value == 0) }
         repos.vault.container.viewContext.refreshAllObjects()
         #expect(try repos.transactions.get(transactionId: later.id) != nil)
+    }
+
+    @Test("A recalculation failure reaches the result: through an MCP tool call and the CLI JSON path")
+    func recalculationFailureIsReported() async throws {
+        let repos = try makeRepositories()
+        defer { TestVaultHelper.cleanup(repos.vault) }
+        let account = try repos.accounts.create(name: "Checking", accountClass: AccountClass.checking, currencyCode: "USD")
+        let coordinator = repos.vault.container.persistentStoreCoordinator
+        let registry = ToolRegistry(
+            container: repos.vault.container,
+            writeGuard: WriteGuard(dbPath: repos.vault.path),
+            bankFilePath: repos.vault.path
+        )
+        let transactions = repos.transactions
+        let accountId = account.id
+        registry.register(
+            name: "probe_write", access: .write, description: "probe",
+            inputSchema: ToolHelpers.schema(properties: [:], required: [])
+        ) { _ in
+            let tx = try transactions.create(
+                date: "2026-05-10", title: "Pay", lineItems: [(accountId: accountId, amount: -42, memo: nil)])
+            return try ToolHelpers.jsonResponse(["id": tx.id] as [String: Int])
+        }
+        BaseRepository.runningBalanceFailureHook = { ctx in
+            if ctx.persistentStoreCoordinator === coordinator { throw Injected() }
+        }
+        defer { BaseRepository.runningBalanceFailureHook = nil }
+
+        let result = await registry.callTool(name: "probe_write", arguments: [:])
+        #expect(result.isError != true)
+        guard case .text(let text, _, _) = result.content.first else { Issue.record("no text"); return }
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+        #expect(object["balancesStale"] as? Bool == true)
+        #expect((object["warnings"] as? [String])?.first?.contains("running balances were not updated") == true)
+
+        // The CLI path: the process-wide box picks up the same failure and injects it.
+        let before = WriteWarnings.process.messages.count
+        _ = try repos.transactions.create(
+            date: "2026-05-11", title: "Pay2", lineItems: [(accountId: accountId, amount: -1, memo: nil)])
+        #expect(WriteWarnings.process.messages.count == before + 1)
+        let injected = WriteWarnings.process.inject(into: "{\"id\":1}")
+        #expect(injected.contains("balancesStale"))
     }
 }

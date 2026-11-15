@@ -117,7 +117,24 @@ public final class ToolRegistry: @unchecked Sendable {
         }
 
         do {
-            return try await definition.handler(arguments)
+            let warnings = WriteWarnings()
+            let result = try await WriteWarnings.$current.withValue(warnings) {
+                try await definition.handler(arguments)
+            }
+            guard result.isError != true, !warnings.messages.isEmpty else { return result }
+            // A write that committed but could not finish its follow-up work says so in
+            // the result; stderr never reaches an MCP client.
+            var content = result.content
+            if let index = content.firstIndex(where: { if case .text = $0 { return true } else { return false } }),
+               case .text(let text, let annotations, let meta) = content[index] {
+                let injected = warnings.inject(into: text)
+                if injected != text {
+                    content[index] = .text(text: injected, annotations: annotations, _meta: meta)
+                } else {
+                    content.append(.text("warnings: " + warnings.messages.joined(separator: "; ")))
+                }
+            }
+            return CallTool.Result(content: content, isError: result.isError)
         } catch {
             FileHandle.standardError.write(Data("[banktivity-mcp] Tool '\(name)' error: \(error)\n".utf8))
             return ToolHelpers.errorResponse("Tool error: \(error)")

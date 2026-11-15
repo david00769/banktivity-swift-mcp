@@ -124,7 +124,10 @@ func outputJSON(_ value: [[String: Any]], format: OutputFormat = .json) throws {
     emitJSONText(String(data: data, encoding: .utf8) ?? "[]")
 }
 
-private func emitJSONText(_ text: String) {
+private func emitJSONText(_ original: String) {
+    // A write that committed but could not finish its follow-up work (stale running
+    // balances) says so in its JSON result, not only on stderr.
+    let text = WriteWarnings.process.inject(into: original)
     if !CLIProcessState.shared.captureOutput(text) {
         print(text)
     }
