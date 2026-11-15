@@ -532,6 +532,65 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
         return result
     }
 
+    /// Creates a statement and reconciles `lineItemIds` into it in ONE save, so a
+    /// failed reconcile leaves nothing behind (there is no create-then-delete rollback
+    /// that could itself fail, and no window where the empty statement is committed).
+    public func createReconciled(
+        accountId: Int,
+        startDate: String,
+        endDate: String,
+        beginningBalance: Double,
+        endingBalance: Double,
+        lineItemIds: [Int],
+        name: String? = nil,
+        note: String? = nil,
+        operatorConfirmedVisible: Bool = false
+    ) throws -> StatementDTO {
+        guard let startTs = DateConversion.fromISO(startDate, timeZone: DateConversion.dateOnlyTimeZone) else {
+            throw ToolError.invalidInput("Invalid start date: \(startDate)")
+        }
+        guard let endTs = DateConversion.fromISO(endDate, timeZone: DateConversion.dateOnlyTimeZone) else {
+            throw ToolError.invalidInput("Invalid end date: \(endDate)")
+        }
+        guard endTs > startTs else {
+            throw ToolError.invalidInput("End date must be after start date")
+        }
+
+        let (pk, statementUUID, blobItems): (Int, String, [String: [String]]) = try performWriteReturning { [self] ctx in
+            guard let account = try fetchByPK(entityName: "Account", pk: accountId, in: ctx) else {
+                throw ToolError.notFound("Account not found: \(accountId)")
+            }
+            try validateNoOverlap(accountId: accountId, startTs: startTs, endTs: endTs, in: ctx)
+            try validateBeginningBalance(accountId: accountId, startTs: startTs, beginningBalance: beginningBalance, in: ctx)
+
+            let statement = Self.createObject(entityName: "Statement", in: ctx)
+            statement.setValue(account, forKey: "pAccount")
+            statement.setValue(DateConversion.toDate(startTs), forKey: "pStartDate")
+            statement.setValue(DateConversion.toDate(endTs), forKey: "pEndDate")
+            statement.setValue(beginningBalance as NSNumber, forKey: "pBeginningBalance")
+            statement.setValue(endingBalance as NSNumber, forKey: "pEndingBalance")
+            statement.setValue(name, forKey: "pName")
+            statement.setValue(note, forKey: "pNote")
+            statement.setValue(Self.generateUUID(), forKey: "pUniqueID")
+            Self.setNow(statement, "pCreationTime")
+            Self.setNow(statement, "pModificationDate")
+            try ctx.obtainPermanentIDs(for: [statement])
+            let newId = Self.extractPK(from: statement.objectID)
+
+            // Same gate reconcile applies to an existing statement.
+            try validateVisibleStatement(statement, statementId: newId, operatorConfirmedVisible: operatorConfirmedVisible)
+
+            let blob = try attachLineItems(
+                lineItemIds, to: statement, statementId: newId, statementAccountId: accountId,
+                startTs: startTs, endTs: endTs, allowOutOfRange: false, in: ctx)
+            return (newId, Self.stringValue(statement, "pUniqueID"), blob)
+        }
+
+        patchStatementMembership(blobItems, statementUUID: statementUUID, cleared: true)
+        guard let result = try get(statementId: pk) else { throw RepositoryError.unexpectedNilResult }
+        return result
+    }
+
     public func delete(statementId: Int, allowInternal: Bool = false) throws -> Bool {
         // One save: unreconcile the members, mark their transactions modified,
         // mark the statement's sync record deleted, delete the row.
@@ -621,50 +680,10 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 throw ToolError.notFound("Statement not found: \(statementId)")
             }
 
-            for liId in lineItemIds {
-                guard let li = try fetchByPK(entityName: "LineItem", pk: liId, in: ctx) else {
-                    throw ToolError.notFound("Line item not found: \(liId)")
-                }
-
-                // Validate account ownership
-                if let liAccount = Self.relatedObject(li, "pAccount") {
-                    let liAccountId = Self.extractPK(from: liAccount.objectID)
-                    guard liAccountId == statementAccountId else {
-                        throw ToolError.invalidInput("Line item \(liId) belongs to account \(liAccountId), not statement's account \(statementAccountId)")
-                    }
-                } else {
-                    throw ToolError.invalidInput("Line item \(liId) has no account")
-                }
-
-                // Validate no double-assignment to a different statement
-                if let existingStatement = Self.relatedObject(li, "pStatement") {
-                    let existingId = Self.extractPK(from: existingStatement.objectID)
-                    guard existingId == statementId else {
-                        throw ToolError.invalidInput("Line item \(liId) is already assigned to statement \(existingId)")
-                    }
-                    continue // already assigned to this statement
-                }
-
-                // Validate date range (allow 2-day buffer before start for credit card timing)
-                if !allowOutOfRange, let startTs = startTs, let endTs = endTs,
-                   let tx = Self.relatedObject(li, "pTransaction"),
-                   let txDate = Self.dateValue(tx, "pDate") {
-                    let bufferSeconds: Double = 2 * 86400
-                    guard txDate >= (startTs - bufferSeconds) && txDate <= endTs else {
-                        let dateStr = DateConversion.toISO(txDate)
-                        throw ToolError.invalidInput("Line item \(liId) transaction date \(dateStr) is outside statement date range (pass allowOutOfRange / --allow-out-of-range to override)")
-                    }
-                }
-
-                li.setValue(stmtInCtx, forKey: "pStatement")
-                li.setValue(true, forKey: "pCleared")
-
-                // Membership travels inside the Transaction's sync record
-                if let tx = Self.relatedObject(li, "pTransaction") {
-                    Self.setNow(tx, "pModificationDate")
-                    blobItems[Self.stringValue(tx, "pUniqueID"), default: []].append(Self.stringValue(li, "pUniqueID"))
-                }
-            }
+            blobItems = try attachLineItems(
+                lineItemIds, to: stmtInCtx, statementId: statementId,
+                statementAccountId: statementAccountId, startTs: startTs, endTs: endTs,
+                allowOutOfRange: allowOutOfRange, in: ctx)
 
             if !lineItemIds.isEmpty {
                 Self.setNow(stmtInCtx, "pModificationDate")
@@ -678,6 +697,67 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             throw ToolError.notFound("Statement not found after reconciliation: \(statementId)")
         }
         return result
+    }
+
+    /// Validates and attaches line items to a statement inside an open write, marking
+    /// them cleared and their transactions modified. Returns the sync-blob membership
+    /// to patch after the save.
+    private func attachLineItems(
+        _ lineItemIds: [Int],
+        to stmtInCtx: NSManagedObject,
+        statementId: Int,
+        statementAccountId: Int,
+        startTs: Double?,
+        endTs: Double?,
+        allowOutOfRange: Bool,
+        in ctx: NSManagedObjectContext
+    ) throws -> [String: [String]] {
+        var blobItems: [String: [String]] = [:]
+        for liId in lineItemIds {
+            guard let li = try fetchByPK(entityName: "LineItem", pk: liId, in: ctx) else {
+                throw ToolError.notFound("Line item not found: \(liId)")
+            }
+
+            // Validate account ownership
+            if let liAccount = Self.relatedObject(li, "pAccount") {
+                let liAccountId = Self.extractPK(from: liAccount.objectID)
+                guard liAccountId == statementAccountId else {
+                    throw ToolError.invalidInput("Line item \(liId) belongs to account \(liAccountId), not statement's account \(statementAccountId)")
+                }
+            } else {
+                throw ToolError.invalidInput("Line item \(liId) has no account")
+            }
+
+            // Validate no double-assignment to a different statement
+            if let existingStatement = Self.relatedObject(li, "pStatement") {
+                let existingId = Self.extractPK(from: existingStatement.objectID)
+                guard existingId == statementId else {
+                    throw ToolError.invalidInput("Line item \(liId) is already assigned to statement \(existingId)")
+                }
+                continue // already assigned to this statement
+            }
+
+            // Validate date range (allow 2-day buffer before start for credit card timing)
+            if !allowOutOfRange, let startTs = startTs, let endTs = endTs,
+               let tx = Self.relatedObject(li, "pTransaction"),
+               let txDate = Self.dateValue(tx, "pDate") {
+                let bufferSeconds: Double = 2 * 86400
+                guard txDate >= (startTs - bufferSeconds) && txDate <= endTs else {
+                    let dateStr = DateConversion.toISO(txDate)
+                    throw ToolError.invalidInput("Line item \(liId) transaction date \(dateStr) is outside statement date range (pass allowOutOfRange / --allow-out-of-range to override)")
+                }
+            }
+
+            li.setValue(stmtInCtx, forKey: "pStatement")
+            li.setValue(true, forKey: "pCleared")
+
+            // Membership travels inside the Transaction's sync record
+            if let tx = Self.relatedObject(li, "pTransaction") {
+                Self.setNow(tx, "pModificationDate")
+                blobItems[Self.stringValue(tx, "pUniqueID"), default: []].append(Self.stringValue(li, "pUniqueID"))
+            }
+        }
+        return blobItems
     }
 
     public func previewReconcileLineItems(

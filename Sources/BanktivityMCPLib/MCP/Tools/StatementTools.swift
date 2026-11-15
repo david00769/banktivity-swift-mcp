@@ -174,33 +174,20 @@ func registerStatementTools(
                 }
             }
 
-            let created = try statements.create(
-                accountId: accountId,
-                startDate: startDate,
-                endDate: endDate,
-                beginningBalance: beginningBalance,
-                endingBalance: endingBalance,
-                name: name,
-                note: note
-            )
             if lineItemIds.isEmpty {
+                let created = try statements.create(
+                    accountId: accountId, startDate: startDate, endDate: endDate,
+                    beginningBalance: beginningBalance, endingBalance: endingBalance,
+                    name: name, note: note)
                 return try ToolHelpers.jsonResponse(created)
             }
-            do {
-                let result = try statements.reconcileLineItems(
-                    statementId: created.id,
-                    lineItemIds: lineItemIds,
-                    operatorConfirmedVisible: ToolHelpers.getBool(arguments, key: "operator_confirmed_visible")
-                )
-                return try ToolHelpers.jsonResponse(result)
-            } catch {
-                do {
-                    _ = try statements.delete(statementId: created.id)
-                } catch let rollbackError {
-                    return ToolHelpers.errorResponse("Statement create failed and rollback also failed: \(error); rollback: \(rollbackError)")
-                }
-                throw error
-            }
+            // One save: a failed reconcile leaves no statement behind.
+            let result = try statements.createReconciled(
+                accountId: accountId, startDate: startDate, endDate: endDate,
+                beginningBalance: beginningBalance, endingBalance: endingBalance,
+                lineItemIds: lineItemIds, name: name, note: note,
+                operatorConfirmedVisible: ToolHelpers.getBool(arguments, key: "operator_confirmed_visible"))
+            return try ToolHelpers.jsonResponse(result)
         }
     }
 

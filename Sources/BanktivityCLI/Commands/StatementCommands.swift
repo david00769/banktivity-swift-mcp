@@ -326,34 +326,21 @@ struct Statements: AsyncParsableCommand {
             }
 
             let resolvedId = try accountRepo.resolveAccountId(id: accountId, name: accountName)
-            let created = try statements.create(
-                accountId: resolvedId,
-                startDate: startDate,
-                endDate: endDate,
-                beginningBalance: beginningBalance,
-                endingBalance: endingBalance,
-                name: name,
-                note: note
-            )
-            do {
-                let result = ids.isEmpty
-                    ? created
-                    : try statements.reconcileLineItems(
-                        statementId: created.id,
-                        lineItemIds: ids,
-                        operatorConfirmedVisible: operatorConfirmedVisible
-                    )
-                try outputJSON(result, format: parent.format)
-            } catch {
-                do {
-                    _ = try statements.delete(statementId: created.id)
-                } catch let rollbackError {
-                    throw ValidationError(
-                        "Statement create failed and rollback also failed: \(error); rollback: \(rollbackError)"
-                    )
-                }
-                throw error
+            if ids.isEmpty {
+                let created = try statements.create(
+                    accountId: resolvedId, startDate: startDate, endDate: endDate,
+                    beginningBalance: beginningBalance, endingBalance: endingBalance,
+                    name: name, note: note)
+                try outputJSON(created, format: parent.format)
+                return
             }
+            // One save: a failed reconcile leaves no statement behind.
+            let result = try statements.createReconciled(
+                accountId: resolvedId, startDate: startDate, endDate: endDate,
+                beginningBalance: beginningBalance, endingBalance: endingBalance,
+                lineItemIds: ids, name: name, note: note,
+                operatorConfirmedVisible: operatorConfirmedVisible)
+            try outputJSON(result, format: parent.format)
         }
     }
 

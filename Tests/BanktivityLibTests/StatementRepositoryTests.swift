@@ -142,6 +142,31 @@ struct StatementRepositoryTests {
         )
     }
 
+    @Test("createReconciled makes the statement and its membership in one save, or nothing")
+    func createReconciledIsAtomic() throws {
+        let r = try makeRepositories()
+        defer { TestVaultHelper.cleanup(r.vault) }
+        let card = try createCreditCard(named: "Card", using: r.accounts)
+        let tx = try r.transactions.create(
+            date: "2026-05-10", title: "Shop",
+            lineItems: [(accountId: card.id, amount: -25, memo: nil)])
+        let liId = try accountLineItemId(in: tx, accountId: card.id)
+
+        // A line item that does not exist: nothing may be left behind.
+        #expect(throws: ToolError.self) {
+            try r.statements.createReconciled(
+                accountId: card.id, startDate: "2026-05-01", endDate: "2026-05-31",
+                beginningBalance: 0, endingBalance: -25, lineItemIds: [liId, 999_999])
+        }
+        #expect(try r.statements.list(accountId: card.id).isEmpty)
+
+        let made = try r.statements.createReconciled(
+            accountId: card.id, startDate: "2026-05-01", endDate: "2026-05-31",
+            beginningBalance: 0, endingBalance: -25, lineItemIds: [liId])
+        #expect(made.id > 0)
+        #expect(try r.statements.list(accountId: card.id).count == 1)
+    }
+
     @Test("Membership inspection is explicit for unaddressable references")
     func inspectMembershipReturnsUnaddressableReference() throws {
         let repos = try makeRepositories()
