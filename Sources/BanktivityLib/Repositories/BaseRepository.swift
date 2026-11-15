@@ -101,21 +101,48 @@ open class BaseRepository: @unchecked Sendable {
                 let value = try block(ctx)
                 if save && ctx.hasChanges {
                     // Keep the desktop's cached running balances (its account cash) current.
+                    // Recalculate in the same context before the single save, so the
+                    // write and its balances commit together. A recalculation failure
+                    // is only a warning: the write itself must not be reported failed
+                    // (an agent would retry and duplicate it). `accounts
+                    // recalc-balances` repairs any account left stale.
                     let stale = Self.accountsNeedingRunningBalance(in: ctx)
-                    try ctx.save()
                     if !stale.isEmpty {
-                        for (id, from) in stale {
-                            if let account = try? ctx.existingObject(with: id), !account.isDeleted {
-                                _ = try Self.recalculateRunningBalances(account: account, force: true, from: from, in: ctx)
+                        do {
+                            // Real primary keys, so the recalculation's tie-break matches a later one.
+                            try ctx.obtainPermanentIDs(for: Array(ctx.insertedObjects))
+                            for (id, from) in stale {
+                                guard let account = try? ctx.existingObject(with: id), !account.isDeleted else { continue }
+                                do {
+                                    try Self.runningBalanceFailureHook?(ctx)
+                                    _ = try Self.recalculateRunningBalances(account: account, force: true, from: from, in: ctx)
+                                } catch {
+                                    Self.dropRunningBalanceChanges(in: ctx)
+                                    throw error
+                                }
                             }
+                        } catch {
+                            FileHandle.standardError.write(Data("warning: write committed but running balances were not updated (\(error)); run `accounts recalc-balances`\n".utf8))
                         }
-                        if ctx.hasChanges { try ctx.save() }
                     }
+                    try ctx.save()
                 }
                 return value
             }
         }
         return try outcome.get()
+    }
+
+    /// Test seam: when set, throws from the post-write running-balance recalculation.
+    nonisolated(unsafe) static var runningBalanceFailureHook: ((NSManagedObjectContext) throws -> Void)?
+
+    /// Discard pending changes that touch only `pRunningBalance` on existing line items.
+    private static func dropRunningBalanceChanges(in ctx: NSManagedObjectContext) {
+        for object in ctx.updatedObjects where object.entity.name == "LineItem" {
+            if Set(object.changedValues().keys) == ["pRunningBalance"] {
+                ctx.refresh(object, mergeChanges: false)
+            }
+        }
     }
 
     /// Create a new managed object in the given context
