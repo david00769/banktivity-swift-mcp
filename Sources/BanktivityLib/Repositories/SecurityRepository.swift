@@ -181,12 +181,16 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         date: String,
         title: String? = nil,
         memo: String? = nil,
-        offsetCategoryId: Int? = nil
+        offsetCategoryId: Int? = nil,
+        worthless: Bool = false
     ) throws -> SecurityTradeDTO {
         guard shares != 0 else {
             throw ToolError.invalidInput("shares must be non-zero")
         }
-        _ = try Self.validatedPricePerShare(pricePerShare, shares: shares, amount: nil, baseType: shares < 0 ? 101 : 100)
+        // A worthless disposal stores no price at all, so nothing can write a 0
+        // into price history on another device (see `zeroPriceMessage`).
+        let storedPrice: Double? = try Self.validatedPricePerShare(
+            pricePerShare, shares: shares, amount: nil, baseType: shares < 0 ? 101 : 100, worthless: worthless)
         guard DateConversion.fromISO(date) != nil else {
             throw ToolError.invalidInput("date must be YYYY-MM-DD")
         }
@@ -321,7 +325,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             // Banktivity ignores the cash line's pTransactionAmount for a trade
             // and counts the security line's pAmount, so the trade's cash goes there.
             sli.setValue(cashLineItemAmount as NSNumber, forKey: "pAmount")
-            sli.setValue(pricePerShare as NSNumber, forKey: "pPricePerShare")
+            sli.setValue(storedPrice.map { $0 as NSNumber }, forKey: "pPricePerShare")
             sli.setValue(commission as NSNumber, forKey: "pCommission")
             sli.setValue(0.0 as NSNumber, forKey: "pIncome")
             sli.setValue(1.0 as NSNumber, forKey: "pPriceMultiplier")
@@ -354,7 +358,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let syncSLI = SyncBlobUpdater.SyncSecurityLineItem(
                 amount: cashLineItemAmount,
                 commission: commission,
-                pricePerShare: pricePerShare,
+                pricePerShare: storedPrice,
                 priceMultiplier: 1,
                 securityUUID: secInfo.uuid,
                 shares: shares,
@@ -826,13 +830,33 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
     /// given a price) need a positive one, taken from `price` or derived from
     /// `amount / shares`. Share moves and splits without a price store nil,
     /// never 0 (see `zeroPriceMessage`).
-    static func validatedPricePerShare(_ price: Double?, shares: Double, amount: Double?, baseType: Int16) throws -> Double? {
+    static func validatedPricePerShare(
+        _ price: Double?, shares: Double, amount: Double?, baseType: Int16, worthless: Bool = false
+    ) throws -> Double? {
+        if worthless {
+            // The one sanctioned zero: disposing of a worthless security. The
+            // disposal is recorded with no price, so no device writes a 0 into
+            // the security's price history. Never derive a price from the
+            // amount here: on a $0 sale the amount is only the fee.
+            guard baseType == 101, shares < 0 else {
+                throw ToolError.invalidInput("worthless applies only to a sale of shares (negative shares)")
+            }
+            guard price == nil || price == 0 else {
+                throw ToolError.invalidInput("a worthless sale has no price: omit the price or pass 0")
+            }
+            return nil
+        }
         if let price {
             guard price > 0 else { throw ToolError.invalidInput(zeroPriceMessage) }
             return price
         }
         guard baseType == 100 || baseType == 101, shares != 0 else { return nil }
         if let amount, amount != 0 { return abs(amount / shares) }
+        if baseType == 100 {
+            throw ToolError.invalidInput(
+                "A buy needs a price. For gifted or free shares, record the shares with --transaction-type move-shares-in (MCP: transaction_type \"move-shares-in\"), which stores no price. "
+                + "For a sale of a worthless security use --worthless. \(zeroPriceMessage)")
+        }
         throw ToolError.invalidInput(
             "A buy or sell needs --price-per-share (or an --amount to derive it from). \(zeroPriceMessage)")
     }
@@ -846,7 +870,8 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         title: String? = nil,
         amount: Double? = nil,
         transactionType: String? = nil,
-        pricePerShare: Double? = nil
+        pricePerShare: Double? = nil,
+        worthless: Bool = false
     ) throws -> SecurityTradeDTO {
         // Resolved before the write closure so it can be captured as a constant:
         // a `var` here is not Sendable into the background context.
@@ -860,7 +885,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         }()
         let price = try Self.validatedPricePerShare(
             pricePerShare, shares: shares, amount: amount,
-            baseType: movementBaseType ?? (shares >= 0 ? 100 : 101))
+            baseType: movementBaseType ?? (shares >= 0 ? 100 : 101), worthless: worthless)
 
         struct SecurityInfo: Sendable {
             let objectID: NSManagedObjectID
@@ -1026,10 +1051,14 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         securitySymbol: String? = nil,
         securityId: Int? = nil,
         cashLineItemAmount: Double? = nil,
-        basisOnlyTransfer: Bool = false
+        basisOnlyTransfer: Bool = false,
+        clearPrice: Bool = false
     ) throws -> SecurityTradeDTO {
         if let pricePerShare, pricePerShare <= 0 {
             throw ToolError.invalidInput(Self.zeroPriceMessage)
+        }
+        if clearPrice, pricePerShare != nil {
+            throw ToolError.invalidInput("clear_price cannot be combined with a price")
         }
         if basisOnlyTransfer {
             guard cashLineItemAmount == nil else {
@@ -1148,6 +1177,8 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             }
             if let pricePerShare = pricePerShare {
                 sli.setValue(pricePerShare as NSNumber, forKey: "pPricePerShare")
+            } else if clearPrice {
+                sli.setValue(nil, forKey: "pPricePerShare")
             }
             if let amount = amount {
                 sli.setValue(amount as NSNumber, forKey: "pAmount")
@@ -1246,6 +1277,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let liUUID = result.liUUID
             let sharesStr = shares.map { updater.formatDecimalPublic($0) }
             let ppsStr = pricePerShare.map { updater.formatDecimalPublic($0) }
+            let clearPriceInBlob = clearPrice
             let amountStr = (cashLineItemAmount ?? amount).map { updater.formatDecimalPublic($0) }
             let commissionStr = commission.map { updater.formatDecimalPublic($0) }
             let secRef = newSecurityUUID.map { "Security:\($0)" }
@@ -1260,6 +1292,10 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                 if let v = ppsStr {
                     patched = SyncBlobUpdater.patchSecurityLineItemFieldStatic(
                         xml: patched, lineItemUUID: liUUID, fieldName: "pricePerShare", fieldType: "decimal", value: v)
+                }
+                if clearPriceInBlob {
+                    patched = SyncBlobUpdater.clearSecurityLineItemFieldStatic(
+                        xml: patched, lineItemUUID: liUUID, fieldName: "pricePerShare", fieldType: "decimal")
                 }
                 if let v = amountStr {
                     patched = SyncBlobUpdater.patchSecurityLineItemFieldStatic(

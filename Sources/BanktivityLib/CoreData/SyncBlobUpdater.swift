@@ -504,6 +504,25 @@ public final class SyncBlobUpdater: @unchecked Sendable {
         return result
     }
 
+    /// Set a SecurityLineItem field to null in the blob (`<field ... null="null"/>`).
+    public static func clearSecurityLineItemFieldStatic(xml: String, lineItemUUID: String, fieldName: String, fieldType: String) -> String {
+        let identifierPattern = "<field type=\"string\" name=\"identifier\">\(lineItemUUID)</field>"
+        guard let identifierRange = xml.range(of: identifierPattern) else { return xml }
+        let afterIdentifier = xml[identifierRange.upperBound...]
+        guard let sliStart = afterIdentifier.range(of: "<record type=\"SecurityLineItem\" name=\"securityLineItem\">") else { return xml }
+        guard let sliEnd = xml.range(of: "</record>", range: sliStart.upperBound..<xml.endIndex) else { return xml }
+        var patched = String(xml[sliStart.lowerBound..<sliEnd.upperBound])
+        let openTag = "<field type=\"\(fieldType)\" name=\"\(fieldName)\">"
+        guard let openRange = patched.range(of: openTag),
+              let closeRange = patched.range(of: "</field>", range: openRange.upperBound..<patched.endIndex)
+        else { return xml }
+        patched.replaceSubrange(openRange.lowerBound..<closeRange.upperBound,
+                                with: "<field type=\"\(fieldType)\" name=\"\(fieldName)\" null=\"null\"/>")
+        var result = xml
+        result.replaceSubrange(sliStart.lowerBound..<sliEnd.upperBound, with: patched)
+        return result
+    }
+
     public func formatDecimalPublic(_ value: Double) -> String {
         formatDecimal(value)
     }

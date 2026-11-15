@@ -557,4 +557,112 @@ struct SecurityTradeCreationTests {
         _ = try repo.updateSecurityLineItem(transactionId: sell.id, cashLineItemAmount: 600)
         #expect(abs(try accounts.getBalance(accountId: accountPK) - (600 - 1005)) < 0.000001)
     }
+
+    // MARK: - Zero-price guard (upstream c96dea6) and its sanctioned exceptions
+
+    private func zeroPriceFixture() throws -> (TestVaultHelper.TestVault, SecurityRepository, Int) {
+        let vault = try TestVaultHelper.createFreshVault()
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        _ = try TestVaultHelper.seedTransactionTypes(in: vault.container)
+        _ = try TestVaultHelper.seedSyncedDocument(in: vault.container)
+        let account = try TestVaultHelper.seedInvestmentAccount(in: vault.container, currency: eur)
+        _ = try TestVaultHelper.seedSecurity(in: vault.container, symbol: "DEAD", currency: eur)
+        let updater = SyncBlobUpdater(container: vault.container)
+        let repo = SecurityRepository(container: vault.container, syncBlobUpdater: updater)
+        return (vault, repo, BaseRepository.extractPK(from: account.objectID))
+    }
+
+    private func storedSLIPrice(_ vault: TestVaultHelper.TestVault) throws -> NSManagedObject? {
+        let ctx = vault.container.viewContext
+        ctx.refreshAllObjects()
+        return try ctx.fetch(NSFetchRequest<NSManagedObject>(entityName: "SecurityLineItem")).last
+    }
+
+    @Test("A worthless sale is recorded with no stored price; a zero price without the option is still refused")
+    func worthlessSaleStoresNoPrice() throws {
+        let (vault, repo, accountPK) = try zeroPriceFixture()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        #expect(throws: (any Error).self) {
+            try repo.createSecurityTrade(
+                accountId: accountPK, symbol: "DEAD", shares: -10, pricePerShare: 0,
+                amount: 0, cashLineItemAmount: 0, date: "2026-06-01")
+        }
+        #expect(throws: (any Error).self) {
+            try repo.createSecurityTrade(
+                accountId: accountPK, symbol: "DEAD", shares: 10, pricePerShare: 0,
+                amount: 0, cashLineItemAmount: 0, date: "2026-06-01", worthless: true)
+        }
+        let trade = try repo.createSecurityTrade(
+            accountId: accountPK, symbol: "DEAD", shares: -10, pricePerShare: 0,
+            amount: 0, cashLineItemAmount: 0, date: "2026-06-01", worthless: true)
+        #expect(trade.type == "Sell")
+        let sli = try #require(try storedSLIPrice(vault))
+        #expect(sli.value(forKey: "pPricePerShare") == nil)
+    }
+
+    @Test("A positive no-price adjustment is refused with a pointer to move-shares-in, which stores no price")
+    func giftedSharesPointToMoveSharesIn() throws {
+        let (vault, repo, accountPK) = try zeroPriceFixture()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        do {
+            _ = try repo.createShareAdjustment(
+                accountId: accountPK, symbol: "DEAD", shares: 5, date: "2026-06-01")
+            Issue.record("expected a refusal")
+        } catch {
+            #expect("\(error)".contains("move-shares-in"))
+        }
+        _ = try repo.createShareAdjustment(
+            accountId: accountPK, symbol: "DEAD", shares: 5, date: "2026-06-01",
+            transactionType: "move-shares-in")
+        let sli = try #require(try storedSLIPrice(vault))
+        #expect(sli.value(forKey: "pPricePerShare") == nil)
+    }
+
+    @Test("A worthless sale with only a fee never stores fee/shares as the price")
+    func zeroSaleWithFeeStoresNoPrice() throws {
+        let (vault, repo, accountPK) = try zeroPriceFixture()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        _ = try repo.createShareAdjustment(
+            accountId: accountPK, symbol: "DEAD", shares: -10, date: "2026-06-01",
+            amount: -5, worthless: true)
+        let sli = try #require(try storedSLIPrice(vault))
+        #expect(sli.value(forKey: "pPricePerShare") == nil)
+
+        // Without the option the fee-derived price is still what it was: refused only when absent.
+        #expect(throws: (any Error).self) {
+            try repo.createShareAdjustment(
+                accountId: accountPK, symbol: "DEAD", shares: -10, date: "2026-06-02", worthless: false)
+        }
+    }
+
+    @Test("update-trade can clear a stored price to nil, in the store and the sync blob")
+    func updateTradeClearsPrice() throws {
+        let (vault, repo, accountPK) = try zeroPriceFixture()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        let trade = try repo.createSecurityTrade(
+            accountId: accountPK, symbol: "DEAD", shares: 10, pricePerShare: 2,
+            amount: 20, cashLineItemAmount: -20, date: "2026-06-01")
+        #expect(try storedSLIPrice(vault)?.value(forKey: "pPricePerShare") != nil)
+
+        #expect(throws: (any Error).self) {
+            try repo.updateSecurityLineItem(transactionId: trade.id, pricePerShare: 3, clearPrice: true)
+        }
+        _ = try repo.updateSecurityLineItem(transactionId: trade.id, clearPrice: true)
+        #expect(try storedSLIPrice(vault)?.value(forKey: "pPricePerShare") == nil)
+
+        let ctx = vault.container.viewContext
+        let txReq = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
+        let tx = try #require(try ctx.fetch(txReq).first)
+        let syncRequest = NSFetchRequest<NSManagedObject>(entityName: "SyncedHostedEntity")
+        syncRequest.predicate = NSPredicate(format: "pLocalID == %@", BaseRepository.stringValue(tx, "pUniqueID"))
+        let record = try #require(try ctx.fetch(syncRequest).first)
+        let blobData = try #require(record.value(forKey: "pRemoteEntityData") as? Data)
+        let decompressed = try #require(SyncBlobUpdater.decompressGzip(blobData))
+        let xml = try #require(String(data: decompressed, encoding: .utf8))
+        #expect(xml.contains("<field type=\"decimal\" name=\"pricePerShare\" null=\"null\"/>"))
+    }
 }
