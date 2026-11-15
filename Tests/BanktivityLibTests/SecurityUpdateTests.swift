@@ -426,7 +426,7 @@ struct SecurityUpdateTests {
         #expect(result.type == "Sell")
         #expect(result.shares == -2.5)
         #expect(abs(result.pricePerShare - 12.34) < 0.000001)
-        #expect(abs(result.amount - 30.85) < 0.000001)
+        #expect(abs(result.amount - 596.06) < 0.000001)
         #expect(abs(result.commission - 1.23) < 0.000001)
 
         let lineItems = try LineItemRepository(container: vault.container).getForTransactionPK(result.id)
@@ -442,7 +442,7 @@ struct SecurityUpdateTests {
         let createdSLI = try #require(securityLineItems.first)
         #expect(abs(BaseRepository.doubleValue(createdSLI, "pShares") + 2.5) < 0.000001)
         #expect(abs(BaseRepository.doubleValue(createdSLI, "pPricePerShare") - 12.34) < 0.000001)
-        #expect(abs(BaseRepository.doubleValue(createdSLI, "pAmount") - 30.85) < 0.000001)
+        #expect(abs(BaseRepository.doubleValue(createdSLI, "pAmount") - 596.06) < 0.000001)
         #expect(abs(BaseRepository.doubleValue(createdSLI, "pCommission") - 1.23) < 0.000001)
 
         let txRequest = NSFetchRequest<NSManagedObject>(entityName: "Transaction")

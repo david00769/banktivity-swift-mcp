@@ -592,7 +592,7 @@ struct Securities: AsyncParsableCommand {
         @Option(name: .long, help: "Price per share")
         var pricePerShare: Double
 
-        @Option(name: .long, parsing: .unconditional, help: "Security trade amount/cost")
+        @Option(name: .long, parsing: .unconditional, help: "Security trade amount/cost. Informational only: Banktivity balances use --cash-line-amount, which is stored as the security line amount")
         var amount: Double
 
         @Option(name: .long, parsing: .unconditional, help: "Commission or fee amount")
@@ -728,7 +728,7 @@ struct Securities: AsyncParsableCommand {
         @Option(name: .long, help: "Transaction title")
         var title: String?
 
-        @Option(name: .long, parsing: .unconditional, help: "Security cost/principal amount. This does not change investment-account cash line items unless --cash-line-amount is also supplied")
+        @Option(name: .long, parsing: .unconditional, help: "Security line amount, which Banktivity counts as the trade cash in balances. Prefer --cash-line-amount; if both are given, --cash-line-amount wins")
         var amount: Double?
 
         @Option(name: .long, help: "Movement type. Accepts: \(SecurityRepository.shareMovementTypeNames). Defaults to buy or sell by the sign of --shares")
@@ -770,7 +770,7 @@ struct Securities: AsyncParsableCommand {
         @Option(name: .long, help: "Price per share")
         var pricePerShare: Double?
 
-        @Option(name: .long, parsing: .unconditional, help: "Security cost/principal amount. This does not change investment-account cash line items unless --cash-line-amount is also supplied")
+        @Option(name: .long, parsing: .unconditional, help: "Security line amount, which Banktivity counts as the trade cash in balances. Prefer --cash-line-amount; if both are given, --cash-line-amount wins")
         var amount: Double?
 
         @Option(name: .long, parsing: .unconditional, help: "Commission or fee amount")
@@ -782,7 +782,7 @@ struct Securities: AsyncParsableCommand {
         @Option(name: .long, help: "Security ID (alternative to --symbol)")
         var securityId: Int?
 
-        @Option(name: .long, parsing: .unconditional, help: "Also set the investment account cash line item to this amount and the balancing line item to the opposite amount")
+        @Option(name: .long, parsing: .unconditional, help: "Set the trade cash: the investment account cash line, the balancing line (opposite amount) and the security line amount Banktivity balances use. Overrides --amount for the stored security amount")
         var cashLineAmount: Double?
 
         @Flag(name: .long, help: "Validate a zero-cash transfer-in row and update security basis fields without changing cash line items")

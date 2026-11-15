@@ -113,7 +113,7 @@ struct SecurityTradeCreationTests {
         #expect(result.type == "Sell")
         #expect(result.shares == -2.5)
         #expect(abs(result.pricePerShare - 12.34) < 0.000001)
-        #expect(abs(result.amount - 30.85) < 0.000001)
+        #expect(abs(result.amount - 596.06) < 0.000001)
         #expect(abs(result.commission - 1.23) < 0.000001)
 
         let lineItems = try LineItemRepository(container: vault.container).getForTransactionPK(result.id)
@@ -129,7 +129,7 @@ struct SecurityTradeCreationTests {
         let createdSLI = try #require(securityLineItems.first)
         #expect(abs(BaseRepository.doubleValue(createdSLI, "pShares") + 2.5) < 0.000001)
         #expect(abs(BaseRepository.doubleValue(createdSLI, "pPricePerShare") - 12.34) < 0.000001)
-        #expect(abs(BaseRepository.doubleValue(createdSLI, "pAmount") - 30.85) < 0.000001)
+        #expect(abs(BaseRepository.doubleValue(createdSLI, "pAmount") - 596.06) < 0.000001)
         #expect(abs(BaseRepository.doubleValue(createdSLI, "pCommission") - 1.23) < 0.000001)
 
         let txRequest = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
@@ -146,7 +146,7 @@ struct SecurityTradeCreationTests {
         #expect(xml.contains("<field enum=\"IGGCSyncAccountingTransactionBaseType\" name=\"baseType\">sell</field>"))
         #expect(xml.contains("<field type=\"decimal\" name=\"shares\">-2.5</field>"))
         #expect(xml.contains("<field type=\"decimal\" name=\"pricePerShare\">12.34</field>"))
-        #expect(xml.contains("<field type=\"decimal\" name=\"cost\">30.85</field>"))
+        #expect(xml.contains("<field type=\"decimal\" name=\"cost\">596.06</field>"))
         #expect(xml.contains("<field type=\"decimal\" name=\"commission\">1.23</field>"))
         #expect(xml.contains("<field type=\"decimal\" name=\"accountAmount\">596.06</field>"))
         #expect(xml.contains("<field type=\"decimal\" name=\"accountAmount\">-596.06</field>"))
@@ -185,7 +185,7 @@ struct SecurityTradeCreationTests {
         #expect(result.securityName == BaseRepository.stringValue(security, "pName"))
         #expect(abs(result.shares - 250000) < 0.000001)
         #expect(abs(result.pricePerShare - 1) < 0.000001)
-        #expect(abs(result.amount - 250000) < 0.000001)
+        #expect(abs(result.amount + 250000) < 0.000001)
 
         let lineItems = try LineItemRepository(container: vault.container).getForTransactionPK(result.id)
         #expect(lineItems.count == 2)
@@ -204,7 +204,7 @@ struct SecurityTradeCreationTests {
         let trade = try #require(trades.first { $0.id == result.id })
         #expect(trade.type == "Buy")
         #expect(abs(trade.shares - 250000) < 0.000001)
-        #expect(abs(trade.amount - 250000) < 0.000001)
+        #expect(abs(trade.amount + 250000) < 0.000001)
 
         let ctx = vault.container.viewContext
         let txRequest = NSFetchRequest<NSManagedObject>(entityName: "Transaction")
@@ -221,7 +221,7 @@ struct SecurityTradeCreationTests {
         #expect(xml.contains("<field enum=\"IGGCSyncAccountingTransactionBaseType\" name=\"baseType\">buy</field>"))
         #expect(xml.contains("<field type=\"decimal\" name=\"shares\">250000</field>"))
         #expect(xml.contains("<field type=\"decimal\" name=\"pricePerShare\">1</field>"))
-        #expect(xml.contains("<field type=\"decimal\" name=\"cost\">250000</field>"))
+        #expect(xml.contains("<field type=\"decimal\" name=\"cost\">-250000</field>"))
         #expect(xml.contains("<field type=\"decimal\" name=\"accountAmount\">-250000</field>"))
         #expect(xml.contains("<field type=\"decimal\" name=\"accountAmount\">250000</field>"))
     }
@@ -528,5 +528,33 @@ struct SecurityTradeCreationTests {
         // pSyncedState 3 is the tombstone that propagates the delete, as used by
         // transaction deletion. Without it the blob can resurrect the security.
         #expect(saved.value(forKey: "pSyncedState") as? Int16 == 3)
+    }
+
+    @Test("Trade cash lands on the field Banktivity reads: buy and sell move the balance, update-trade moves it again")
+    func tradeCashMovesBalance() throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+
+        let (_, eur) = try TestVaultHelper.seedCurrencies(in: vault.container)
+        _ = try TestVaultHelper.seedTransactionTypes(in: vault.container)
+        let account = try TestVaultHelper.seedInvestmentAccount(in: vault.container, currency: eur)
+        _ = try TestVaultHelper.seedSecurity(in: vault.container, symbol: "OGVXX", currency: eur)
+
+        let repo = SecurityRepository(container: vault.container)
+        let accounts = AccountRepository(container: vault.container)
+        let accountPK = BaseRepository.extractPK(from: account.objectID)
+
+        _ = try repo.createSecurityTrade(
+            accountId: accountPK, symbol: "OGVXX", shares: 100, pricePerShare: 10,
+            amount: 1000, commission: 5, cashLineItemAmount: -1005, date: "2026-05-01")
+        #expect(abs(try accounts.getBalance(accountId: accountPK) + 1005) < 0.000001)
+
+        let sell = try repo.createSecurityTrade(
+            accountId: accountPK, symbol: "OGVXX", shares: -50, pricePerShare: 12.34,
+            amount: 617, commission: 20.94, cashLineItemAmount: 596.06, date: "2026-05-02")
+        #expect(abs(try accounts.getBalance(accountId: accountPK) - (596.06 - 1005)) < 0.000001)
+
+        _ = try repo.updateSecurityLineItem(transactionId: sell.id, cashLineItemAmount: 600)
+        #expect(abs(try accounts.getBalance(accountId: accountPK) - (600 - 1005)) < 0.000001)
     }
 }

@@ -318,7 +318,9 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
 
             let sli = Self.createObject(entityName: "SecurityLineItem", in: ctx)
             sli.setValue(shares as NSNumber, forKey: "pShares")
-            sli.setValue(amount as NSNumber, forKey: "pAmount")
+            // Banktivity ignores the cash line's pTransactionAmount for a trade
+            // and counts the security line's pAmount, so the trade's cash goes there.
+            sli.setValue(cashLineItemAmount as NSNumber, forKey: "pAmount")
             sli.setValue(pricePerShare as NSNumber, forKey: "pPricePerShare")
             sli.setValue(commission as NSNumber, forKey: "pCommission")
             sli.setValue(0.0 as NSNumber, forKey: "pIncome")
@@ -350,7 +352,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
 
         if let updater = syncBlobUpdater {
             let syncSLI = SyncBlobUpdater.SyncSecurityLineItem(
-                amount: amount,
+                amount: cashLineItemAmount,
                 commission: commission,
                 pricePerShare: pricePerShare,
                 priceMultiplier: 1,
@@ -397,7 +399,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             securityName: secInfo.name,
             shares: shares,
             pricePerShare: pricePerShare,
-            amount: amount,
+            amount: cashLineItemAmount,
             commission: commission,
             accountName: info.accountName,
             accountId: accountId
@@ -1150,6 +1152,11 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             if let amount = amount {
                 sli.setValue(amount as NSNumber, forKey: "pAmount")
             }
+            // The cash change wins: Banktivity counts pAmount, not the cash
+            // line's pTransactionAmount, so the new cash lands on pAmount too.
+            if let cashLineItemAmount = cashLineItemAmount {
+                sli.setValue(cashLineItemAmount as NSNumber, forKey: "pAmount")
+            }
             if let commission = commission {
                 sli.setValue(commission as NSNumber, forKey: "pCommission")
             }
@@ -1239,7 +1246,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             let liUUID = result.liUUID
             let sharesStr = shares.map { updater.formatDecimalPublic($0) }
             let ppsStr = pricePerShare.map { updater.formatDecimalPublic($0) }
-            let amountStr = amount.map { updater.formatDecimalPublic($0) }
+            let amountStr = (cashLineItemAmount ?? amount).map { updater.formatDecimalPublic($0) }
             let commissionStr = commission.map { updater.formatDecimalPublic($0) }
             let secRef = newSecurityUUID.map { "Security:\($0)" }
             let cashSync = result.cashSync

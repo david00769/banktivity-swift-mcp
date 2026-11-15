@@ -251,10 +251,11 @@ func registerSecurityTools(
                 "transaction_id": ToolHelpers.property(type: "number", description: "Transaction ID"),
                 "shares": ToolHelpers.property(type: "number", description: "Number of shares"),
                 "price_per_share": ToolHelpers.property(type: "number", description: "Price per share"),
-                "amount": ToolHelpers.property(type: "number", description: "Security cost/principal amount. This does not change investment-account cash line items."),
+                "amount": ToolHelpers.property(type: "number", description: "Security line amount, which Banktivity counts as the trade cash in balances. Prefer cash_line_amount; if both are given, cash_line_amount wins."),
                 "commission": ToolHelpers.property(type: "number", description: "Commission or fee amount"),
                 "symbol": ToolHelpers.property(type: "string", description: "Security ticker symbol"),
                 "security_id": ToolHelpers.property(type: "number", description: "Security ID (alternative to symbol)"),
+                "cash_line_amount": ToolHelpers.property(type: "number", description: "Set the trade cash: the investment account cash line, the balancing line (opposite amount) and the security line amount Banktivity balances use. Positive for sell inflow, negative for buy outflow"),
                 "basis_only_transfer": ToolHelpers.property(type: "boolean", description: "Validate a zero-cash transfer-in row and update security basis fields without changing cash line items"),
             ],
             required: ["transaction_id"]
@@ -274,6 +275,7 @@ func registerSecurityTools(
         let symbol = ToolHelpers.getString(arguments, key: "symbol")
         let securityId = ToolHelpers.getInt(arguments, key: "security_id")
         let basisOnlyTransfer = ToolHelpers.getBool(arguments, key: "basis_only_transfer")
+        let cashLineAmount = ToolHelpers.getDouble(arguments, key: "cash_line_amount")
 
         let result = try securities.updateSecurityLineItem(
             transactionId: transactionId,
@@ -283,6 +285,7 @@ func registerSecurityTools(
             commission: commission,
             securitySymbol: symbol,
             securityId: securityId,
+            cashLineItemAmount: cashLineAmount,
             basisOnlyTransfer: basisOnlyTransfer
         )
         return try ToolHelpers.jsonResponse(result)
@@ -300,7 +303,7 @@ func registerSecurityTools(
                 "id": ToolHelpers.property(type: "number", description: "Security ID (alternative to symbol)"),
                 "shares": ToolHelpers.property(type: "number", description: "Number of shares. Negative creates a sell; positive creates a buy"),
                 "price_per_share": ToolHelpers.property(type: "number", description: "Price per share"),
-                "amount": ToolHelpers.property(type: "number", description: "Security trade amount/cost"),
+                "amount": ToolHelpers.property(type: "number", description: "Security trade amount/cost. Informational only: balances use cash_line_amount, which is stored as the security line amount"),
                 "commission": ToolHelpers.property(type: "number", description: "Commission or fee amount"),
                 "cash_line_amount": ToolHelpers.property(type: "number", description: "Investment account cash line amount. Positive for sell inflow, negative for buy outflow"),
                 "date": ToolHelpers.property(type: "string", description: "Trade date in YYYY-MM-DD format"),
