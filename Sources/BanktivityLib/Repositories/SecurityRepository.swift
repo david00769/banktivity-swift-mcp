@@ -367,12 +367,6 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             )
         }
 
-        let lineItems = LineItemRepository(container: container)
-        try lineItems.recalculateRunningBalances(accountId: accountId)
-        if let offsetCategoryId {
-            try lineItems.recalculateRunningBalances(accountId: offsetCategoryId)
-        }
-
         if let updater = syncBlobUpdater {
             let syncSLI = SyncBlobUpdater.SyncSecurityLineItem(
                 amount: cashLineItemAmount,
@@ -722,7 +716,6 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             )
         }
 
-        try LineItemRepository(container: container).recalculateRunningBalances(accountId: accountId)
 
         // No name, no record. A fallback here would write `dividend` for a type
         // that is not one, which is the defect this change removes.
@@ -796,7 +789,7 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
     /// `zeroesHolding` marks the ones that make other devices value a held
     /// security at 0: dated on or after that security's latest price.
     public func auditZeroPrices() throws -> [ZeroPriceTradeDTO] {
-        try performRead { [self] ctx in
+        try performRead { ctx in
             let request = NSFetchRequest<NSManagedObject>(entityName: "SecurityLineItem")
             request.predicate = NSPredicate(format: "pPricePerShare == 0 AND pShares != 0")
             request.relationshipKeyPathsForPrefetching = ["pSecurity", "pLineItem.pTransaction", "pLineItem.pAccount"]
@@ -1121,7 +1114,6 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             newSecInfo = nil
         }
         let newSecurityObjectID = newSecInfo?.objectID
-        let newSecurityUUID = newSecInfo?.uuid
 
         struct UpdateResult: Sendable {
             let txUUID: String
@@ -1327,74 +1319,6 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
                                 amountWentToIncome: amountToIncome, writesCostField: !isIncomeRow)
         }
 
-        if let cashSync = result.cashSync {
-            try LineItemRepository(container: container).recalculateRunningBalances(accountId: cashSync.accountId)
-        }
-
-        // Patch sync blob (non-fatal)
-        if let updater = syncBlobUpdater {
-            // Pre-format values for the sendable closure
-            let liUUID = result.liUUID
-            let sharesStr = shares.map { updater.formatDecimalPublic($0) }
-            let ppsStr = pricePerShare.map { updater.formatDecimalPublic($0) }
-            let clearPriceInBlob = clearPrice
-            let costValue = (cashLineItemAmount ?? amount)
-            let amountStr = costValue.map { updater.formatDecimalPublic($0) }
-            let incomeStr = amount.map { updater.formatDecimalPublic($0) }
-            let amountWentToIncome = result.amountWentToIncome
-            let writesCostField = result.writesCostField
-            let commissionStr = commission.map { updater.formatDecimalPublic($0) }
-            let secRef = newSecurityUUID.map { "Security:\($0)" }
-            let cashSync = result.cashSync
-
-            updater.updateTransactionBlob(transactionUUID: result.txUUID) { xml in
-                var patched = xml
-                if let v = sharesStr {
-                    patched = SyncBlobUpdater.patchSecurityLineItemFieldStatic(
-                        xml: patched, lineItemUUID: liUUID, fieldName: "shares", fieldType: "decimal", value: v)
-                }
-                if let v = ppsStr {
-                    patched = SyncBlobUpdater.patchSecurityLineItemFieldStatic(
-                        xml: patched, lineItemUUID: liUUID, fieldName: "pricePerShare", fieldType: "decimal", value: v)
-                }
-                if clearPriceInBlob {
-                    patched = SyncBlobUpdater.clearSecurityLineItemFieldStatic(
-                        xml: patched, lineItemUUID: liUUID, fieldName: "pricePerShare", fieldType: "decimal")
-                }
-                if let v = amountStr, writesCostField {
-                    patched = SyncBlobUpdater.patchSecurityLineItemFieldStatic(
-                        xml: patched, lineItemUUID: liUUID, fieldName: "cost", fieldType: "decimal", value: v)
-                }
-                if let v = incomeStr, amountWentToIncome {
-                    patched = SyncBlobUpdater.patchSecurityLineItemFieldStatic(
-                        xml: patched, lineItemUUID: liUUID, fieldName: "income", fieldType: "decimal", value: v)
-                }
-                if let v = commissionStr {
-                    patched = SyncBlobUpdater.patchSecurityLineItemFieldStatic(
-                        xml: patched, lineItemUUID: liUUID, fieldName: "commission", fieldType: "decimal", value: v)
-                }
-                if let v = secRef {
-                    patched = SyncBlobUpdater.patchSecurityLineItemFieldStatic(
-                        xml: patched, lineItemUUID: liUUID, fieldName: "security", fieldType: "reference", value: v)
-                }
-                if let cashSync {
-                    patched = updater.patchLineItemAmounts(
-                        xml: patched,
-                        lineItemUUID: cashSync.cashLineItemUUID,
-                        accountAmount: cashSync.cashAmount,
-                        transactionAmount: cashSync.cashAmount
-                    )
-                    patched = updater.patchLineItemAmounts(
-                        xml: patched,
-                        lineItemUUID: cashSync.offsetLineItemUUID,
-                        accountAmount: cashSync.offsetAmount,
-                        transactionAmount: cashSync.offsetAmount
-                    )
-                }
-                return patched
-            }
-        }
-
         return result.trade
     }
 
@@ -1542,13 +1466,6 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
         // Banktivity's custom IGGCAccountingSecurityPrice class resets pClosePrice
         // to 0 on insert, leaving the value only in pAdjustedClosePrice.
         _ = try? fixBrokenPrices(symbol: securitySymbol)
-
-        // Update Security sync blob with latest price
-        if let price = result.latestClosePrice, let date = result.latestDateISO {
-            syncBlobUpdater?.updateSecurityLatestPrice(
-                securityUUID: securityUniqueId, closePrice: price, date: date
-            )
-        }
 
         return result
     }
@@ -1982,14 +1899,6 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             return FixResult(counts: counts, latestPrices: latestPrices)
         }
 
-        // Update sync blobs for affected securities
-        if let updater = syncBlobUpdater {
-            for (uuid, info) in fixResult.latestPrices {
-                updater.updateSecurityLatestPrice(
-                    securityUUID: uuid, closePrice: info.price, date: info.date
-                )
-            }
-        }
 
         return fixResult.counts.map { (symbol: $0.key, fixed: $0.value) }.sorted { $0.symbol < $1.symbol }
     }
@@ -2788,7 +2697,6 @@ public final class SecurityRepository: BaseRepository, @unchecked Sendable {
             return Self.stringValue(security, "pUniqueID")
         }
 
-        syncBlobUpdater?.updateSecurityIdentity(securityUUID: uuid, symbol: newSymbol, name: newName)
 
         let after: SecurityDTO = try performRead { [self] ctx in
             let request = NSFetchRequest<NSManagedObject>(entityName: "Security")

@@ -70,8 +70,8 @@ A `.bank8` vault is a Core Data store, and Banktivity syncs it through CloudKit.
 
 This is david00769's maintained fork of Steve Flinter's
 [banktivity-swift-mcp](https://github.com/sflinter/banktivity-swift-mcp). It
-has everything upstream has: v0.18.0 (2026-11-16) is in sync with upstream main
-as of `699dc3a`. Upstream has merged most of this fork's work, including sync
+has everything upstream has: v0.18.3 is in sync with upstream main
+as of `660cbc3`. Upstream has merged most of this fork's work, including sync
 by modification date (2026-11-15), so edits are signalled to Banktivity's sync
 the way the app itself does and are not reverted by a remote copy. What is
 listed below is only here, or is still offered upstream as
@@ -133,6 +133,7 @@ The consequence is worth stating plainly, because it is the failure this tool ca
 ## Requirements
 
 - macOS 14 or later
+- Banktivity 10 (behaviour verified against 10.2.2)
 - A Banktivity `.bank8` vault
 
 ## Installation
@@ -864,6 +865,13 @@ Important behavior:
 Use `--format compact` when a script needs one-line JSON; the default is
 pretty-printed JSON for human inspection.
 
+### Exit codes
+
+`0` success, `64` usage error, `65` validation failed (for example a zero
+share price or an unbalanced repair), `66` not found, `70` store failure, `77`
+write blocked (Banktivity has the vault open). Errors go to stderr as
+`Error: [category] message`.
+
 ### Shell Completions
 
 ArgumentParser provides shell completion scripts automatically:
@@ -911,6 +919,13 @@ Banktivity's `.bank8` bundle is a folder holding Banktivity's compiled data mode
 2. Opens the SQLite store via `NSPersistentContainer` (no history tracking, no migration)
 3. Exposes 80 MCP tools over stdio, or over loopback HTTP when `BANKTIVITY_HTTP_PORT` is set
 4. Uses KVC (`value(forKey:)`) to access entities since we load Banktivity's own compiled models at runtime
+
+Rules read from Banktivity's own frameworks:
+
+- **Sync.** Banktivity uploads a record when its `pModificationDate` is newer than the last sync, and keeps each record's stored sync copy as the base of a three-way merge, so the tool never rewrites that copy: doing so would let a remote copy silently undo an edit. Every write marks the owning transaction or security as modified.
+- **Amounts.** Balances and statement totals count an investment transaction's security line amount plus income, not the line item's own amount; everything else is amount x exchange rate. Investment account balances are cash, with holdings market value reported separately as `holdingsValue`.
+- **Running balances.** The desktop app shows an account's cash from the running balance cached on each line. It is not synced, so every write recalculates it for the accounts it touched, from the earliest changed date. `accounts recalc-balances` repairs balances that are already stale.
+- **Share prices.** A device that receives a trade writes its price per share into that security's price history, zero included, so a trade priced at 0 makes other devices value the whole holding at 0. `securities audit-prices` finds existing ones.
 
 ## FAQ
 

@@ -6,13 +6,9 @@ import Foundation
 
 public final class StatementRepository: BaseRepository, @unchecked Sendable {
     private let lineItemRepo: LineItemRepository
-    /// Upstream's blob patching, kept alongside the fork's `pModificationDate`
-    /// upload signal. Optional: callers that omit it get the fork's behaviour.
-    private let syncBlobUpdater: SyncBlobUpdater?
 
-    public init(container: NSPersistentContainer, lineItemRepo: LineItemRepository, syncBlobUpdater: SyncBlobUpdater? = nil) {
+    public init(container: NSPersistentContainer, lineItemRepo: LineItemRepository) {
         self.lineItemRepo = lineItemRepo
-        self.syncBlobUpdater = syncBlobUpdater
         super.init(container: container)
     }
 
@@ -372,7 +368,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             return (newId, Self.stringValue(statement, "pUniqueID"), blob)
         }
 
-        patchStatementMembership(blobItems, statementUUID: statementUUID, cleared: true)
         guard let result = try get(statementId: pk) else { throw RepositoryError.unexpectedNilResult }
         return result
     }
@@ -399,25 +394,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             return members
         }
         guard let txLineItems else { return false }
-        patchStatementMembership(txLineItems, statementUUID: nil)
         return true
-    }
-
-    /// Upstream's blob patch for membership changes (non-fatal, optional).
-    private func patchStatementMembership(_ txLineItems: [String: [String]], statementUUID: String?, cleared: Bool? = nil) {
-        guard let updater = syncBlobUpdater else { return }
-        for (txUUID, liUUIDs) in txLineItems {
-            updater.updateTransactionBlob(transactionUUID: txUUID) { xml in
-                var result = xml
-                for liUUID in liUUIDs {
-                    if let cleared {
-                        result = updater.patchCleared(xml: result, lineItemUUID: liUUID, cleared: cleared)
-                    }
-                    result = updater.patchStatement(xml: result, lineItemUUID: liUUID, statementUUID: statementUUID)
-                }
-                return result
-            }
-        }
     }
 
     public func reconcileLineItems(
@@ -428,7 +405,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
     ) throws -> StatementDTO {
         struct StatementInfo: Sendable {
             let accountId: Int
-            let uuid: String
             let startTs: Double?
             let endTs: Double?
         }
@@ -441,14 +417,12 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             }
             return StatementInfo(
                 accountId: Self.extractPK(from: account.objectID),
-                uuid: Self.stringValue(statement, "pUniqueID"),
                 startTs: Self.dateValue(statement, "pStartDate"),
                 endTs: Self.dateValue(statement, "pEndDate")
             )
         }
 
         let statementAccountId = info.accountId
-        let statementUUID = info.uuid
         let startTs = info.startTs
         let endTs = info.endTs
 
@@ -469,7 +443,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             return blobItems
         }
 
-        patchStatementMembership(txLineItems, statementUUID: statementUUID, cleared: true)
 
         guard let result = try get(statementId: statementId) else {
             throw ToolError.notFound("Statement not found after reconciliation: \(statementId)")
@@ -620,6 +593,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
                 }
 
                 // Leaving a statement does not un-tick the line: cleared is kept.
+                // The save hook marks the line's transaction modified.
                 li.setValue(nil, forKey: "pStatement")
                 if let statement = try fetchByPK(entityName: "Statement", pk: statementId, in: ctx) {
                     Self.setNow(statement, "pModificationDate")
@@ -628,7 +602,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             return blobItems
         }
 
-        patchStatementMembership(txLineItems, statementUUID: nil)
 
         return try get(statementId: statementId)
     }
@@ -709,8 +682,6 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             Self.setNow(statement, "pModificationDate")
             return Self.stringValue(statement, "pUniqueID")
         }
-        syncBlobUpdater?.updateStatementBalances(
-            statementUUID: statementUUID, beginningBalance: beginningBalance, endingBalance: endingBalance)
 
         guard let result = try get(statementId: statementId) else {
             throw ToolError.notFound("Statement not found after update: \(statementId)")
@@ -833,7 +804,7 @@ public final class StatementRepository: BaseRepository, @unchecked Sendable {
             accountId = Self.extractPK(from: account.objectID)
             accountName = Self.stringValue(account, "pName")
             accountClass = Self.intValue(account, "pAccountClass")
-            accountType = getAccountTypeName(accountClass)
+            accountType = accountTypeName(for: accountClass)
         } else {
             accountId = 0
             accountName = "Unknown"

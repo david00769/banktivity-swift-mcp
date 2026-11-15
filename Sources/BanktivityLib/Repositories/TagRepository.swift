@@ -16,14 +16,6 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
-    /// Get a tag by primary key
-    public func get(tagId: Int) throws -> TagDTO? {
-        try performRead { [self] ctx in
-            guard let object = try fetchByPK(entityName: "Tag", pk: tagId, in: ctx) else { return nil }
-            return self.mapToDTO(object)
-        }
-    }
-
     /// Find a tag by name (case-insensitive)
     public func findByName(_ name: String) throws -> TagDTO? {
         try performRead { [self] ctx in
@@ -93,16 +85,17 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
 
     /// Add a tag to all line items of a transaction
     public func tagTransaction(transactionId: Int, tagId: Int) throws -> Int {
-        try applyTagChange(transactionId: transactionId, tagId: tagId, add: true)
+        try applyTag(transactionId: transactionId, tagId: tagId, add: true)
     }
 
     /// Remove a tag from all line items of a transaction
     public func untagTransaction(transactionId: Int, tagId: Int) throws -> Int {
-        try applyTagChange(transactionId: transactionId, tagId: tagId, add: false)
+        try applyTag(transactionId: transactionId, tagId: tagId, add: false)
     }
 
-    /// Returns the number of line items changed.
-    private func applyTagChange(transactionId: Int, tagId: Int, add: Bool) throws -> Int {
+    /// Returns how many line items changed. The save hook marks the
+    /// transaction modified so the change syncs.
+    private func applyTag(transactionId: Int, tagId: Int, add: Bool) throws -> Int {
         try performWriteReturning { [self] ctx in
             guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
                 throw ToolError.notFound("Transaction not found: \(transactionId)")
@@ -110,11 +103,8 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
             guard let tag = try fetchByPK(entityName: "Tag", pk: tagId, in: ctx) else {
                 throw ToolError.notFound("Tag not found: \(tagId)")
             }
-
-            let lineItems = Self.relatedSet(tx, "lineItems")
             var count = 0
-
-            for li in lineItems {
+            for li in Self.relatedSet(tx, "lineItems") {
                 let tags = li.mutableSetValue(forKey: "pTags")
                 if add, !tags.contains(tag) {
                     tags.add(tag)
@@ -124,11 +114,6 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
                     count += 1
                 }
             }
-
-            if count > 0 {
-                Self.setNow(tx, "pModificationDate")
-            }
-
             return count
         }
     }
@@ -189,7 +174,6 @@ public final class TagRepository: BaseRepository, @unchecked Sendable {
     /// Core Data thread confinement.
     public func getTransactionsByTag(
         tagId: Int,
-        accountId: Int? = nil,
         startDate: String? = nil,
         endDate: String? = nil,
         limit: Int = 50

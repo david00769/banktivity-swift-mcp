@@ -176,10 +176,6 @@ final class CLIProcessState: @unchecked Sendable {
     }
 }
 
-func emitWarning(_ message: String) {
-    writeStderr("Warning: \(message)")
-}
-
 func writeStderr(_ message: String) {
     FileHandle.standardError.write(Data((message + "\n").utf8))
 }

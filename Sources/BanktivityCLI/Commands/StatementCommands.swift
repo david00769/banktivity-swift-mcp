@@ -314,7 +314,7 @@ struct Statements: AsyncParsableCommand {
             try await guardWrite(writeGuard)
 
             let lineItemRepo = LineItemRepository(container: container)
-            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: SyncBlobUpdater(container: container))
+            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
             let result = try statements.update(
                 statementId: statementId,
                 endingBalance: endingBalance,
@@ -356,7 +356,7 @@ struct Statements: AsyncParsableCommand {
             try await guardWrite(writeGuard)
 
             let lineItemRepo = LineItemRepository(container: container)
-            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: SyncBlobUpdater(container: container))
+            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
 
             let deleted = try statements.delete(statementId: statementId, allowInternal: allowInternal)
             if deleted {
@@ -398,7 +398,7 @@ struct Statements: AsyncParsableCommand {
             let container = try BanktivityCLI.createContainer(vaultPath: path)
 
             let lineItemRepo = LineItemRepository(container: container)
-            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: SyncBlobUpdater(container: container))
+            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
 
             let ids = lineItemIds.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
             guard !ids.isEmpty else {
@@ -455,7 +455,7 @@ struct Statements: AsyncParsableCommand {
             try await guardWrite(writeGuard)
 
             let lineItemRepo = LineItemRepository(container: container)
-            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo, syncBlobUpdater: SyncBlobUpdater(container: container))
+            let statements = StatementRepository(container: container, lineItemRepo: lineItemRepo)
 
             let ids = lineItemIds.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
             guard !ids.isEmpty else {

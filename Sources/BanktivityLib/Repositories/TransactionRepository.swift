@@ -103,11 +103,6 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
         }
     }
 
-    /// Get total transaction count
-    public func count() throws -> Int {
-        try count(entityName: "Transaction")
-    }
-
     // MARK: - Write Operations
 
     /// Create a new transaction with line items
@@ -278,13 +273,7 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
             )
         }
 
-        // Recalculate running balances for all affected accounts
-        let affectedAccountIds = Set(lineItems.map(\.accountId))
-        for accountId in affectedAccountIds {
-            try lineItemRepo.recalculateRunningBalances(accountId: accountId)
-        }
-
-        guard let created = try get(uniqueID: txUUID) else {
+        guard let created = try get(uniqueID: syncInfo.txUUID) else {
             throw ToolError.notFound("Failed to retrieve created transaction")
         }
         return created
@@ -292,71 +281,22 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
 
     /// Update an existing transaction
     public func update(transactionId: Int, title: String? = nil, note: String? = nil, date: String? = nil, cleared: Bool? = nil, transactionType: String? = nil) throws -> TransactionDTO? {
-        struct UpdateOutcome: Sendable {
-            let txUUID: String
-            let dateChanged: Bool
-            let newTxTypeBaseTypeCode: Int16?
-            let newTxTypeUUID: String?
-        }
-
-        let outcome: UpdateOutcome = try performWriteReturning { [self] ctx in
+        try performWrite { [self] ctx in
             guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
                 throw ToolError.notFound("Transaction not found: \(transactionId)")
             }
-
-            var dateChanged = false
-            var newTxTypeBaseTypeCode: Int16?
-            var newTxTypeUUID: String?
 
             if let title = title { tx.setValue(title, forKey: "pTitle") }
             if let note = note { tx.setValue(note, forKey: "pNote") }
             if let date = date {
                 Self.setDate(tx, "pDate", isoString: date)
-                dateChanged = true
             }
             if let cleared = cleared { tx.setValue(cleared, forKey: "pCleared") }
             if let transactionType = transactionType {
                 let txType = try Self.requireTransactionType(named: transactionType, in: ctx)
                 tx.setValue(txType, forKey: "pTransactionType")
-                newTxTypeBaseTypeCode = Int16(exactly: Self.intValue(txType, "pBaseType"))
-                newTxTypeUUID = Self.stringValue(txType, "pUniqueID")
             }
             Self.setNow(tx, "pModificationDate")
-
-            return UpdateOutcome(
-                txUUID: Self.stringValue(tx, "pUniqueID"),
-                dateChanged: dateChanged,
-                newTxTypeBaseTypeCode: newTxTypeBaseTypeCode,
-                newTxTypeUUID: newTxTypeUUID
-            )
-        }
-
-        // If date changed, recalculate running balances for affected accounts
-        if outcome.dateChanged {
-            if let lineItems = try? lineItemRepo.getForTransactionPK(transactionId) {
-                let accountIds = Set(lineItems.map(\.accountId))
-                for accountId in accountIds {
-                    try lineItemRepo.recalculateRunningBalances(accountId: accountId)
-                }
-            }
-        }
-
-        // Patch sync blob (non-fatal)
-        if let updater = syncBlobUpdater {
-            updater.updateTransactionBlob(transactionUUID: outcome.txUUID) { xml in
-                var result = xml
-                if let t = title { result = updater.patchTransactionTitle(xml: result, title: t) }
-                if let n = note { result = updater.patchTransactionNote(xml: result, note: n) }
-                // No timestamp, no patch: leaving the blob's existing date alone
-                // beats writing an unparseable label into it.
-                if let d = date, let stamp = DateConversion.syncBlobTimestamp(dateOnly: d) {
-                    result = updater.patchTransactionDate(xml: result, date: stamp)
-                }
-                if let bt = outcome.newTxTypeBaseTypeCode, let tu = outcome.newTxTypeUUID {
-                    result = updater.patchTransactionType(xml: result, baseTypeCode: bt, typeUUID: tu)
-                }
-                return result
-            }
         }
 
         return try get(transactionId: transactionId)
@@ -396,7 +336,7 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
             )
         }
 
-        let affectedAccountIds = try performWriteReturning { [self] ctx -> [Int] in
+        try performWrite { [self] ctx in
             guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
                 throw ToolError.notFound("Transaction not found: \(transactionId)")
             }
@@ -409,7 +349,6 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
             guard let feeCategory = try fetchByPK(entityName: "Account", pk: feeCategoryId, in: ctx) else {
                 throw ToolError.notFound("Fee category not found: \(feeCategoryId)")
             }
-
 
             if let title = title { tx.setValue(title, forKey: "pTitle") }
             if let note = note { tx.setValue(note, forKey: "pNote") }
@@ -482,26 +421,18 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
                 rate: 1.0, memo: feeMemo, sortIndex: 2, defaultCleared: false
             )
 
-            return [sourceAccountId, targetAccountId, feeCategoryId]
         }
 
-        for accountId in affectedAccountIds {
-            try lineItemRepo.recalculateRunningBalances(accountId: accountId)
-        }
-
-        context.refreshAllObjects()
         return try get(transactionId: transactionId)
     }
 
     /// Delete a transaction and its line items
     public func delete(transactionId: Int) throws -> Bool {
+        // Get the UUID on the context's thread before deletion
         let txUUID: String? = try performRead { [self] ctx in
             guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else { return nil }
             return Self.stringValue(tx, "pUniqueID")
         }
-
-        let lineItems = try lineItemRepo.getForTransactionPK(transactionId)
-        let affectedAccountIds = Set(lineItems.map(\.accountId))
 
         let deleted = try performWriteReturning { [self] ctx -> Bool in
             guard let tx = try fetchByPK(entityName: "Transaction", pk: transactionId, in: ctx) else {
@@ -522,11 +453,7 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
             return true
         }
 
-        // Recalculate running balances for affected accounts
         if deleted {
-            for accountId in affectedAccountIds {
-                try lineItemRepo.recalculateRunningBalances(accountId: accountId)
-            }
             // Delete sync record (non-fatal)
             if let updater = syncBlobUpdater, let uuid = txUUID {
                 updater.deleteSyncRecord(entityUUID: uuid)
