@@ -617,10 +617,26 @@ public final class TransactionRepository: BaseRepository, @unchecked Sendable {
 
     static func fetchTransactionType(named name: String, in ctx: NSManagedObjectContext) throws -> NSManagedObject? {
         guard let baseType = transactionTypeBaseTypeCode(name) else { return nil }
+        return try fetchTransactionType(baseType: Int16(baseType), in: ctx)
+    }
+
+    /// The vault's TransactionType row for a base type, chosen deterministically.
+    /// A real vault can hold several rows with one base type (base 2 can be both
+    /// "Withdrawal" and "POS"); the row named like the base type's canonical name
+    /// wins (case-insensitive), then the lowest primary key.
+    static func fetchTransactionType(baseType: Int16, in ctx: NSManagedObjectContext) throws -> NSManagedObject? {
         let typeRequest = NSFetchRequest<NSManagedObject>(entityName: "TransactionType")
         typeRequest.predicate = NSPredicate(format: "pBaseType == %d", baseType)
-        typeRequest.fetchLimit = 1
-        return try ctx.fetch(typeRequest).first
+        typeRequest.sortDescriptors = [NSSortDescriptor(key: "pName", ascending: true)]
+        let rows = try ctx.fetch(typeRequest)
+        let canonical = transactionTypeBaseTypeName(Int(baseType)).replacingOccurrences(of: "-", with: " ")
+        func pk(_ o: NSManagedObject) -> Int { extractPK(from: o.objectID) }
+        return rows.min { a, b in
+            let aCanon = stringValue(a, "pName").lowercased() == canonical
+            let bCanon = stringValue(b, "pName").lowercased() == canonical
+            if aCanon != bCanon { return aCanon }
+            return pk(a) < pk(b)
+        }
     }
 
     /// Last-resort lookup when neither the inferred type nor Deposit exists.

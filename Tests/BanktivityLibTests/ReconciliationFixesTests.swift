@@ -73,6 +73,28 @@ struct ReconciliationFixesTests {
         #expect(try type([(checking.id, -100.0, nil), (savings.id, 100.0, nil)]) == "Transfer")
     }
 
+    @Test("Two same-base transaction types resolve to the canonical name in either insertion order",
+          arguments: [true, false])
+    func sameBaseTypeResolvesDeterministically(canonicalFirst: Bool) throws {
+        let vault = try TestVaultHelper.createFreshVault()
+        defer { TestVaultHelper.cleanup(vault) }
+        let ctx = vault.container.viewContext
+        let names = canonicalFirst ? ["Withdrawal", "POS"] : ["POS", "Withdrawal"]
+        for name in names {
+            let t = NSEntityDescription.insertNewObject(forEntityName: "TransactionType", into: ctx)
+            t.setValue(Int16(2), forKey: "pBaseType")
+            t.setValue(name, forKey: "pName")
+            t.setValue(UUID().uuidString, forKey: "pUniqueID")
+        }
+        try ctx.save()
+        for _ in 0..<5 {
+            let byName = try TransactionRepository.fetchTransactionType(named: "withdrawal", in: ctx)
+            let byCode = try TransactionRepository.fetchTransactionType(baseType: 2, in: ctx)
+            #expect(byName.map { BaseRepository.stringValue($0, "pName") } == "Withdrawal")
+            #expect(byCode.map { BaseRepository.stringValue($0, "pName") } == "Withdrawal")
+        }
+    }
+
     @Test("Transactions can be found by tag (to-many through to-many)")
     func getTransactionsByTag() throws {
         let r = try makeRepos()
