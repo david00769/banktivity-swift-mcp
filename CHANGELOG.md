@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.18.1 (2026-11-16)
+
+- CLI capability registry lists every CLI verb; a test keeps it complete.
+
 ## v0.18.0 (2026-11-16): in sync with upstream adc3220 + 699dc3a
 
 ### Removed
