@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.18.2 (2026-11-16)
+
+- Release metadata only: server.json's MCP Bundle file name now matches the version, so the release workflow publishes (v0.18.1's tag failed that check and published nothing). Same code as v0.18.1.
+
+
 ## v0.18.1 (2026-11-16)
 
 - CLI capability registry lists every CLI verb; a test keeps it complete.

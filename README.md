@@ -141,18 +141,18 @@ The consequence is worth stating plainly, because it is the failure this tool ca
 
 Each [release](https://github.com/david00769/banktivity-swift-mcp/releases)
 has one universal download (Apple Silicon and Intel) and a checksum file. CI
-builds and tests the release from the tagged commit. For v0.18.1:
+builds and tests the release from the tagged commit. For v0.18.2:
 
 ```sh
-base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.18.1
-curl -LO "$base/banktivity-swift-mcp-v0.18.1-macos-universal.tar.gz"
-curl -LO "$base/banktivity-swift-mcp-v0.18.1-macos-universal.tar.gz.sha256"
-shasum -a 256 -c banktivity-swift-mcp-v0.18.1-macos-universal.tar.gz.sha256   # prints "OK"
+base=https://github.com/david00769/banktivity-swift-mcp/releases/download/v0.18.2
+curl -LO "$base/banktivity-swift-mcp-v0.18.2-macos-universal.tar.gz"
+curl -LO "$base/banktivity-swift-mcp-v0.18.2-macos-universal.tar.gz.sha256"
+shasum -a 256 -c banktivity-swift-mcp-v0.18.2-macos-universal.tar.gz.sha256   # prints "OK"
 
-tar xzf banktivity-swift-mcp-v0.18.1-macos-universal.tar.gz
+tar xzf banktivity-swift-mcp-v0.18.2-macos-universal.tar.gz
 xattr -d com.apple.quarantine banktivity-cli banktivity-mcp 2>/dev/null || true
 mkdir -p ~/.local/bin && mv banktivity-cli banktivity-mcp ~/.local/bin/
-banktivity-cli --version   # 0.18.1
+banktivity-cli --version   # 0.18.2
 ```
 
 The binaries are signed ad hoc, not notarized. The `xattr` line removes the
